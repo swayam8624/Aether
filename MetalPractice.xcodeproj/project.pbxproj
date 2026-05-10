@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		480B46E42F8C08BA005E840A /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 480B46E22F8C08BA005E840A /* Metal.framework */; };
+		480B46E52F8C08BA005E840A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 480B46E32F8C08BA005E840A /* MetalKit.framework */; };
+		480B46E72F8C08C2005E840A /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 480B46E62F8C08C2005E840A /* AppKit.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		480B46D52F8C085C005E840A /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -20,6 +26,9 @@
 
 /* Begin PBXFileReference section */
 		480B46D72F8C085C005E840A /* MetalPractice */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = MetalPractice; sourceTree = BUILT_PRODUCTS_DIR; };
+		480B46E22F8C08BA005E840A /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		480B46E32F8C08BA005E840A /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		480B46E62F8C08C2005E840A /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -35,6 +44,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				480B46E72F8C08C2005E840A /* AppKit.framework in Frameworks */,
+				480B46E42F8C08BA005E840A /* Metal.framework in Frameworks */,
+				480B46E52F8C08BA005E840A /* MetalKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -45,6 +57,7 @@
 			isa = PBXGroup;
 			children = (
 				480B46D92F8C085C005E840A /* MetalPractice */,
+				480B46E12F8C08BA005E840A /* Frameworks */,
 				480B46D82F8C085C005E840A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -55,6 +68,16 @@
 				480B46D72F8C085C005E840A /* MetalPractice */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		480B46E12F8C08BA005E840A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				480B46E62F8C08C2005E840A /* AppKit.framework */,
+				480B46E22F8C08BA005E840A /* Metal.framework */,
+				480B46E32F8C08BA005E840A /* MetalKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -249,6 +272,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = J7V9842X25;
 				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/metal-cpp";
+				"HEADER_SEARCH_PATHS[arch=*]" = "$(PROJECT_DIR)/metal-cpp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -259,6 +284,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = J7V9842X25;
 				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/metal-cpp";
+				"HEADER_SEARCH_PATHS[arch=*]" = "$(PROJECT_DIR)/metal-cpp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
