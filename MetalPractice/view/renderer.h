@@ -8,12 +8,18 @@
 
 class Renderer
 {
-public:
-    Renderer(MTL::Device* device);
-    ~Renderer();
-    void draw(MTK::View* view);
+    public:
+        Renderer(MTL::Device* device);
+        ~Renderer();
+        void draw(MTK::View* view);
 
-private:
-    MTL::Device* device;
-    MTL::CommandQueue* commandQueue;
+    private:
+        void buildShaders();
+        MTL::Device* device;
+        MTL::CommandQueue* commandQueue;
+        /*
+         A render pipeline is in charge of standard graphics operations.
+         Compute pipelines can also be made, but not today.
+        */
+        MTL::RenderPipelineState* trianglePipeline;
 };

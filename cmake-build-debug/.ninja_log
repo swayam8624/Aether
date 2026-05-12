@@ -1,0 +1,19 @@
+# ninja log v7
+6	960	1778567066819568239	CMakeFiles/MetalEngine.dir/MetalPractice/main.cpp.o	c61cff8bd3abf48e
+961	1164	1778567067774084138	MetalEngine.app/Contents/MacOS/MetalEngine	642e6952d3f254c2
+7	918	1778567066820227407	CMakeFiles/MetalEngine.dir/MetalPractice/control/view_delegate.cpp.o	93129e232b39a0cd
+7	924	1778567066820405699	CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o	42d6d9237eb8a4cb
+6	917	1778567066820016448	CMakeFiles/MetalEngine.dir/MetalPractice/control/app_delegate.cpp.o	85bc8745e648d0e
+6	709	1778567957737813772	CMakeFiles/MetalEngine.dir/MetalPractice/control/view_delegate.cpp.o	93129e232b39a0cd
+6	711	1778567957737588813	CMakeFiles/MetalEngine.dir/MetalPractice/control/app_delegate.cpp.o	85bc8745e648d0e
+6	739	1778567957737996231	CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o	42d6d9237eb8a4cb
+6	791	1778567957737175854	CMakeFiles/MetalEngine.dir/MetalPractice/main.cpp.o	c61cff8bd3abf48e
+791	893	1778567958522602257	MetalEngine.app/Contents/MacOS/MetalEngine	642e6952d3f254c2
+11	720	1778569013727638942	CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o	42d6d9237eb8a4cb
+720	833	1778569014436830104	MetalEngine.app/Contents/MacOS/MetalEngine	642e6952d3f254c2
+5	674	1778569080269203342	CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o	42d6d9237eb8a4cb
+674	773	1778569080938371936	MetalEngine.app/Contents/MacOS/MetalEngine	642e6952d3f254c2
+4	705	1778569387618645920	CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o	42d6d9237eb8a4cb
+705	804	1778569388319755298	MetalEngine.app/Contents/MacOS/MetalEngine	642e6952d3f254c2
+4	720	1778569423636852948	CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o	42d6d9237eb8a4cb
+720	820	1778569424352299642	MetalEngine.app/Contents/MacOS/MetalEngine	642e6952d3f254c2
