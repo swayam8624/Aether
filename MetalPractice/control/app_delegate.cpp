@@ -1,9 +1,4 @@
-//
-// Created by Swayam Singal on 10/05/26.
-//
-
 #include "app_delegate.h"
-
 AppDelegate::~AppDelegate()
 {
     mtkView->release();

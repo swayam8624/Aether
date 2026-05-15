@@ -22,5 +22,11 @@
   "command": "/usr/bin/c++ -I/Users/swayamsingal/Desktop/Programming/MetalPractice/external/metal-cpp -I/Users/swayamsingal/Desktop/Programming/MetalPractice/external/metal-cpp-extensions -F/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks -g -std=gnu++20 -arch arm64 -fcolor-diagnostics -o CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o -c /Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/view/renderer.cpp",
   "file": "/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/view/renderer.cpp",
   "output": "/Users/swayamsingal/Desktop/Programming/MetalPractice/cmake-build-debug/CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o"
+},
+{
+  "directory": "/Users/swayamsingal/Desktop/Programming/MetalPractice/cmake-build-debug",
+  "command": "/usr/bin/c++ -I/Users/swayamsingal/Desktop/Programming/MetalPractice/external/metal-cpp -I/Users/swayamsingal/Desktop/Programming/MetalPractice/external/metal-cpp-extensions -F/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks -g -std=gnu++20 -arch arm64 -fcolor-diagnostics -o CMakeFiles/MetalEngine.dir/MetalPractice/view/mesh_factory.cpp.o -c /Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/view/mesh_factory.cpp",
+  "file": "/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/view/mesh_factory.cpp",
+  "output": "/Users/swayamsingal/Desktop/Programming/MetalPractice/cmake-build-debug/CMakeFiles/MetalEngine.dir/MetalPractice/view/mesh_factory.cpp.o"
 }
 ]

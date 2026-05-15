@@ -1,37 +1,44 @@
-//
-// Created by Swayam Singal on 10/05/26.
-//
-
 #include "renderer.h"
+#include "mesh_factory.h"
 
 Renderer::Renderer(MTL::Device* device):
 device(device->retain())
 {
     commandQueue = device->newCommandQueue();
+    buildMeshes();
     buildShaders();
 }
 
 Renderer::~Renderer() {
+    triangleMesh->release();
+    trianglePipeline->release();
+    generalPipeline->release();
     commandQueue->release();
     device->release();
 }
 
+void Renderer::buildMeshes() {
+    triangleMesh = MeshFactory::build_triangle(device);
+}
+
 void Renderer::buildShaders() {
+    trianglePipeline = buildShader(
+        "/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/shaders/triangle.metal", "vertexMain", "fragmentMain");
+    generalPipeline = buildShader(
+        "/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/shaders/general_shader.metal", "vertexMainGeneral", "fragmentMainGeneral");
+}
+
+MTL::RenderPipelineState* Renderer::buildShader(
+    const char* filename, const char* vertName, const char* fragName) {
 
     //Read the source code from the file.
-    //std::cout << "---- Reading File ----" << std::endl;
     std::ifstream file;
-    file.open("/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/shaders/triangle.metal");
-    if (!file.is_open()) {
-        std::cerr << "Error: Failed to open triangle.metal! Check your working directory." << std::endl;
-        assert(false); // or handle the error appropriately
-    }
+    file.open(filename);
     std::stringstream reader;
     reader << file.rdbuf();
     std::string raw_string = reader.str();
     NS::String* source_code = NS::String::string(
         raw_string.c_str(), NS::StringEncoding::UTF8StringEncoding);
-    //std::cout << raw_string;
 
     //A Metal Library constructs functions from source code
     NS::Error* error = nullptr;
@@ -42,20 +49,13 @@ void Renderer::buildShaders() {
     }
 
     NS::String* vertexName = NS::String::string(
-        "vertexMain", NS::StringEncoding::UTF8StringEncoding);
+        vertName, NS::StringEncoding::UTF8StringEncoding);
     MTL::Function* vertexMain = library->newFunction(vertexName);
 
     NS::String* fragmentName = NS::String::string(
-        "fragmentMain", NS::StringEncoding::UTF8StringEncoding);
+        fragName, NS::StringEncoding::UTF8StringEncoding);
     MTL::Function* fragmentMain = library->newFunction(fragmentName);
 
-    /*
-        A Pipeline Descriptor describes a pipeline,
-
-        The purpose of having descriptor objects is:
-            .As much state as necessary is known upfront
-            .Desciptors can be reused to quickly create other objects
-    */
     MTL::RenderPipelineDescriptor* pipelineDescriptor =
         MTL::RenderPipelineDescriptor::alloc()->init();
     pipelineDescriptor->setVertexFunction(vertexMain);
@@ -64,16 +64,18 @@ void Renderer::buildShaders() {
                     ->object(0)
                     ->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
 
-    trianglePipeline = device->newRenderPipelineState(pipelineDescriptor, &error);
-    if (!library) {
+    MTL::RenderPipelineState* pipeline = device->newRenderPipelineState(pipelineDescriptor, &error);
+    if (!pipeline) {
         std::cout << error->localizedDescription()->utf8String() << std::endl;
     }
 
-    //Release un-needed resources
     vertexMain->release();
     fragmentMain->release();
     pipelineDescriptor->release();
     library->release();
+    file.close();
+
+    return pipeline;
 }
 
 void Renderer::draw(MTK::View* view) {
@@ -84,7 +86,9 @@ void Renderer::draw(MTK::View* view) {
     MTL::RenderPassDescriptor* renderPass = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(renderPass);
 
-    encoder->setRenderPipelineState(trianglePipeline);
+    encoder->setRenderPipelineState(generalPipeline);
+    //buffer, offset, index
+    encoder->setVertexBuffer(triangleMesh, 0, 0);
     encoder->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
     encoder->endEncoding();

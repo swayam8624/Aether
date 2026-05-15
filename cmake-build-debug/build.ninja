@@ -85,6 +85,15 @@ build CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o: CXX_COMPILER
   OBJECT_FILE_DIR = CMakeFiles/MetalEngine.dir/MetalPractice/view
   TARGET_SUPPORT_DIR = CMakeFiles/MetalEngine.dir
 
+build CMakeFiles/MetalEngine.dir/MetalPractice/view/mesh_factory.cpp.o: CXX_COMPILER__MetalEngine_unscanned_Debug /Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/view/mesh_factory.cpp || cmake_object_order_depends_target_MetalEngine
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles/MetalEngine.dir/MetalPractice/view/mesh_factory.cpp.o.d
+  FLAGS = -g -std=gnu++20 -arch arm64 -fcolor-diagnostics
+  INCLUDES = -I/Users/swayamsingal/Desktop/Programming/MetalPractice/external/metal-cpp -I/Users/swayamsingal/Desktop/Programming/MetalPractice/external/metal-cpp-extensions -F/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks
+  OBJECT_DIR = CMakeFiles/MetalEngine.dir
+  OBJECT_FILE_DIR = CMakeFiles/MetalEngine.dir/MetalPractice/view
+  TARGET_SUPPORT_DIR = CMakeFiles/MetalEngine.dir
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target MetalEngine
@@ -93,7 +102,7 @@ build CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o: CXX_COMPILER
 #############################################
 # Link the executable MetalEngine.app/Contents/MacOS/MetalEngine
 
-build MetalEngine.app/Contents/MacOS/MetalEngine: CXX_EXECUTABLE_LINKER__MetalEngine_Debug CMakeFiles/MetalEngine.dir/MetalPractice/main.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/control/app_delegate.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/control/view_delegate.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o
+build MetalEngine.app/Contents/MacOS/MetalEngine: CXX_EXECUTABLE_LINKER__MetalEngine_Debug CMakeFiles/MetalEngine.dir/MetalPractice/main.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/control/app_delegate.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/control/view_delegate.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/view/renderer.cpp.o CMakeFiles/MetalEngine.dir/MetalPractice/view/mesh_factory.cpp.o
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names

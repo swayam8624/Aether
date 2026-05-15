@@ -21,6 +21,8 @@ add_executable(${PROJECT_NAME}
         MetalPractice/control/view_delegate.h
         MetalPractice/view/renderer.cpp
         MetalPractice/view/renderer.h
+        MetalPractice/view/mesh_factory.cpp
+        MetalPractice/view/mesh_factory.h
 )
 
 # 3. Include the metal-cpp headers
