@@ -29,6 +29,7 @@ struct ContentView: View {
     @Binding var document: AetherProjectDocument
     let projectURL: URL?
     @State private var selection: Workspace? = .scene
+    @State private var selectedGaussianId: Int?
     @Environment(\.undoManager) private var undoManager
     @AppStorage("showRendererDiagnostics") private var showRendererDiagnostics = true
 
@@ -59,7 +60,8 @@ struct ContentView: View {
                 .frame(height: 42)
                 .background(.bar)
 
-                AetherViewport(scenePath: resolvedScenePath)
+                AetherViewport(scenePath: resolvedScenePath,
+                               selectedGaussianId: $selectedGaussianId)
                     .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
                             VStack(alignment: .leading, spacing: 4) {
@@ -68,6 +70,10 @@ struct ContentView: View {
                                 Text("Metal viewport active")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                if let selectedGaussianId {
+                                    Text("Selected Gaussian #\(selectedGaussianId)")
+                                        .font(.caption2.monospacedDigit())
+                                }
                             }
                             .padding(10)
                             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -79,6 +85,9 @@ struct ContentView: View {
         .onChange(of: selection) { _, newValue in
             guard let newValue else { return }
             document.state.selectedWorkspace = newValue.rawValue
+        }
+        .onChange(of: document.state.scenePath) { _, _ in
+            selectedGaussianId = nil
         }
         .onAppear {
             selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene

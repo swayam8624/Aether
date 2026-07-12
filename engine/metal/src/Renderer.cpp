@@ -512,6 +512,32 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     return {};
 }
 
+Result<std::uint32_t> Renderer::pickGaussian(std::uint32_t x, std::uint32_t y) {
+    if (!gaussianIds_)
+        return fail(ErrorCode::invalidArgument, "No Gaussian ID target is available");
+    if (x >= gaussianTargetWidth_ || y >= gaussianTargetHeight_)
+        return fail(ErrorCode::invalidArgument, "Gaussian pick coordinate is outside the viewport");
+    constexpr std::size_t readbackBytesPerRow = 256;
+    auto readback = adopt(device_->newBuffer(readbackBytesPerRow, MTL::ResourceStorageModeShared));
+    MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
+    MTL::BlitCommandEncoder* blit = commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+    if (!readback || !commandBuffer || !blit)
+        return fail(ErrorCode::metal, "Unable to allocate Gaussian pick readback");
+    readback->setLabel(NS::String::string("Gaussian Pick Readback", NS::UTF8StringEncoding));
+    blit->setLabel(NS::String::string("Gaussian ID Pick", NS::UTF8StringEncoding));
+    blit->copyFromTexture(gaussianIds_.get(), 0, 0, MTL::Origin::Make(x, y, 0),
+                          MTL::Size::Make(1, 1, 1), readback.get(), 0, readbackBytesPerRow,
+                          readbackBytesPerRow);
+    blit->endEncoding();
+    commandBuffer->commit();
+    commandBuffer->waitUntilCompleted();
+    if (commandBuffer->status() == MTL::CommandBufferStatusError)
+        return fail(ErrorCode::metal, "Gaussian pick command buffer failed");
+    std::uint32_t sourceId{};
+    std::memcpy(&sourceId, readback->contents(), sizeof(sourceId));
+    return sourceId;
+}
+
 Result<void> Renderer::ensureGaussianTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Gaussian render target dimensions are zero");

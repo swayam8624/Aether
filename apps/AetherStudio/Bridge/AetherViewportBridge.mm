@@ -7,6 +7,7 @@
 #include <aether/core/Log.hpp>
 #include <aether/metal/Renderer.hpp>
 
+#include <algorithm>
 #include <memory>
 
 static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
@@ -18,6 +19,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (void)addCameraLookX:(CGFloat)x y:(CGFloat)y;
 - (void)addCameraDolly:(CGFloat)amount;
 - (void)clearCameraMovement;
+- (NSInteger)pickGaussianX:(NSUInteger)x y:(NSUInteger)y;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -128,6 +130,18 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     if (_renderer)
         _renderer->clearCameraMovement();
 }
+
+- (NSInteger)pickGaussianX:(NSUInteger)x y:(NSUInteger)y {
+    if (!_renderer)
+        return 0;
+    const auto result =
+        _renderer->pickGaussian(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+    if (!result) {
+        NSLog(@"AETHER Gaussian pick failed: %s", result.error().describe().c_str());
+        return 0;
+    }
+    return static_cast<NSInteger>(*result);
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -221,6 +235,24 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 - (void)rightMouseDown:(NSEvent*)event {
     [self.window makeFirstResponder:self];
     [super rightMouseDown:event];
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    [self.window makeFirstResponder:self];
+    const NSPoint local = [self convertPoint:event.locationInWindow fromView:nil];
+    const NSPoint backing = [self convertPointToBacking:local];
+    const NSUInteger width = static_cast<NSUInteger>(_metalView.drawableSize.width);
+    const NSUInteger height = static_cast<NSUInteger>(_metalView.drawableSize.height);
+    if (width == 0 || height == 0)
+        return;
+    const NSUInteger x =
+        static_cast<NSUInteger>(std::clamp(backing.x, 0.0, static_cast<double>(width - 1)));
+    const double topOriginY = static_cast<double>(height) - 1.0 - backing.y;
+    const NSUInteger y =
+        static_cast<NSUInteger>(std::clamp(topOriginY, 0.0, static_cast<double>(height - 1)));
+    const NSInteger sourceId = [_rendererDelegate pickGaussianX:x y:y];
+    if (self.onGaussianPicked)
+        self.onGaussianPicked(sourceId);
 }
 
 - (void)rightMouseDragged:(NSEvent*)event {

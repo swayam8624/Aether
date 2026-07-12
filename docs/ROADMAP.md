@@ -51,7 +51,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   executable serial compatibility fallback.
 - [ ] M1/M2 named-scene performance exit gates.
 - [x] Degree 0–3 GraphDECO-order spherical-harmonic appearance in CPU and Metal paths.
-- [ ] Picking workflow and research/debug visualizations.
+- [x] Real GPU ID-target Gaussian picking bridged into SwiftUI source-ID selection.
+- [ ] Research/debug visualizations for ellipsoids, clusters, occupancy, SH bands, and sort order.
 
 ## Phase 4 — Fully local reconstruction
 

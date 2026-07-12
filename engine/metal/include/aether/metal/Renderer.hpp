@@ -49,6 +49,9 @@ class Renderer final {
     [[nodiscard]] Result<void> loadGltf(const std::filesystem::path& path);
     [[nodiscard]] Result<void> loadPly(const std::filesystem::path& path);
     [[nodiscard]] Result<void> loadAether(const std::filesystem::path& path);
+    /// Input: top-left-origin drawable pixel coordinate.
+    /// Output: 1-based Gaussian source ID, or zero for background.
+    [[nodiscard]] Result<std::uint32_t> pickGaussian(std::uint32_t x, std::uint32_t y);
     void setCameraMovement(scene::CameraMove movement, bool active) noexcept;
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
