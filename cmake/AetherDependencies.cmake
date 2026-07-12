@@ -16,3 +16,23 @@ function(aether_resolve_fastgltf)
     )
     FetchContent_MakeAvailable(fastgltf)
 endfunction()
+
+function(aether_resolve_zstd)
+    if(TARGET libzstd_static)
+        return()
+    endif()
+    set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(zstd
+        URL https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz
+        URL_HASH SHA256=37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR build/cmake
+    )
+    FetchContent_MakeAvailable(zstd)
+endfunction()

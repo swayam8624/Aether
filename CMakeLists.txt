@@ -24,9 +24,12 @@ add_subdirectory(engine/rendergraph)
 add_subdirectory(engine/scene)
 aether_resolve_fastgltf()
 add_subdirectory(engine/mesh)
+aether_resolve_zstd()
+add_subdirectory(engine/package)
 
 if(AETHER_BUILD_TOOLS)
     add_subdirectory(tools/aether-inspect)
+    add_subdirectory(tools/aether-pack)
 endif()
 
 if(AETHER_BUILD_STUDIO)

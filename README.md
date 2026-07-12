@@ -12,8 +12,9 @@ verified, shippable milestones. The current foundation contains:
 - A Metal renderer with RAII ownership, bounded frames in flight, capability reporting, drawable
   safety, and offline `.metallib` compilation.
 - A SwiftUI macOS application whose Objective-C++ bridge keeps Metal objects out of Swift.
-- A warnings-as-errors CPU CI path, sanitizer preset, foundation tests, and an initial
-  `aether-inspect` CLI.
+- A versioned, hashed, bounded, per-chunk compressed [`.aether` container](docs/formats/AETHER_PACKAGE.md)
+  with `aether-pack` and `aether-inspect` command-line tools.
+- A warnings-as-errors CPU CI path, sanitizer preset, and foundation tests.
 
 The project does **not** yet claim production Gaussian rendering or relighting. See
 [the roadmap](docs/ROADMAP.md) for implemented and pending exit gates.

@@ -5,6 +5,8 @@
 #include <aether/core/Profiler.hpp>
 #include <aether/core/ResourceLocator.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/package/Package.hpp>
+#include <aether/package/Sha256.hpp>
 #include <aether/rendergraph/RenderGraph.hpp>
 #include <aether/scene/Camera.hpp>
 #include <aether/scene/CameraController.hpp>
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -223,6 +226,54 @@ void testGltfLoader() {
            "glTF file-size limit is enforced");
 }
 
+void testSha256() {
+    constexpr std::string_view value = "abc";
+    const auto bytes = std::as_bytes(std::span(value.data(), value.size()));
+    const auto digest = aether::package::Sha256::hash(bytes);
+    expect(aether::package::Sha256::hex(digest) ==
+               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+           "SHA-256 matches the standard abc vector");
+}
+
+void testAetherPackage() {
+    const auto path = std::filesystem::temp_directory_path() / "aether-package-test.aether";
+    constexpr std::string_view metadata = "{\"name\":\"fixture\"}";
+    std::vector<std::byte> gaussians(16'384);
+    for (std::size_t index = 0; index < gaussians.size(); ++index) {
+        gaussians[index] = static_cast<std::byte>(index % 251U);
+    }
+    aether::package::PackageWriter writer;
+    expect(writer
+               .addChunk(aether::package::ChunkType::metadata,
+                         std::as_bytes(std::span(metadata.data(), metadata.size())))
+               .has_value(),
+           "Metadata chunk is accepted");
+    expect(writer.addChunk(aether::package::ChunkType::baseGaussians, gaussians).has_value(),
+           "Gaussian chunk is accepted");
+    expect(writer.write(path).has_value(), "AETHER package is written atomically");
+
+    auto reader = aether::package::PackageReader::open(path);
+    expect(reader.has_value(), "AETHER package header, table, and content hash validate");
+    if (reader) {
+        expect(reader->info().chunks.size() == 2, "AETHER chunk table round-trips");
+        auto decoded = reader->readChunk(aether::package::ChunkType::baseGaussians);
+        expect(decoded.has_value() && *decoded == gaussians,
+               "Zstandard chunk decompresses and verifies its hash");
+        expect(reader->info().chunks[1].storedBytes < reader->info().chunks[1].uncompressedBytes,
+               "Compressible Gaussian fixture is stored with compression");
+    }
+
+    {
+        std::fstream corrupt(path, std::ios::binary | std::ios::in | std::ios::out);
+        corrupt.seekp(80);
+        const char changed = '\x55';
+        corrupt.write(&changed, 1);
+    }
+    expect(!aether::package::PackageReader::open(path).has_value(),
+           "Whole-package hash rejects corrupted content");
+    std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main() {
@@ -236,6 +287,8 @@ int main() {
     testCameraProjection();
     testCameraController();
     testGltfLoader();
+    testSha256();
+    testAetherPackage();
     if (failures == 0) {
         std::cout << "All AETHER foundation tests passed\n";
     }
