@@ -162,7 +162,7 @@ std::uint32_t entryBudget(std::size_t gaussianCount) {
     constexpr std::uint64_t maximum = 4'194'304;
     const std::uint64_t requested =
         gaussianCount > maximum / 64 ? maximum : static_cast<std::uint64_t>(gaussianCount) * 64;
-    return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(requested, 4096, maximum));
+    return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(requested, 262'144, maximum));
 }
 } // namespace
 
@@ -301,6 +301,13 @@ int main(int argc, char** argv) {
         lastStatistics = (*pipeline)->statistics();
     }
     std::ranges::sort(gpuMilliseconds);
+    if (lastStatistics.overflowedEntries != 0) {
+        const std::string message = "Tile-entry budget overflowed by " +
+                                    std::to_string(lastStatistics.overflowedEntries) +
+                                    " entries; benchmark output would be incomplete";
+        pool->release();
+        return fail(message, options->json, 5);
+    }
     const double median = gpuMilliseconds[gpuMilliseconds.size() / 2];
     const std::size_t p95Index = static_cast<std::size_t>(
         std::ceil(static_cast<double>(gpuMilliseconds.size()) * 0.95) - 1.0);

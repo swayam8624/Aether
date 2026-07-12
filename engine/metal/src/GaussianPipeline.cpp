@@ -273,7 +273,7 @@ Result<void> GaussianPipeline::encode(MTL::CommandBuffer* commandBuffer,
                                  });
         !result)
         return result;
-    if (auto result = dispatch1D(commandBuffer, pipelines_[buildRanges].get(), maximumTileEntries_,
+    if (auto result = dispatch1D(commandBuffer, pipelines_[buildRanges].get(), 1,
                                  "Gaussian Range Construction",
                                  [&](MTL::ComputeCommandEncoder* encoder) {
                                      encoder->setBuffer(keysA_.get(), 0, 0);

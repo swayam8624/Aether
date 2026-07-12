@@ -246,15 +246,25 @@ kernel void aetherGaussianInitializeRanges(device uint2* ranges [[buffer(0)]],
 }
 
 kernel void aetherGaussianBuildRanges(device const uint2* keys [[buffer(0)]],
-                                      device atomic_uint* rangeWords [[buffer(1)]],
+                                      device uint2* ranges [[buffer(1)]],
                                       device const atomic_uint* counters [[buffer(2)]],
                                       uint index [[thread_position_in_grid]]) {
-    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
-    if (index >= count)
+    if (index != 0)
         return;
-    const uint tile = keys[index].y;
-    atomic_fetch_min_explicit(&rangeWords[tile * 2], index, memory_order_relaxed);
-    atomic_fetch_max_explicit(&rangeWords[tile * 2 + 1], index + 1, memory_order_relaxed);
+    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
+    if (count == 0)
+        return;
+    uint previousTile = keys[0].y;
+    ranges[previousTile].x = 0;
+    for (uint entry = 1; entry < count; ++entry) {
+        const uint tile = keys[entry].y;
+        if (tile != previousTile) {
+            ranges[previousTile].y = entry;
+            ranges[tile].x = entry;
+            previousTile = tile;
+        }
+    }
+    ranges[previousTile].y = count;
 }
 
 kernel void aetherGaussianComposite(

@@ -138,7 +138,7 @@ MTL::SamplerAddressMode samplerAddress(mesh::SamplerAddressMode mode) {
 }
 
 std::uint32_t tileEntryBudget(std::size_t gaussianCount) {
-    constexpr std::uint64_t minimumEntries = 4'096;
+    constexpr std::uint64_t minimumEntries = 262'144;
     constexpr std::uint64_t maximumEntries = 4'194'304;
     constexpr std::uint64_t expectedTilesPerGaussian = 64;
     const std::uint64_t requested =

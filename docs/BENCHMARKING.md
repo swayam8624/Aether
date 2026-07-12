@@ -9,6 +9,10 @@ The JSON result schema v1 records device name, scene path, resolution, measured/
 GPU median and p95 milliseconds, source and visible Gaussian counts, tile entries, bounded-overflow
 count, early-termination count, and peak `currentAllocatedSize` reported by Metal.
 
+A run exits non-zero if the configured tile-entry budget overflows. A partial image is never emitted
+as a successful benchmark result. The viewer uses the same conservative minimum budget, while the
+future LOD controller will make the budget an explicit quality-preset constraint.
+
 Camera paths use meters, seconds, radians, EV exposure, and `[x,y,z,w]` unit quaternions. Times must
 be finite, non-negative, and strictly increasing. Sampling clamps outside the path and uses linear
 position/FOV/exposure plus shortest-path quaternion interpolation.
