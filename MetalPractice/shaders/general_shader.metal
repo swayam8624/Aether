@@ -2,8 +2,8 @@
 using namespace metal;
 
 struct VertexInput {
-    float2 position;
-    float3 color;
+    float2 position [[attribute(0)]];
+    float3 color [[attribute(1)]];
 };
 
 struct VertexOutput {
@@ -11,14 +11,11 @@ struct VertexOutput {
     half3 color;
 };
 
-VertexOutput vertex vertexMainGeneral(
-    uint vertexID [[vertex_id]],
-    device const VertexInput* vertices [[buffer(0)]]) {
+VertexOutput vertex vertexMainGeneral(VertexInput input [[stage_in]]) {
 
     VertexOutput payload;
-    VertexInput vert = vertices[vertexID];
-    payload.position = float4(vert.position, 0.0, 1.0);
-    payload.color = half3(vert.color);
+    payload.position = float4(input.position, 0.0, 1.0);
+    payload.color = half3(input.color);
     return payload;
 }
 

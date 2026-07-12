@@ -1,5 +1,4 @@
 #include "renderer.h"
-#include "mesh_factory.h"
 
 Renderer::Renderer(MTL::Device* device):
 device(device->retain())
@@ -10,6 +9,8 @@ device(device->retain())
 }
 
 Renderer::~Renderer() {
+    quadMesh.vertexBuffer->release();
+    quadMesh.indexBuffer->release();
     triangleMesh->release();
     trianglePipeline->release();
     generalPipeline->release();
@@ -18,14 +19,15 @@ Renderer::~Renderer() {
 }
 
 void Renderer::buildMeshes() {
-    triangleMesh = MeshFactory::build_triangle(device);
+    triangleMesh = MeshFactory::buildTriangle(device);
+    quadMesh = MeshFactory::buildQuad(device);
 }
 
 void Renderer::buildShaders() {
     trianglePipeline = buildShader(
         "/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/shaders/triangle.metal", "vertexMain", "fragmentMain");
     generalPipeline = buildShader(
-        "/Users/swayamsingal/Desktop/Programming/MetalPractice/MetalPractice/shaders/general_shader.metal", "vertexMainGeneral", "fragmentMainGeneral");
+        "/Users/swayamsingal/Desktop/Programming/MetalPractice//MetalPractice/shaders/general_shader.metal", "vertexMainGeneral", "fragmentMainGeneral");
 }
 
 MTL::RenderPipelineState* Renderer::buildShader(
@@ -64,6 +66,24 @@ MTL::RenderPipelineState* Renderer::buildShader(
                     ->object(0)
                     ->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
 
+    MTL::VertexDescriptor* vertexDescriptor = MTL::VertexDescriptor::alloc()->init();
+    auto attributes = vertexDescriptor->attributes();
+    //position: vec2
+    auto positionDescriptor = attributes->object(0);
+    positionDescriptor->setFormat(MTL::VertexFormat::VertexFormatFloat2);
+    positionDescriptor->setBufferIndex(0);
+    positionDescriptor->setOffset(0);
+    //color: vec3
+    auto colorDescriptor = attributes->object(1);
+    colorDescriptor->setFormat(MTL::VertexFormat::VertexFormatFloat3);
+    colorDescriptor->setBufferIndex(0);
+    colorDescriptor->setOffset(4 * sizeof(float));
+
+    auto layoutDescriptor = vertexDescriptor->layouts()->object(0);
+    layoutDescriptor->setStride(8 * sizeof(float));
+
+    pipelineDescriptor->setVertexDescriptor(vertexDescriptor);
+
     MTL::RenderPipelineState* pipeline = device->newRenderPipelineState(pipelineDescriptor, &error);
     if (!pipeline) {
         std::cout << error->localizedDescription()->utf8String() << std::endl;
@@ -86,10 +106,16 @@ void Renderer::draw(MTK::View* view) {
     MTL::RenderPassDescriptor* renderPass = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(renderPass);
 
+
     encoder->setRenderPipelineState(generalPipeline);
-    //buffer, offset, index
+    encoder->setVertexBuffer(quadMesh.vertexBuffer, 0, 0);
+    encoder->drawIndexedPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(6), MTL::IndexType::IndexTypeUInt16, quadMesh.indexBuffer, NS::UInteger(0), NS::UInteger(6));
+
+
+    encoder->setRenderPipelineState(generalPipeline);
     encoder->setVertexBuffer(triangleMesh, 0, 0);
     encoder->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
+
 
     encoder->endEncoding();
     commandBuffer->presentDrawable(view->currentDrawable());
