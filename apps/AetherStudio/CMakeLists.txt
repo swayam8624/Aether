@@ -30,7 +30,8 @@ set_target_properties(AetherStudio PROPERTIES
 
 aether_add_metal_library(AetherShaders "AetherShaders.metallib"
     "${PROJECT_SOURCE_DIR}/shaders/viewport.metal"
-    "${PROJECT_SOURCE_DIR}/shaders/pbr.metal")
+    "${PROJECT_SOURCE_DIR}/shaders/pbr.metal"
+    "${PROJECT_SOURCE_DIR}/shaders/gaussian.metal")
 if(TARGET AetherShaders)
     add_dependencies(AetherStudio AetherShaders)
     target_sources(AetherStudio PRIVATE "${AetherShaders_OUTPUT}")

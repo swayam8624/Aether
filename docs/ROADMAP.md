@@ -24,7 +24,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Upload/readback rings, deferred destruction, transient heaps, pipeline binary archive, and GPU
   timestamps.
 - [x] Job system, diagnostics bundle, app document model, autosave, undo/redo, and preferences.
-- [ ] Thirty-minute Metal validation soak and frame capture with named resources.
+- [x] Thirty-minute uninterrupted render soak with post-run heap inspection.
+- [ ] API-validation GPU frame capture confirming named passes and resources.
 
 ## Phase 2 — Mesh/PBR renderer
 
@@ -38,8 +39,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 ## Phase 3 — Standard Gaussian renderer
 
-- [ ] Strict bounded PLY/3DGS import.
-- [ ] CPU reference projection and compositing.
+- [x] Strict bounded ASCII/binary-little-endian PLY/3DGS import and canonical binary codec.
+- [x] Deterministic CPU anisotropic projection and front-to-back compositing oracle.
 - [ ] Metal projection, covariance, culling, scan, sort, tile ranges, and compositing.
 - [ ] Depth, picking, counters, SH evaluation, and research/debug visualizations.
 
@@ -59,8 +60,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 ## Phase 7 — LOD, compression, and streaming
 
-- [ ] Versioned `.aether` container, clustered multiresolution representation, quantization,
-  asynchronous streaming, budgets, and Metal 4 optional path.
+- [x] Versioned, random-access `.aether` container with per-chunk compression and hashes.
+- [ ] Clustered multiresolution representation, quantization, asynchronous streaming, budgets, and
+  Metal 4 optional path.
 
 ## Phase 8 — Product and cinematic workflows
 

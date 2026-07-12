@@ -5,6 +5,7 @@ find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 
 add_library(AetherMetal STATIC
     src/FrameContext.cpp
+    src/GaussianPipeline.cpp
     src/MetalSymbols.cpp
     src/Renderer.cpp
     src/ShaderABI.cpp
@@ -17,7 +18,7 @@ target_include_directories(AetherMetal PUBLIC
 )
 target_include_directories(AetherMetal SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/external/metal-cpp)
 target_link_libraries(AetherMetal
-    PUBLIC Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh
+    PUBLIC Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian
     PRIVATE
         ${METAL_FRAMEWORK}
         ${METALKIT_FRAMEWORK}

@@ -1,0 +1,244 @@
+#include "shared/AetherShaderTypes.h"
+#include <metal_stdlib>
+
+using namespace metal;
+
+constant uint aetherGaussianTileSize = 16;
+
+float3x3 aetherQuaternionRotation(float4 quaternion) {
+    const float w = quaternion.x;
+    const float x = quaternion.y;
+    const float y = quaternion.z;
+    const float z = quaternion.w;
+    return float3x3(float3(1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + z * w),
+                           2.0f * (x * z - y * w)),
+                    float3(2.0f * (x * y - z * w), 1.0f - 2.0f * (x * x + z * z),
+                           2.0f * (y * z + x * w)),
+                    float3(2.0f * (x * z + y * w), 2.0f * (y * z - x * w),
+                           1.0f - 2.0f * (x * x + y * y)));
+}
+
+kernel void aetherGaussianProject(device const AetherGaussianGpu* gaussians [[buffer(0)]],
+                                  constant AetherGaussianCamera& camera [[buffer(1)]],
+                                  device AetherProjectedGaussian* projected [[buffer(2)]],
+                                  device atomic_uint* counters [[buffer(3)]],
+                                  device uint* tileCounts [[buffer(4)]],
+                                  uint index [[thread_position_in_grid]]) {
+    if (index >= camera.tileGridCounts.z)
+        return;
+    AetherProjectedGaussian output{};
+    output.sourceCountValid.x = index;
+    const AetherGaussianGpu gaussian = gaussians[index];
+    const float4 cameraPoint4 = camera.worldToCamera * float4(gaussian.positionOpacity.xyz, 1.0f);
+    const float3 cameraPoint = cameraPoint4.xyz;
+    if (cameraPoint.z < camera.depthViewport.x || cameraPoint.z > camera.depthViewport.y) {
+        projected[index] = output;
+        tileCounts[index] = 0;
+        return;
+    }
+
+    const float3 scales = exp(gaussian.logScaleRestCount.xyz);
+    const float3 variances = scales * scales;
+    const float3x3 rotation = aetherQuaternionRotation(normalize(gaussian.rotation));
+    const float3x3 worldCovariance = rotation * float3x3(variances.x, 0.0f, 0.0f, 0.0f,
+                                                         variances.y, 0.0f, 0.0f, 0.0f,
+                                                         variances.z) *
+                                     transpose(rotation);
+    const float3x3 cameraRotation = float3x3(camera.worldToCamera[0].xyz,
+                                             camera.worldToCamera[1].xyz,
+                                             camera.worldToCamera[2].xyz);
+    const float3x3 covariance =
+        cameraRotation * worldCovariance * transpose(cameraRotation);
+    const float inverseZ = 1.0f / cameraPoint.z;
+    const float3 jacobianX = float3(camera.focalCenter.x * inverseZ, 0.0f,
+                                    -camera.focalCenter.x * cameraPoint.x * inverseZ * inverseZ);
+    const float3 jacobianY = float3(0.0f, camera.focalCenter.y * inverseZ,
+                                    -camera.focalCenter.y * cameraPoint.y * inverseZ * inverseZ);
+    const float a = dot(jacobianX, covariance * jacobianX) + 0.3f;
+    const float b = dot(jacobianX, covariance * jacobianY);
+    const float c = dot(jacobianY, covariance * jacobianY) + 0.3f;
+    const float determinant = a * c - b * b;
+    if (!isfinite(determinant) || determinant <= 1.0e-12f) {
+        projected[index] = output;
+        tileCounts[index] = 0;
+        return;
+    }
+    const float discriminant = sqrt(max(0.0f, (a - c) * (a - c) + 4.0f * b * b));
+    const float radius = 3.0f * sqrt(0.5f * (a + c + discriminant));
+    const float2 center = float2(camera.focalCenter.x * cameraPoint.x * inverseZ +
+                                     camera.focalCenter.z,
+                                 camera.focalCenter.y * cameraPoint.y * inverseZ +
+                                     camera.focalCenter.w);
+    const float2 viewport = camera.depthViewport.zw;
+    if (!isfinite(radius) || radius <= 0.0f || center.x + radius < 0.0f ||
+        center.y + radius < 0.0f || center.x - radius >= viewport.x ||
+        center.y - radius >= viewport.y) {
+        projected[index] = output;
+        tileCounts[index] = 0;
+        return;
+    }
+    const int2 minimumPixel = max(int2(0), int2(floor(center - radius)));
+    const int2 maximumPixel =
+        min(int2(viewport) - 1, int2(ceil(center + radius)));
+    const uint2 minimumTile = uint2(minimumPixel) / aetherGaussianTileSize;
+    const uint2 maximumTile = uint2(maximumPixel) / aetherGaussianTileSize;
+    const uint overlap = (maximumTile.x - minimumTile.x + 1) *
+                         (maximumTile.y - minimumTile.y + 1);
+    output.centerDepthRadius = float4(center, cameraPoint.z, radius);
+    output.conicOpacity = float4(c / determinant, -b / determinant, a / determinant,
+                                 1.0f / (1.0f + exp(-clamp(gaussian.positionOpacity.w, -30.0f,
+                                                          30.0f))));
+    constexpr float shDc = 0.28209479177387814f;
+    output.color = float4(clamp(0.5f + shDc * gaussian.dc.xyz, 0.0f, 1.0f), 1.0f);
+    output.tileBounds = uint4(minimumTile, maximumTile);
+    output.sourceCountValid = uint4(index, overlap, 1, 0);
+    projected[index] = output;
+    tileCounts[index] = overlap;
+    atomic_fetch_add_explicit(&counters[0], 1, memory_order_relaxed);
+}
+
+kernel void aetherGaussianExclusiveScan(device const uint* counts [[buffer(0)]],
+                                        device uint* offsets [[buffer(1)]],
+                                        device atomic_uint* counters [[buffer(2)]],
+                                        constant AetherGaussianCamera& camera [[buffer(3)]],
+                                        uint index [[thread_position_in_grid]]) {
+    if (index != 0)
+        return;
+    uint total = 0;
+    for (uint item = 0; item < camera.tileGridCounts.z; ++item) {
+        offsets[item] = total;
+        const uint next = total + counts[item];
+        total = next < total ? camera.tileGridCounts.w : min(next, camera.tileGridCounts.w);
+    }
+    atomic_store_explicit(&counters[1], total, memory_order_relaxed);
+    uint requested = 0;
+    if (camera.tileGridCounts.z > 0) {
+        const uint last = camera.tileGridCounts.z - 1;
+        requested = offsets[last] + counts[last];
+    }
+    if (requested > camera.tileGridCounts.w)
+        atomic_store_explicit(&counters[2], requested - camera.tileGridCounts.w,
+                              memory_order_relaxed);
+}
+
+kernel void aetherGaussianGenerateKeys(
+    device const AetherProjectedGaussian* projected [[buffer(0)]],
+    device const uint* offsets [[buffer(1)]], device uint2* keys [[buffer(2)]],
+    device uint* values [[buffer(3)]], constant AetherGaussianCamera& camera [[buffer(4)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index >= camera.tileGridCounts.z || projected[index].sourceCountValid.z == 0)
+        return;
+    const AetherProjectedGaussian gaussian = projected[index];
+    uint destination = offsets[index];
+    for (uint tileY = gaussian.tileBounds.y; tileY <= gaussian.tileBounds.w; ++tileY) {
+        for (uint tileX = gaussian.tileBounds.x; tileX <= gaussian.tileBounds.z; ++tileX) {
+            if (destination < camera.tileGridCounts.w) {
+                keys[destination] = uint2(as_type<uint>(gaussian.centerDepthRadius.z),
+                                          tileY * camera.tileGridCounts.x + tileX);
+                values[destination] = index;
+            }
+            ++destination;
+        }
+    }
+}
+
+kernel void aetherGaussianStableRadixPass(
+    device const uint2* inputKeys [[buffer(0)]], device const uint* inputValues [[buffer(1)]],
+    device uint2* outputKeys [[buffer(2)]], device uint* outputValues [[buffer(3)]],
+    device const atomic_uint* counters [[buffer(4)]], constant uint& pass [[buffer(5)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index != 0)
+        return;
+    uint histogram[256];
+    for (uint bucket = 0; bucket < 256; ++bucket)
+        histogram[bucket] = 0;
+    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
+    const uint shift = (pass & 3) * 8;
+    const uint component = pass >> 2;
+    for (uint item = 0; item < count; ++item) {
+        const uint key = component == 0 ? inputKeys[item].x : inputKeys[item].y;
+        ++histogram[(key >> shift) & 255];
+    }
+    uint prefix = 0;
+    for (uint bucket = 0; bucket < 256; ++bucket) {
+        const uint frequency = histogram[bucket];
+        histogram[bucket] = prefix;
+        prefix += frequency;
+    }
+    for (uint item = 0; item < count; ++item) {
+        const uint key = component == 0 ? inputKeys[item].x : inputKeys[item].y;
+        const uint destination = histogram[(key >> shift) & 255]++;
+        outputKeys[destination] = inputKeys[item];
+        outputValues[destination] = inputValues[item];
+    }
+}
+
+kernel void aetherGaussianInitializeRanges(device uint2* ranges [[buffer(0)]],
+                                           constant AetherGaussianCamera& camera [[buffer(1)]],
+                                           uint index [[thread_position_in_grid]]) {
+    const uint tileCount = camera.tileGridCounts.x * camera.tileGridCounts.y;
+    if (index < tileCount)
+        ranges[index] = uint2(0xffffffffu, 0);
+}
+
+kernel void aetherGaussianBuildRanges(device const uint2* keys [[buffer(0)]],
+                                      device atomic_uint* rangeWords [[buffer(1)]],
+                                      device const atomic_uint* counters [[buffer(2)]],
+                                      uint index [[thread_position_in_grid]]) {
+    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
+    if (index >= count)
+        return;
+    const uint tile = keys[index].y;
+    atomic_fetch_min_explicit(&rangeWords[tile * 2], index, memory_order_relaxed);
+    atomic_fetch_max_explicit(&rangeWords[tile * 2 + 1], index + 1, memory_order_relaxed);
+}
+
+kernel void aetherGaussianComposite(
+    device const AetherProjectedGaussian* projected [[buffer(0)]],
+    device const uint* sortedValues [[buffer(1)]], device const uint2* ranges [[buffer(2)]],
+    device atomic_uint* counters [[buffer(3)]], constant AetherGaussianCamera& camera [[buffer(4)]],
+    texture2d<float, access::write> colorTarget [[texture(0)]],
+    texture2d<float, access::write> depthTarget [[texture(1)]],
+    texture2d<uint, access::write> idTarget [[texture(2)]],
+    uint2 pixel [[thread_position_in_grid]]) {
+    if (pixel.x >= uint(camera.depthViewport.z) || pixel.y >= uint(camera.depthViewport.w))
+        return;
+    const uint tile = (pixel.y / aetherGaussianTileSize) * camera.tileGridCounts.x +
+                      pixel.x / aetherGaussianTileSize;
+    const uint2 range = ranges[tile];
+    float3 color = 0.0f;
+    float opacity = 0.0f;
+    float depth = INFINITY;
+    float dominant = 0.0f;
+    uint sourceId = 0;
+    if (range.x != 0xffffffffu) {
+        for (uint entry = range.x; entry < range.y; ++entry) {
+            const AetherProjectedGaussian gaussian = projected[sortedValues[entry]];
+            const float2 delta = float2(pixel) + 0.5f - gaussian.centerDepthRadius.xy;
+            const float distance = gaussian.conicOpacity.x * delta.x * delta.x +
+                                   2.0f * gaussian.conicOpacity.y * delta.x * delta.y +
+                                   gaussian.conicOpacity.z * delta.y * delta.y;
+            if (distance > 9.0f)
+                continue;
+            const float alpha = min(0.99f, gaussian.conicOpacity.w * exp(-0.5f * distance));
+            if (alpha < 1.0f / 255.0f)
+                continue;
+            const float contribution = (1.0f - opacity) * alpha;
+            color += contribution * gaussian.color.xyz;
+            opacity += contribution;
+            if (!isfinite(depth))
+                depth = gaussian.centerDepthRadius.z;
+            if (contribution > dominant) {
+                dominant = contribution;
+                sourceId = gaussian.sourceCountValid.x + 1;
+            }
+            if (opacity > 0.999f) {
+                atomic_fetch_add_explicit(&counters[3], 1, memory_order_relaxed);
+                break;
+            }
+        }
+    }
+    colorTarget.write(float4(color, opacity), pixel);
+    depthTarget.write(depth, pixel);
+    idTarget.write(sourceId, pixel);
+}
