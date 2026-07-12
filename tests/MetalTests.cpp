@@ -93,6 +93,14 @@ int main() {
         pool->release();
         return 1;
     }
+    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_ANIMATED_GLTF); !loaded ||
+        (*renderer)->animationClipCount() != 1 || !(*renderer)->selectAnimation(0, true)) {
+        std::cerr << "Renderer could not upload and select glTF animation\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->seekAnimation(0.5F);
+    (*renderer)->setAnimationPlaying(false);
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

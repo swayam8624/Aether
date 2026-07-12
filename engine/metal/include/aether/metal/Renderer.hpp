@@ -5,6 +5,7 @@
 #include <aether/metal/FrameContext.hpp>
 #include <aether/metal/GaussianPipeline.hpp>
 #include <aether/metal/MetalPtr.hpp>
+#include <aether/mesh/MeshAsset.hpp>
 #include <aether/scene/CameraController.hpp>
 #include <shared/AetherShaderTypes.h>
 
@@ -16,6 +17,7 @@
 #include <dispatch/dispatch.h>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +51,10 @@ class Renderer final {
     [[nodiscard]] Result<void> loadGltf(const std::filesystem::path& path);
     [[nodiscard]] Result<void> loadPly(const std::filesystem::path& path);
     [[nodiscard]] Result<void> loadAether(const std::filesystem::path& path);
+    [[nodiscard]] Result<void> selectAnimation(std::size_t clipIndex, bool loop = true);
+    void setAnimationPlaying(bool playing) noexcept { animationPlaying_ = playing; }
+    void seekAnimation(float seconds) noexcept;
+    [[nodiscard]] std::size_t animationClipCount() const noexcept;
     /// Input: top-left-origin drawable pixel coordinate.
     /// Output: 1-based Gaussian source ID, or zero for background.
     [[nodiscard]] Result<std::uint32_t> pickGaussian(std::uint32_t x, std::uint32_t y);
@@ -94,12 +100,14 @@ class Renderer final {
         MetalPtr<MTL::Buffer> indices;
         std::uint32_t indexCount{};
         std::size_t materialIndex{};
+        simd_float3 localBoundsCenter{};
     };
     struct GpuMeshInstance {
         std::size_t primitiveIndex{};
         simd_float4x4 worldTransform{matrix_identity_float4x4};
         simd_float3 worldBoundsCenter{};
         bool mirrored{};
+        std::size_t nodeIndex{};
     };
     struct GpuTexture {
         MetalPtr<MTL::Texture> srgb;
@@ -117,6 +125,11 @@ class Renderer final {
     std::vector<GpuMeshInstance> meshInstances_;
     std::vector<GpuTexture> meshTextures_;
     std::vector<GpuMaterial> meshMaterials_;
+    std::optional<mesh::MeshAsset> meshAnimationAsset_;
+    std::optional<std::size_t> selectedAnimation_;
+    float animationSeconds_{};
+    bool animationLoop_{true};
+    bool animationPlaying_{true};
     std::unique_ptr<GaussianPipeline> gaussianPipeline_;
     MetalPtr<MTL::Texture> gaussianColor_;
     MetalPtr<MTL::Texture> gaussianDepth_;

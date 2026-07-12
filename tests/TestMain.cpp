@@ -8,6 +8,7 @@
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/mesh/Animation.hpp>
 #include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/package/Sha256.hpp>
@@ -298,6 +299,20 @@ void testGltfLoader() {
     expect(transparentOrder == std::vector<std::size_t>({1, 0, 2}),
            "Transparent instances sort far-to-near with stable equal-distance ties");
 
+    const auto animatedPath =
+        std::filesystem::path(AETHER_TEST_FIXTURES) / "animated-triangle.gltf";
+    auto animated = aether::mesh::GltfLoader::load(animatedPath);
+    expect(animated.has_value(), "glTF animation accessors and channels load");
+    if (animated) {
+        expect(animated->animations.size() == 1 &&
+                   animated->animations[0].channels.size() == 1 &&
+                   std::abs(animated->animations[0].durationSeconds - 1.0F) < 1.0e-6F,
+               "glTF animation clip retains channel and duration");
+        const auto pose = aether::mesh::sampleAnimation(*animated, 0, 0.5F, false);
+        expect(pose.has_value() && std::abs((*pose)[0].translation.x - 2.0F) < 1.0e-6F,
+               "Loaded glTF animation evaluates at runtime");
+    }
+
     const auto texturedPath =
         std::filesystem::path(AETHER_TEST_FIXTURES) / "textured-triangle.gltf";
     auto textured = aether::mesh::GltfLoader::load(texturedPath);
@@ -323,6 +338,65 @@ void testGltfLoader() {
         expect(simd_length(simd_float3{tangent.x, tangent.y, tangent.z}) > 0.99F,
                "Missing glTF tangents are generated from UV gradients");
     }
+}
+
+void testMeshAnimation() {
+    aether::mesh::MeshAsset asset;
+    asset.nodes.resize(2);
+    asset.nodes[0].name = "Root";
+    asset.nodes[0].children = {1};
+    asset.nodes[1].name = "Child";
+    asset.nodes[1].parentIndex = 0;
+    asset.nodes[1].localTransform.translation = {0.0F, 2.0F, 0.0F};
+
+    aether::mesh::AnimationClip clip;
+    clip.name = "Motion";
+    clip.durationSeconds = 1.0F;
+    aether::mesh::AnimationChannel translation;
+    translation.nodeIndex = 0;
+    translation.path = aether::mesh::AnimationPath::translation;
+    translation.interpolation = aether::mesh::AnimationInterpolation::linear;
+    translation.keyTimes = {0.0F, 1.0F};
+    translation.values = {simd_float4{0.0F, 0.0F, 0.0F, 0.0F},
+                          simd_float4{4.0F, 0.0F, 0.0F, 0.0F}};
+    aether::mesh::AnimationChannel scale;
+    scale.nodeIndex = 1;
+    scale.path = aether::mesh::AnimationPath::scale;
+    scale.interpolation = aether::mesh::AnimationInterpolation::cubicSpline;
+    scale.keyTimes = {0.0F, 1.0F};
+    scale.values = {
+        simd_float4{}, simd_float4{1.0F, 1.0F, 1.0F, 0.0F}, simd_float4{},
+        simd_float4{}, simd_float4{3.0F, 3.0F, 3.0F, 0.0F}, simd_float4{}};
+    clip.channels = {translation, scale};
+    asset.animations.push_back(clip);
+
+    const auto sampled = aether::mesh::sampleAnimation(asset, 0, 0.5F, false);
+    expect(sampled.has_value(), "Mesh animation samples valid LINEAR and CUBICSPLINE channels");
+    if (sampled) {
+        expect(std::abs((*sampled)[0].translation.x - 2.0F) < 1.0e-6F &&
+                   std::abs((*sampled)[1].scale.x - 2.0F) < 1.0e-6F,
+               "Mesh animation interpolation produces expected midpoint values");
+        const auto worlds = aether::mesh::resolveWorldTransforms(asset, *sampled);
+        expect(worlds.has_value(), "Animated local transforms resolve through hierarchy");
+        if (worlds) {
+            const auto childOrigin = simd_mul((*worlds)[1], simd_float4{0, 0, 0, 1});
+            expect(std::abs(childOrigin.x - 2.0F) < 1.0e-6F &&
+                       std::abs(childOrigin.y - 2.0F) < 1.0e-6F,
+                   "Animated parent transform affects child world matrix");
+        }
+    }
+    const auto looped = aether::mesh::sampleAnimation(asset, 0, 1.25F, true);
+    expect(looped.has_value() && std::abs((*looped)[0].translation.x - 1.0F) < 1.0e-6F,
+           "Looping animation wraps deterministically");
+    const auto clamped = aether::mesh::sampleAnimation(asset, 0, 2.0F, false);
+    expect(clamped.has_value() && std::abs((*clamped)[0].translation.x - 4.0F) < 1.0e-6F,
+           "Non-looping animation clamps to final key");
+
+    asset.nodes[0].parentIndex = 1;
+    std::vector<aether::scene::Transform> cyclicLocals;
+    for (const auto& node : asset.nodes) cyclicLocals.push_back(node.localTransform);
+    expect(!aether::mesh::resolveWorldTransforms(asset, cyclicLocals).has_value(),
+        "Animation world resolution rejects hierarchy cycles");
 }
 
 void testSha256() {
@@ -505,6 +579,7 @@ int main() {
     testCameraController();
     testCameraPath();
     testGltfLoader();
+    testMeshAnimation();
     testSha256();
     testAetherPackage();
     testGaussianPly();

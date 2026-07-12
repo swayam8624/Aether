@@ -1,6 +1,7 @@
 #pragma once
 
 #include <shared/AetherShaderTypes.h>
+#include <aether/scene/Transform.hpp>
 #include <simd/simd.h>
 
 #include <array>
@@ -76,6 +77,32 @@ struct MeshInstance final {
     std::string name;
     std::size_t primitiveIndex{};
     simd_float4x4 worldTransform{matrix_identity_float4x4};
+    std::size_t nodeIndex{};
+};
+
+struct SceneNode final {
+    std::string name;
+    scene::Transform localTransform;
+    std::optional<std::size_t> parentIndex;
+    std::vector<std::size_t> children;
+};
+
+enum class AnimationPath { translation, rotation, scale };
+enum class AnimationInterpolation { step, linear, cubicSpline };
+
+struct AnimationChannel final {
+    std::size_t nodeIndex{};
+    AnimationPath path{AnimationPath::translation};
+    AnimationInterpolation interpolation{AnimationInterpolation::linear};
+    std::vector<float> keyTimes;
+    /// LINEAR/STEP: one value per key. CUBICSPLINE: in tangent, value, out tangent per key.
+    std::vector<simd_float4> values;
+};
+
+struct AnimationClip final {
+    std::string name;
+    float durationSeconds{};
+    std::vector<AnimationChannel> channels;
 };
 
 struct MeshAsset final {
@@ -85,6 +112,8 @@ struct MeshAsset final {
     std::vector<TextureAsset> textures;
     std::vector<MeshPrimitive> primitives;
     std::vector<MeshInstance> instances;
+    std::vector<SceneNode> nodes;
+    std::vector<AnimationClip> animations;
 
     [[nodiscard]] std::size_t vertexCount() const noexcept;
     [[nodiscard]] std::size_t indexCount() const noexcept;

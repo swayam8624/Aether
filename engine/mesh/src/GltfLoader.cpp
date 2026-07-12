@@ -193,7 +193,9 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
         fastgltf::Options::LoadExternalBuffers | fastgltf::Options::LoadExternalImages |
         fastgltf::Options::GenerateMeshIndices | fastgltf::Options::DecomposeNodeMatrices;
     auto parsed = parser.loadGltf(source.get(), path.parent_path(), options,
-                                  fastgltf::Category::OnlyRenderable);
+                                  fastgltf::Category::OnlyRenderable |
+                                      fastgltf::Category::Animations |
+                                      fastgltf::Category::Skins);
     if (parsed.error() != fastgltf::Error::None) {
         return fail(ErrorCode::corruptData, "glTF validation failed",
                     std::string(fastgltf::getErrorMessage(parsed.error())));
@@ -202,6 +204,38 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
 
     MeshAsset result;
     result.name = path.stem().string();
+    result.nodes.resize(sourceAsset.nodes.size());
+    for (std::size_t nodeIndex = 0; nodeIndex < sourceAsset.nodes.size(); ++nodeIndex) {
+        const auto& sourceNode = sourceAsset.nodes[nodeIndex];
+        auto& node = result.nodes[nodeIndex];
+        node.name = sourceNode.name.empty() ? "Node " + std::to_string(nodeIndex)
+                                           : std::string(sourceNode.name);
+        const auto* trs = std::get_if<fastgltf::TRS>(&sourceNode.transform);
+        if (!trs)
+            return fail(ErrorCode::corruptData, "glTF node matrix was not decomposed to TRS");
+        node.localTransform.translation = {static_cast<float>(trs->translation[0]),
+                                           static_cast<float>(trs->translation[1]),
+                                           static_cast<float>(trs->translation[2])};
+        node.localTransform.rotation = simd_quatf{simd_float4{
+            static_cast<float>(trs->rotation[0]), static_cast<float>(trs->rotation[1]),
+            static_cast<float>(trs->rotation[2]), static_cast<float>(trs->rotation[3])}};
+        node.localTransform.scale = {static_cast<float>(trs->scale[0]),
+                                     static_cast<float>(trs->scale[1]),
+                                     static_cast<float>(trs->scale[2])};
+        if (!scene::isFinite(node.localTransform) ||
+            simd_length_squared(node.localTransform.rotation.vector) < 1.0e-12F ||
+            !scene::hasNonZeroScale(node.localTransform))
+            return fail(ErrorCode::corruptData, "glTF node contains invalid transform", node.name);
+        node.localTransform.rotation = simd_normalize(node.localTransform.rotation);
+        node.children.assign(sourceNode.children.begin(), sourceNode.children.end());
+        for (const auto child : node.children) {
+            if (child >= result.nodes.size())
+                return fail(ErrorCode::corruptData, "glTF node child index is invalid", node.name);
+            if (result.nodes[child].parentIndex)
+                return fail(ErrorCode::corruptData, "glTF node has multiple parents", node.name);
+            result.nodes[child].parentIndex = nodeIndex;
+        }
+    }
     if (sourceAsset.images.size() > limits.maximumImages)
         return fail(ErrorCode::resourceExhausted, "glTF exceeds image-count limit");
     std::size_t totalImageBytes = 0;
@@ -474,10 +508,11 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
                     instanceOverflow = true;
                     return;
                 }
+                const auto nodeIndex = static_cast<std::size_t>(&node - sourceAsset.nodes.data());
                 result.instances.push_back(MeshInstance{
                     node.name.empty() ? std::string(sourceAsset.meshes[meshIndex].name)
                                       : std::string(node.name),
-                    firstPrimitive[meshIndex] + localPrimitive, transform});
+                    firstPrimitive[meshIndex] + localPrimitive, transform, nodeIndex});
             }
         });
     if (instanceOverflow) {
@@ -487,6 +522,97 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
         return fail(ErrorCode::corruptData, "glTF mesh node has a singular world transform");
     if (result.instances.empty())
         return fail(ErrorCode::corruptData, "glTF scene contains no renderable mesh instances");
+
+    std::size_t totalAnimationChannels = 0;
+    std::size_t totalAnimationKeyframes = 0;
+    result.animations.reserve(sourceAsset.animations.size());
+    for (const auto& sourceAnimation : sourceAsset.animations) {
+        AnimationClip clip;
+        clip.name = sourceAnimation.name.empty()
+                        ? "Animation " + std::to_string(result.animations.size())
+                        : std::string(sourceAnimation.name);
+        if (sourceAnimation.channels.size() > limits.maximumAnimationChannels -
+                                                  totalAnimationChannels)
+            return fail(ErrorCode::resourceExhausted, "glTF exceeds animation-channel limit");
+        totalAnimationChannels += sourceAnimation.channels.size();
+        clip.channels.reserve(sourceAnimation.channels.size());
+        for (const auto& sourceChannel : sourceAnimation.channels) {
+            if (!sourceChannel.nodeIndex || *sourceChannel.nodeIndex >= result.nodes.size() ||
+                sourceChannel.samplerIndex >= sourceAnimation.samplers.size())
+                return fail(ErrorCode::corruptData, "glTF animation channel reference is invalid");
+            const auto& sampler = sourceAnimation.samplers[sourceChannel.samplerIndex];
+            if (sampler.inputAccessor >= sourceAsset.accessors.size() ||
+                sampler.outputAccessor >= sourceAsset.accessors.size())
+                return fail(ErrorCode::corruptData, "glTF animation accessor reference is invalid");
+            const auto& input = sourceAsset.accessors[sampler.inputAccessor];
+            const auto& output = sourceAsset.accessors[sampler.outputAccessor];
+            if (input.type != fastgltf::AccessorType::Scalar || input.componentType != fastgltf::ComponentType::Float)
+                return fail(ErrorCode::corruptData, "glTF animation times must be scalar floats");
+            if (input.count == 0 || input.count > limits.maximumAnimationKeyframes -
+                                                    totalAnimationKeyframes)
+                return fail(ErrorCode::resourceExhausted, "glTF exceeds animation-keyframe limit");
+            totalAnimationKeyframes += input.count;
+            AnimationChannel channel;
+            channel.nodeIndex = *sourceChannel.nodeIndex;
+            switch (sourceChannel.path) {
+            case fastgltf::AnimationPath::Translation: channel.path = AnimationPath::translation; break;
+            case fastgltf::AnimationPath::Rotation: channel.path = AnimationPath::rotation; break;
+            case fastgltf::AnimationPath::Scale: channel.path = AnimationPath::scale; break;
+            default: return fail(ErrorCode::unsupported, "glTF morph-weight animation is not implemented");
+            }
+            switch (sampler.interpolation) {
+            case fastgltf::AnimationInterpolation::Step: channel.interpolation = AnimationInterpolation::step; break;
+            case fastgltf::AnimationInterpolation::Linear: channel.interpolation = AnimationInterpolation::linear; break;
+            case fastgltf::AnimationInterpolation::CubicSpline:
+                channel.interpolation = AnimationInterpolation::cubicSpline; break;
+            }
+            channel.keyTimes.resize(input.count);
+            fastgltf::copyFromAccessor<float>(sourceAsset, input, channel.keyTimes.data());
+            if (!std::is_sorted(channel.keyTimes.begin(), channel.keyTimes.end()) ||
+                std::adjacent_find(channel.keyTimes.begin(), channel.keyTimes.end()) !=
+                    channel.keyTimes.end() ||
+                std::ranges::any_of(channel.keyTimes, [](float time) { return !std::isfinite(time); }))
+                return fail(ErrorCode::corruptData, "glTF animation times must be finite and increasing");
+            const std::size_t multiplier = channel.interpolation == AnimationInterpolation::cubicSpline ? 3 : 1;
+            if (output.count != input.count * multiplier)
+                return fail(ErrorCode::corruptData, "glTF animation output count is invalid");
+            channel.values.resize(output.count);
+            if (channel.path == AnimationPath::rotation) {
+                if (output.type != fastgltf::AccessorType::Vec4)
+                    return fail(ErrorCode::corruptData, "glTF rotation animation must use VEC4 values");
+                fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
+                    sourceAsset, output, [&](const auto& value, std::size_t index) {
+                        channel.values[index] = {value.x(), value.y(), value.z(), value.w()};
+                    });
+            } else {
+                if (output.type != fastgltf::AccessorType::Vec3)
+                    return fail(ErrorCode::corruptData, "glTF TRS animation must use VEC3 values");
+                fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
+                    sourceAsset, output, [&](const auto& value, std::size_t index) {
+                        channel.values[index] = {value.x(), value.y(), value.z(), 0.0F};
+                    });
+            }
+            if (std::ranges::any_of(channel.values, [](simd_float4 value) {
+                    return !std::isfinite(value.x) || !std::isfinite(value.y) ||
+                           !std::isfinite(value.z) || !std::isfinite(value.w);
+                }))
+                return fail(ErrorCode::corruptData, "glTF animation values must be finite");
+            if (channel.path == AnimationPath::rotation) {
+                for (std::size_t key = 0; key < channel.keyTimes.size(); ++key) {
+                    const std::size_t valueIndex =
+                        channel.interpolation == AnimationInterpolation::cubicSpline ? key * 3 + 1
+                                                                                    : key;
+                    if (simd_length_squared(channel.values[valueIndex]) < 1.0e-12F)
+                        return fail(ErrorCode::corruptData,
+                                    "glTF rotation animation contains a zero quaternion");
+                    channel.values[valueIndex] = simd_normalize(channel.values[valueIndex]);
+                }
+            }
+            clip.durationSeconds = std::max(clip.durationSeconds, channel.keyTimes.back());
+            clip.channels.push_back(std::move(channel));
+        }
+        result.animations.push_back(std::move(clip));
+    }
     return result;
 }
 

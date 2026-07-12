@@ -5,6 +5,7 @@
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/mesh/Animation.hpp>
 #include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/scene/Camera.hpp>
@@ -202,8 +203,34 @@ void Renderer::draw(MTK::View* view) noexcept {
 
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     const Clock::TimePoint frameTime = Clock::now();
-    cameraController_.update(Clock::secondsBetween(previousFrameTime_, frameTime));
+    const double frameSeconds = Clock::secondsBetween(previousFrameTime_, frameTime);
+    cameraController_.update(frameSeconds);
     previousFrameTime_ = frameTime;
+    if (selectedAnimation_ && meshAnimationAsset_) {
+        if (animationPlaying_)
+            animationSeconds_ += static_cast<float>(frameSeconds);
+        auto localTransforms = mesh::sampleAnimation(*meshAnimationAsset_, *selectedAnimation_,
+                                                      animationSeconds_, animationLoop_);
+        auto worldTransforms = localTransforms
+                                   ? mesh::resolveWorldTransforms(*meshAnimationAsset_, *localTransforms)
+                                   : Result<std::vector<simd_float4x4>>(
+                                         std::unexpected(localTransforms.error()));
+        if (!worldTransforms) {
+            Log::instance().write(LogLevel::error, worldTransforms.error().describe());
+            selectedAnimation_.reset();
+        } else {
+            for (auto& instance : meshInstances_) {
+                if (instance.nodeIndex >= worldTransforms->size()) continue;
+                instance.worldTransform = (*worldTransforms)[instance.nodeIndex];
+                const auto localCenter = meshPrimitives_[instance.primitiveIndex].localBoundsCenter;
+                const auto transformed = simd_mul(
+                    instance.worldTransform,
+                    simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
+                instance.worldBoundsCenter = {transformed.x, transformed.y, transformed.z};
+                instance.mirrored = simd_determinant(instance.worldTransform) < 0.0F;
+            }
+        }
+    }
     MTL::RenderPassDescriptor* renderPass = view->currentRenderPassDescriptor();
     CA::MetalDrawable* drawable = view->currentDrawable();
     if (!renderPass || !drawable) {
@@ -481,7 +508,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         }
         uploaded.push_back(GpuMeshPrimitive{std::move(*vertices), std::move(*indices),
                                             static_cast<std::uint32_t>(primitive.indices.size()),
-                                            primitive.materialIndex});
+                                            primitive.materialIndex, primitive.localBoundsCenter});
     }
     meshPrimitives_ = std::move(uploaded);
     std::vector<GpuMeshInstance> instances;
@@ -496,17 +523,44 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         instances.push_back(GpuMeshInstance{sourceInstance.primitiveIndex,
                                             sourceInstance.worldTransform,
                                             {transformed.x, transformed.y, transformed.z},
-                                            simd_determinant(sourceInstance.worldTransform) < 0.0F});
+                                            simd_determinant(sourceInstance.worldTransform) < 0.0F,
+                                            sourceInstance.nodeIndex});
     }
     meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);
     meshMaterials_ = std::move(uploadedMaterials);
+    meshAnimationAsset_.emplace();
+    meshAnimationAsset_->nodes = std::move(loaded->nodes);
+    meshAnimationAsset_->animations = std::move(loaded->animations);
+    selectedAnimation_ = meshAnimationAsset_->animations.empty()
+                             ? std::nullopt
+                             : std::optional<std::size_t>{0};
+    animationSeconds_ = 0.0F;
+    animationPlaying_ = true;
     gaussianPipeline_.reset();
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
                                               std::to_string(meshPrimitives_.size()) +
                                               " primitives and " +
                                               std::to_string(meshInstances_.size()) + " instances");
     return {};
+}
+
+Result<void> Renderer::selectAnimation(std::size_t clipIndex, bool loop) {
+    if (!meshAnimationAsset_ || clipIndex >= meshAnimationAsset_->animations.size())
+        return fail(ErrorCode::invalidArgument, "Animation clip index is out of range");
+    selectedAnimation_ = clipIndex;
+    animationLoop_ = loop;
+    animationSeconds_ = 0.0F;
+    animationPlaying_ = true;
+    return {};
+}
+
+void Renderer::seekAnimation(float seconds) noexcept {
+    if (std::isfinite(seconds)) animationSeconds_ = std::max(0.0F, seconds);
+}
+
+std::size_t Renderer::animationClipCount() const noexcept {
+    return meshAnimationAsset_ ? meshAnimationAsset_->animations.size() : 0;
 }
 
 Result<void> Renderer::loadPly(const std::filesystem::path& path) {
@@ -521,6 +575,8 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
         return std::unexpected(loaded.error());
     meshPrimitives_.clear();
     meshInstances_.clear();
+    meshAnimationAsset_.reset();
+    selectedAnimation_.reset();
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
@@ -548,6 +604,8 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
         return std::unexpected(loaded.error());
     meshPrimitives_.clear();
     meshInstances_.clear();
+    meshAnimationAsset_.reset();
+    selectedAnimation_.reset();
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
