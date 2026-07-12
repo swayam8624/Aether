@@ -16,6 +16,9 @@ verified, shippable milestones. The current foundation contains:
   with `aether-pack` and `aether-inspect` command-line tools.
 - A bounded [standard 3DGS PLY importer](docs/formats/GAUSSIAN_PLY.md) and deterministic
   anisotropic CPU reference rasterizer.
+- A Metal 3 Gaussian correctness path with projection, covariance, stable tile/depth ordering,
+  bounded compositing, depth/IDs/counters, CPU/GPU agreement tests, and PLY/`.aether` presentation
+  in AetherStudio.
 - A warnings-as-errors CPU CI path, sanitizer preset, and foundation tests.
 
 The project does **not** yet claim production Gaussian rendering or relighting. See

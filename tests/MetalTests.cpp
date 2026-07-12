@@ -1,9 +1,11 @@
+#include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
 #include <aether/metal/FrameContext.hpp>
 #include <aether/metal/GaussianPipeline.hpp>
 #include <aether/metal/MetalPtr.hpp>
 #include <aether/metal/Renderer.hpp>
+#include <aether/package/Package.hpp>
 
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
@@ -11,7 +13,10 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
+#include <span>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -94,6 +99,26 @@ int main() {
         pool->release();
         return 1;
     }
+    if (auto loaded = (*renderer)->loadPly(AETHER_TEST_PLY); !loaded) {
+        std::cerr << loaded.error().describe() << '\n';
+        pool->release();
+        return 1;
+    }
+    auto canonical = aether::gaussian::GaussianCodec::encode(*gaussianAsset);
+    const auto packagePath =
+        std::filesystem::temp_directory_path() / "aether-metal-renderer-test.aether";
+    constexpr std::string_view metadata = "{\"name\":\"Metal fixture\"}";
+    aether::package::PackageWriter packageWriter;
+    if (!canonical ||
+        !packageWriter.addChunk(aether::package::ChunkType::metadata,
+                                std::as_bytes(std::span(metadata.data(), metadata.size()))) ||
+        !packageWriter.addChunk(aether::package::ChunkType::baseGaussians, *canonical) ||
+        !packageWriter.write(packagePath) || !(*renderer)->loadAether(packagePath)) {
+        std::cerr << "Renderer could not load a canonical AETHER Gaussian package\n";
+        pool->release();
+        return 1;
+    }
+    std::filesystem::remove(packagePath);
     constexpr std::size_t width = 9;
     constexpr std::size_t height = 9;
     auto color = makeTexture(device.get(), MTL::PixelFormatRGBA32Float, width, height);

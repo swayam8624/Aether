@@ -46,8 +46,14 @@ struct ContentView: View {
                     Text(selection?.rawValue ?? "Scene")
                         .font(.headline)
                     Spacer()
-                    Label("No scene loaded", systemImage: "circle.dashed")
-                        .foregroundStyle(.secondary)
+                    if let scenePath = document.state.scenePath {
+                        Label(URL(fileURLWithPath: scenePath).lastPathComponent,
+                              systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Label("No scene loaded", systemImage: "circle.dashed")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .frame(height: 42)
@@ -57,7 +63,7 @@ struct ContentView: View {
                     .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("AETHER FOUNDATION")
+                                Text(viewportModeLabel)
                                     .font(.caption.bold())
                                 Text("Metal viewport active")
                                     .font(.caption2)
@@ -79,7 +85,7 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button("Import glTF", systemImage: "square.and.arrow.down") { importGltf() }
+                Button("Import Scene", systemImage: "square.and.arrow.down") { importScene() }
                 Button("Undo", systemImage: "arrow.uturn.backward") { undoManager?.undo() }
                     .disabled(undoManager?.canUndo != true)
                 Button("Redo", systemImage: "arrow.uturn.forward") { undoManager?.redo() }
@@ -88,11 +94,13 @@ struct ContentView: View {
         }
     }
 
-    private func importGltf() {
+    private func importScene() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = ["gltf", "glb"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = ["aether", "ply", "gltf", "glb"].compactMap {
+            UTType(filenameExtension: $0)
+        }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         document.state.scenePath = url.path
         document.state.displayName = url.deletingPathExtension().lastPathComponent
@@ -104,5 +112,14 @@ struct ContentView: View {
             return scenePath
         }
         return projectURL?.deletingLastPathComponent().appendingPathComponent(scenePath).path
+    }
+
+    private var viewportModeLabel: String {
+        guard let scenePath = document.state.scenePath else { return "AETHER FOUNDATION" }
+        switch URL(fileURLWithPath: scenePath).pathExtension.lowercased() {
+        case "ply", "aether": return "STANDARD GAUSSIAN GPU"
+        case "gltf", "glb": return "MESH / PBR"
+        default: return "AETHER VIEWPORT"
+        }
     }
 }

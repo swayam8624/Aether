@@ -16,6 +16,14 @@ vertex ViewportOutput aetherViewportVertex(uint vertexId [[vertex_id]]) {
     return output;
 }
 
-fragment half4 aetherViewportFragment(ViewportOutput input [[stage_in]]) {
-    return half4(half3(0.025h + half(input.uv.x) * 0.02h), 1.0h);
+fragment half4 aetherViewportFragment(ViewportOutput input [[stage_in]],
+                                      constant uint& presentationMode [[buffer(0)]],
+                                      texture2d<float> gaussianColor [[texture(0)]]) {
+    const half3 background = half3(0.025h + half(input.uv.x) * 0.02h);
+    if (presentationMode == 0)
+        return half4(background, 1.0h);
+    const uint2 pixel = uint2(input.position.xy);
+    const float4 gaussian = gaussianColor.read(pixel);
+    const float3 composite = gaussian.rgb + (1.0f - gaussian.a) * float3(background);
+    return half4(half3(composite), 1.0h);
 }

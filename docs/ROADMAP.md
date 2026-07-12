@@ -41,8 +41,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 - [x] Strict bounded ASCII/binary-little-endian PLY/3DGS import and canonical binary codec.
 - [x] Deterministic CPU anisotropic projection and front-to-back compositing oracle.
-- [ ] Metal projection, covariance, culling, scan, sort, tile ranges, and compositing.
-- [ ] Depth, picking, counters, SH evaluation, and research/debug visualizations.
+- [x] Bounded Metal 3 projection, covariance, culling, scan, stable radix ordering, tile ranges,
+  compositing, depth/IDs, counters, and app presentation correctness path.
+- [x] Pixel-level CPU/GPU agreement test and explicit tile-entry overflow test.
+- [ ] Hierarchical parallel scan/radix optimization and M1/M2 performance exit gates.
+- [ ] Higher-order SH evaluation, picking workflow, and research/debug visualizations.
 
 ## Phase 4 — Fully local reconstruction
 

@@ -2,7 +2,10 @@
 
 #include <aether/core/Log.hpp>
 #include <aether/core/Profiler.hpp>
+#include <aether/gaussian/GaussianCodec.hpp>
+#include <aether/gaussian/PlyLoader.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/package/Package.hpp>
 #include <aether/scene/Camera.hpp>
 
 #include <Foundation/Foundation.hpp>
@@ -10,7 +13,9 @@
 #include <Foundation/NSURL.hpp>
 #include <QuartzCore/CAMetalDrawable.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -18,6 +23,18 @@
 #include <utility>
 
 namespace aether::metal {
+namespace {
+std::uint32_t tileEntryBudget(std::size_t gaussianCount) {
+    constexpr std::uint64_t minimumEntries = 4'096;
+    constexpr std::uint64_t maximumEntries = 4'194'304;
+    constexpr std::uint64_t expectedTilesPerGaussian = 64;
+    const std::uint64_t requested =
+        gaussianCount > maximumEntries / expectedTilesPerGaussian
+            ? maximumEntries
+            : static_cast<std::uint64_t>(gaussianCount) * expectedTilesPerGaussian;
+    return static_cast<std::uint32_t>(std::clamp(requested, minimumEntries, maximumEntries));
+}
+} // namespace
 
 Result<std::unique_ptr<Renderer>> Renderer::create(MTL::Device* device,
                                                    std::filesystem::path shaderLibraryPath) {
@@ -91,6 +108,44 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
 
     commandBuffer->setLabel(NS::String::string("AETHER Frame", NS::UTF8StringEncoding));
+    bool presentGaussians = false;
+    if (gaussianPipeline_) {
+        MTL::Texture* drawableTexture = drawable->texture();
+        if (drawableTexture &&
+            drawableTexture->width() <= std::numeric_limits<std::uint32_t>::max() &&
+            drawableTexture->height() <= std::numeric_limits<std::uint32_t>::max()) {
+            const auto width = static_cast<std::uint32_t>(drawableTexture->width());
+            const auto height = static_cast<std::uint32_t>(drawableTexture->height());
+            auto targets = ensureGaussianTargets(width, height);
+            scene::Camera camera;
+            const scene::Transform cameraTransform = cameraController_.transform();
+            auto viewMatrix = camera.viewMatrix(cameraTransform);
+            if (targets && viewMatrix && height > 0) {
+                simd_float4x4 positiveZView = *viewMatrix;
+                for (simd_float4& column : positiveZView.columns)
+                    column.z = -column.z;
+                const float focal = static_cast<float>(height) /
+                                    (2.0F * std::tan(camera.verticalFieldOfViewRadians * 0.5F));
+                AetherGaussianCamera gaussianCamera{};
+                gaussianCamera.worldToCamera = positiveZView;
+                gaussianCamera.focalCenter = {focal, focal, static_cast<float>(width) * 0.5F,
+                                              static_cast<float>(height) * 0.5F};
+                gaussianCamera.depthViewport = {
+                    camera.nearPlane, camera.infiniteFarPlane ? 10'000.0F : camera.farPlane,
+                    static_cast<float>(width), static_cast<float>(height)};
+                auto encoded =
+                    gaussianPipeline_->encode(commandBuffer, gaussianCamera, gaussianColor_.get(),
+                                              gaussianDepth_.get(), gaussianIds_.get());
+                if (encoded) {
+                    presentGaussians = true;
+                } else {
+                    Log::instance().write(LogLevel::error, encoded.error().describe());
+                }
+            } else if (!targets) {
+                Log::instance().write(LogLevel::error, targets.error().describe());
+            }
+        }
+    }
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(renderPass);
     if (!encoder) {
         dispatch_semaphore_signal(frameSemaphore_);
@@ -99,6 +154,10 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
     encoder->setLabel(NS::String::string("Scene Main Pass", NS::UTF8StringEncoding));
     encoder->setRenderPipelineState(viewportPipeline_.get());
+    const std::uint32_t presentationMode = presentGaussians ? 1U : 0U;
+    encoder->setFragmentBytes(&presentationMode, sizeof(presentationMode), 0);
+    if (presentGaussians)
+        encoder->setFragmentTexture(gaussianColor_.get(), 0);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
     if (!meshPrimitives_.empty() && pbrPipeline_ && reverseZDepthState_) {
@@ -192,9 +251,83 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             material, sourceMaterial.doubleSided});
     }
     meshPrimitives_ = std::move(uploaded);
+    gaussianPipeline_.reset();
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
                                               std::to_string(meshPrimitives_.size()) +
                                               " primitives");
+    return {};
+}
+
+Result<void> Renderer::loadPly(const std::filesystem::path& path) {
+    auto asset = gaussian::PlyLoader::load(path);
+    if (!asset)
+        return std::unexpected(asset.error());
+    auto pipeline = GaussianPipeline::create(device_.get(), shaderLibrary_.get(),
+                                             tileEntryBudget(asset->gaussians.size()));
+    if (!pipeline)
+        return std::unexpected(pipeline.error());
+    if (auto loaded = (*pipeline)->load(*asset); !loaded)
+        return std::unexpected(loaded.error());
+    meshPrimitives_.clear();
+    gaussianPipeline_ = std::move(*pipeline);
+    Log::instance().write(LogLevel::info, "Loaded PLY scene with " +
+                                              std::to_string(asset->gaussians.size()) +
+                                              " Gaussians");
+    return {};
+}
+
+Result<void> Renderer::loadAether(const std::filesystem::path& path) {
+    auto scenePackage = package::PackageReader::open(path);
+    if (!scenePackage)
+        return std::unexpected(scenePackage.error());
+    auto bytes = scenePackage->readChunk(package::ChunkType::baseGaussians);
+    if (!bytes)
+        return std::unexpected(bytes.error());
+    auto asset = gaussian::GaussianCodec::decode(*bytes);
+    if (!asset)
+        return std::unexpected(asset.error());
+    auto pipeline = GaussianPipeline::create(device_.get(), shaderLibrary_.get(),
+                                             tileEntryBudget(asset->gaussians.size()));
+    if (!pipeline)
+        return std::unexpected(pipeline.error());
+    if (auto loaded = (*pipeline)->load(*asset); !loaded)
+        return std::unexpected(loaded.error());
+    meshPrimitives_.clear();
+    gaussianPipeline_ = std::move(*pipeline);
+    Log::instance().write(LogLevel::info, "Loaded AETHER scene with " +
+                                              std::to_string(asset->gaussians.size()) +
+                                              " Gaussians");
+    return {};
+}
+
+Result<void> Renderer::ensureGaussianTargets(std::uint32_t width, std::uint32_t height) {
+    if (width == 0 || height == 0)
+        return fail(ErrorCode::invalidArgument, "Gaussian render target dimensions are zero");
+    if (gaussianColor_ && gaussianTargetWidth_ == width && gaussianTargetHeight_ == height)
+        return {};
+    auto createTexture = [&](MTL::PixelFormat format, const char* label) {
+        auto descriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+        descriptor->setTextureType(MTL::TextureType2D);
+        descriptor->setPixelFormat(format);
+        descriptor->setWidth(width);
+        descriptor->setHeight(height);
+        descriptor->setStorageMode(MTL::StorageModePrivate);
+        descriptor->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
+        auto texture = adopt(device_->newTexture(descriptor.get()));
+        if (texture)
+            texture->setLabel(NS::String::string(label, NS::UTF8StringEncoding));
+        return texture;
+    };
+    auto color = createTexture(MTL::PixelFormatRGBA16Float, "Gaussian HDR Color");
+    auto depth = createTexture(MTL::PixelFormatR32Float, "Gaussian Linear Depth");
+    auto ids = createTexture(MTL::PixelFormatR32Uint, "Gaussian Source IDs");
+    if (!color || !depth || !ids)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate Gaussian render targets");
+    gaussianColor_ = std::move(color);
+    gaussianDepth_ = std::move(depth);
+    gaussianIds_ = std::move(ids);
+    gaussianTargetWidth_ = width;
+    gaussianTargetHeight_ = height;
     return {};
 }
 

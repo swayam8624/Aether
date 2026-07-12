@@ -3,6 +3,7 @@
 #include <aether/core/Clock.hpp>
 #include <aether/core/Error.hpp>
 #include <aether/metal/FrameContext.hpp>
+#include <aether/metal/GaussianPipeline.hpp>
 #include <aether/metal/MetalPtr.hpp>
 #include <aether/scene/CameraController.hpp>
 #include <shared/AetherShaderTypes.h>
@@ -46,6 +47,8 @@ class Renderer final {
     void draw(MTK::View* view) noexcept;
     void drawableSizeWillChange(CGSize size) noexcept;
     [[nodiscard]] Result<void> loadGltf(const std::filesystem::path& path);
+    [[nodiscard]] Result<void> loadPly(const std::filesystem::path& path);
+    [[nodiscard]] Result<void> loadAether(const std::filesystem::path& path);
     void setCameraMovement(scene::CameraMove movement, bool active) noexcept;
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
@@ -58,6 +61,7 @@ class Renderer final {
   private:
     Renderer(MTL::Device* device, std::filesystem::path shaderLibraryPath);
     [[nodiscard]] Result<void> buildViewportPipeline();
+    [[nodiscard]] Result<void> ensureGaussianTargets(std::uint32_t width, std::uint32_t height);
     [[nodiscard]] Result<MetalPtr<MTL::Buffer>>
     uploadPrivateBuffer(const void* bytes, std::size_t size, const char* label);
     [[nodiscard]] static DeviceCapabilities inspect(MTL::Device* device);
@@ -85,6 +89,12 @@ class Renderer final {
         bool doubleSided{};
     };
     std::vector<GpuMeshPrimitive> meshPrimitives_;
+    std::unique_ptr<GaussianPipeline> gaussianPipeline_;
+    MetalPtr<MTL::Texture> gaussianColor_;
+    MetalPtr<MTL::Texture> gaussianDepth_;
+    MetalPtr<MTL::Texture> gaussianIds_;
+    std::uint32_t gaussianTargetWidth_{};
+    std::uint32_t gaussianTargetHeight_{};
     std::filesystem::path shaderLibraryPath_;
     scene::CameraController cameraController_;
     Clock::TimePoint previousFrameTime_ = Clock::now();

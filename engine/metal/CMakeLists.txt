@@ -18,7 +18,7 @@ target_include_directories(AetherMetal PUBLIC
 )
 target_include_directories(AetherMetal SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/external/metal-cpp)
 target_link_libraries(AetherMetal
-    PUBLIC Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian
+    PUBLIC Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian Aether::Package
     PRIVATE
         ${METAL_FRAMEWORK}
         ${METALKIT_FRAMEWORK}

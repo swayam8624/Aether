@@ -69,11 +69,19 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     if (!_renderer) {
         return;
     }
-    const auto result = _renderer->loadGltf(path.fileSystemRepresentation);
-    if (!result) {
-        NSLog(@"AETHER glTF load failed: %s", result.error().describe().c_str());
+    const NSString* extension = path.pathExtension.lowercaseString;
+    aether::Result<void> result;
+    if ([extension isEqualToString:@"ply"]) {
+        result = _renderer->loadPly(path.fileSystemRepresentation);
+    } else if ([extension isEqualToString:@"aether"]) {
+        result = _renderer->loadAether(path.fileSystemRepresentation);
     } else {
-        NSLog(@"AETHER glTF load succeeded: %@", path.lastPathComponent);
+        result = _renderer->loadGltf(path.fileSystemRepresentation);
+    }
+    if (!result) {
+        NSLog(@"AETHER scene load failed: %s", result.error().describe().c_str());
+    } else {
+        NSLog(@"AETHER scene load succeeded: %@", path.lastPathComponent);
     }
 }
 

@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
     }
     const auto& info = package->info();
     if (json) {
-        std::cout << "{\"schemaVersion\":1,\"path\":\"" << path.string()
+        std::cout << "{\"schemaVersion\":1,\"path\":\"" << escapeJson(path.string())
                   << "\",\"packageVersion\":\"" << info.majorVersion << '.' << info.minorVersion
                   << "\",\"bytes\":" << info.fileBytes << ",\"contentHash\":\""
                   << aether::package::Sha256::hex(info.contentHash) << "\",\"chunks\":[";
