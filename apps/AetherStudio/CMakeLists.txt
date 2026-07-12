@@ -5,11 +5,13 @@ set(AETHER_STUDIO_SOURCES
     Sources/AetherStudioApp.swift
     Sources/ContentView.swift
     Sources/AetherViewport.swift
+    Sources/ReconstructionWorkspace.swift
+    Bridge/AetherCaptureBridge.mm
     Bridge/AetherViewportBridge.mm
 )
 
 add_executable(AetherStudio MACOSX_BUNDLE ${AETHER_STUDIO_SOURCES})
-target_link_libraries(AetherStudio PRIVATE Aether::Metal
+target_link_libraries(AetherStudio PRIVATE Aether::Metal Aether::Capture
     "-framework AppKit" "-framework Metal" "-framework MetalKit" "-framework SwiftUI")
 target_include_directories(AetherStudio PRIVATE Bridge)
 
@@ -38,4 +40,15 @@ if(TARGET AetherShaders)
     set_source_files_properties("${AetherShaders_OUTPUT}" PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources
         GENERATED TRUE)
+endif()
+
+if(TARGET aether-reconstruct)
+    add_dependencies(AetherStudio aether-reconstruct)
+    add_custom_command(TARGET AetherStudio POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_BUNDLE_DIR:AetherStudio>/Contents/Helpers"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:aether-reconstruct>"
+            "$<TARGET_BUNDLE_DIR:AetherStudio>/Contents/Helpers/aether-reconstruct"
+        VERBATIM)
 endif()

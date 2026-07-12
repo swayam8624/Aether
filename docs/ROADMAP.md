@@ -63,6 +63,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] ImageIO-backed capture validation with real decode rejection, bounded thumbnail analysis,
   image dimensions, EXIF camera/exposure fields, luminance consistency, relative sharpness,
   source sizing, deterministic ordering, structured issues, and machine-readable output.
+- [x] Studio Reconstruction workspace with native validation reports, explicit dependency selection,
+  bundled process helper, atomic-marker progress, cancellation, and resume-safe job output.
 - [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
 - [ ] Feature-correspondence overlap and pose-coverage validation, proxy generation, checkpointing,
   and comparison views.

@@ -80,10 +80,13 @@ struct ContentView: View {
                 .frame(height: 42)
                 .background(.bar)
 
-                AetherViewport(scenePath: resolvedScenePath,
-                               selectedGaussianId: $selectedGaussianId,
-                               gaussianDebugMode: gaussianDebugMode.rawValue)
-                    .overlay(alignment: .topLeading) {
+                if selection == .reconstruction {
+                    ReconstructionWorkspace()
+                } else {
+                    AetherViewport(scenePath: resolvedScenePath,
+                                   selectedGaussianId: $selectedGaussianId,
+                                   gaussianDebugMode: gaussianDebugMode.rawValue)
+                        .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(viewportModeLabel)
@@ -100,7 +103,8 @@ struct ContentView: View {
                             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                             .padding(12)
                         }
-                    }
+                        }
+                }
             }
         }
         .onChange(of: selection) { _, newValue in
