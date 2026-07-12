@@ -30,7 +30,7 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 ## Phase 2 — Mesh/PBR renderer
 
 - [x] Generation-safe scene transforms, reverse-Z cameras, and keyboard/mouse fly controls.
-- [ ] Persisted and cinematic camera paths.
+- [x] Versioned camera-path JSON, atomic persistence, validation, and interpolated playback sampling.
 - [x] Bounded glTF 2.0 parsing, indexed meshes, generated normals, and material factors.
 - [x] Bounded glTF image ingestion, ImageIO decode, mipmaps, samplers, generated/imported tangents,
   core PBR texture maps, normal mapping, alpha masking, and alpha blend pipeline.
@@ -77,6 +77,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 ## Phase 9 — Evaluation and release
 
+- [x] Headless `.aether` + camera-path Metal benchmark with warmup, median/p95 GPU time, allocation,
+  visibility, tile-entry, overflow, and early-termination JSON counters.
 - [ ] Public and original datasets, full metrics/ablations, raw results, report, SBOM, notarized DMG,
   signed update feed, checksums, and reproducibility package.
 

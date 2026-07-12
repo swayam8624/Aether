@@ -1,5 +1,23 @@
 include(FetchContent)
 
+function(aether_resolve_simdjson)
+    if(TARGET simdjson::simdjson)
+        return()
+    endif()
+    find_package(simdjson 3.12.3 CONFIG QUIET)
+    if(TARGET simdjson::simdjson)
+        return()
+    endif()
+    set(SIMDJSON_DEVELOPER_MODE OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(simdjson
+        URL https://github.com/simdjson/simdjson/archive/refs/tags/v3.12.3.tar.gz
+        URL_HASH SHA256=d0af071f2f4187d8b26b556e83ef832b634bd5feb4e2f537b9dabbd334d4e334
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(simdjson)
+endfunction()
+
 function(aether_resolve_fastgltf)
     if(TARGET fastgltf::fastgltf)
         return()

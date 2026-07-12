@@ -7,7 +7,7 @@ target_compile_definitions(AetherTests PRIVATE
 aether_configure_target(AetherTests)
 add_test(NAME AetherTests COMMAND AetherTests)
 
-if(TARGET AetherMetal)
+if(TARGET AetherMetal AND TARGET AetherShaders)
     add_executable(AetherMetalTests MetalTests.cpp)
     target_link_libraries(AetherMetalTests PRIVATE Aether::Metal)
     target_compile_options(AetherMetalTests PRIVATE -fblocks)
@@ -28,4 +28,21 @@ if(TARGET AetherMetal)
     )
     target_link_libraries(AetherSwiftTests PRIVATE "-framework SwiftUI" "-framework UniformTypeIdentifiers")
     add_test(NAME AetherSwiftTests COMMAND AetherSwiftTests)
+endif()
+
+if(TARGET aether-benchmark AND TARGET aether-pack)
+    set(AETHER_BENCHMARK_TEST_SCENE "${CMAKE_CURRENT_BINARY_DIR}/benchmark-fixture.aether")
+    add_test(NAME AetherBenchmarkFixturePack
+        COMMAND $<TARGET_FILE:aether-pack>
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/package-scene"
+            --output "${AETHER_BENCHMARK_TEST_SCENE}" --json)
+    set_tests_properties(AetherBenchmarkFixturePack PROPERTIES
+        FIXTURES_SETUP AetherBenchmarkScene)
+    add_test(NAME AetherBenchmarkSmoke
+        COMMAND $<TARGET_FILE:aether-benchmark>
+            "${AETHER_BENCHMARK_TEST_SCENE}"
+            --camera-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/camera-path.json"
+            --width 32 --height 32 --frames 2 --warmup 1 --json)
+    set_tests_properties(AetherBenchmarkSmoke PROPERTIES
+        FIXTURES_REQUIRED AetherBenchmarkScene)
 endif()

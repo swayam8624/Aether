@@ -13,6 +13,7 @@
 #include <aether/rendergraph/RenderGraph.hpp>
 #include <aether/scene/Camera.hpp>
 #include <aether/scene/CameraController.hpp>
+#include <aether/scene/CameraPath.hpp>
 #include <aether/scene/Scene.hpp>
 
 #include <array>
@@ -209,6 +210,41 @@ void testCameraController() {
            "Cleared camera input does not continue moving");
     controller.addLookDelta(0.0F, 100000.0F);
     expect(std::abs(controller.pitch()) < 1.56F, "Fly camera pitch is clamped below singularity");
+}
+
+void testCameraPath() {
+    aether::scene::CameraPath path;
+    aether::scene::CameraKeyframe first;
+    first.seconds = 0.0;
+    first.transform.translation = {0.0F, 0.0F, 0.0F};
+    first.exposureEv = -1.0F;
+    aether::scene::CameraKeyframe second;
+    second.seconds = 2.0;
+    second.transform.translation = {2.0F, 4.0F, 6.0F};
+    second.transform.rotation = simd_quaternion(1.0F, simd_float3{0.0F, 1.0F, 0.0F});
+    second.verticalFieldOfViewRadians = 0.8F;
+    second.exposureEv = 1.0F;
+    path.editableKeyframes() = {first, second};
+    expect(path.validate().has_value(), "Camera path accepts finite ordered keyframes");
+    auto midpoint = path.sample(1.0);
+    expect(midpoint.has_value() &&
+               simd_length(midpoint->transform.translation - simd_float3{1.0F, 2.0F, 3.0F}) <
+                   1.0e-6F &&
+               std::abs(midpoint->exposureEv) < 1.0e-6F,
+           "Camera path interpolates position and exposure at timeline midpoint");
+
+    const auto file = std::filesystem::temp_directory_path() / "aether-camera-path.json";
+    std::filesystem::remove(file);
+    expect(path.save(file).has_value(), "Camera path saves atomically as versioned JSON");
+    auto loaded = aether::scene::CameraPath::load(file);
+    expect(loaded.has_value() && loaded->keyframes().size() == 2 &&
+               std::abs(loaded->duration() - 2.0) < 1.0e-9,
+           "Camera path JSON round-trips with duration");
+    std::filesystem::remove(file);
+
+    second.seconds = 0.0;
+    path.editableKeyframes() = {first, second};
+    expect(!path.validate().has_value(), "Camera path rejects duplicate timestamps");
 }
 
 void testGltfLoader() {
@@ -429,6 +465,7 @@ int main() {
     testSceneTransforms();
     testCameraProjection();
     testCameraController();
+    testCameraPath();
     testGltfLoader();
     testSha256();
     testAetherPackage();

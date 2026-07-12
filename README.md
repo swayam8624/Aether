@@ -63,6 +63,20 @@ ctest --test-dir build/sanitizer --output-on-failure
 
 Release configuration intentionally fails if the Metal Toolchain is missing.
 
+## Package and benchmark
+
+```bash
+build/debug/tools/aether-pack/aether-pack scene-directory --output scene.aether --json
+build/debug/tools/aether-inspect/aether-inspect scene.aether --json
+build/debug/apps/AetherBenchmark/aether-benchmark scene.aether \
+  --camera-path camera-path.json --width 1920 --height 1080 --json
+```
+
+The benchmark performs warmup frames, waits for each real Metal command buffer, and reports GPU
+median/p95 time plus allocation and Gaussian workload counters. See
+[the benchmark contract](docs/BENCHMARKING.md). The current serial correctness sorter is not used to
+make release performance claims.
+
 ## Repository history
 
 The complete pre-migration working tree, including uncommitted tutorial work and generated build
