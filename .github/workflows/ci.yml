@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpu-foundation:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset ci
+      - name: Build
+        run: cmake --build --preset ci --parallel
+      - name: Test
+        run: ctest --preset ci
+
+  sanitizer:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset sanitizer
+      - name: Build
+        run: cmake --build --preset sanitizer --parallel
+      - name: Test
+        run: ctest --test-dir build/sanitizer --output-on-failure

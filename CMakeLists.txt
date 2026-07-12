@@ -1,49 +1,46 @@
-cmake_minimum_required(VERSION 3.24)
-project(MetalEngine)
+cmake_minimum_required(VERSION 3.28)
 
-set(CMAKE_CXX_STANDARD 20)
+project(Aether VERSION 0.1.0 LANGUAGES CXX)
 
-# 1. Find the macOS System Frameworks (Foundation, Metal, etc.)
-# This is the equivalent of 'find_package(Vulkan)'
-find_library(METAL_FRAMEWORK Metal REQUIRED)
-find_library(QUARTZ_FRAMEWORK QuartzCore REQUIRED)
-find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
-find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
-find_library(METALK_FRAMEWORK MetalKit REQUIRED)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 2. Define your sources
-add_executable(${PROJECT_NAME}
-        MetalPractice/main.cpp
-        MetalPractice/control/app_delegate.cpp
-        MetalPractice/control/app_delegate.h
-        MetalPractice/config.h
-        MetalPractice/control/view_delegate.cpp
-        MetalPractice/control/view_delegate.h
-        MetalPractice/view/renderer.cpp
-        MetalPractice/view/renderer.h
-        MetalPractice/view/mesh_factory.cpp
-        MetalPractice/view/mesh_factory.h
-)
+option(AETHER_BUILD_STUDIO "Build the SwiftUI AetherStudio application" ${APPLE})
+option(AETHER_BUILD_TOOLS "Build AETHER command-line tools" ON)
+option(AETHER_BUILD_TESTS "Build AETHER tests" ON)
+option(AETHER_BUILD_EXAMPLES "Build archived tutorial examples" OFF)
+option(AETHER_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+option(AETHER_ENABLE_ASAN "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(AETHER_REQUIRE_METAL_TOOLCHAIN "Fail configuration when metal/metallib are unavailable" OFF)
 
-# 3. Include the metal-cpp headers
-target_include_directories(${PROJECT_NAME} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/metal-cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/metal-cpp-extensions
-)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(AetherWarnings)
 
-# 4. Link everything together
-target_link_libraries(${PROJECT_NAME} PRIVATE
-        ${METAL_FRAMEWORK}
-        ${QUARTZ_FRAMEWORK}
-        ${FOUNDATION_FRAMEWORK}
-        ${APPKIT_FRAMEWORK}
-        ${METALK_FRAMEWORK}
-)
+add_subdirectory(engine/core)
+add_subdirectory(engine/rendergraph)
 
-# 5. Tell CMake this is a macOS App Bundle (important for windowing)
-if(APPLE)
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-            MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_GUI_IDENTIFIER "com.yourname.metalengine"
-    )
+if(AETHER_BUILD_TOOLS)
+    add_subdirectory(tools/aether-inspect)
+endif()
+
+if(AETHER_BUILD_STUDIO)
+    if(NOT APPLE)
+        message(FATAL_ERROR "AetherStudio is a macOS application")
+    endif()
+    enable_language(OBJCXX)
+    enable_language(Swift)
+    add_subdirectory(engine/metal)
+    add_subdirectory(apps/AetherStudio)
+endif()
+
+if(AETHER_BUILD_TESTS)
+    include(CTest)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
+if(AETHER_BUILD_EXAMPLES)
+    add_subdirectory(examples/00_triangle)
 endif()
