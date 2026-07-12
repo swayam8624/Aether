@@ -24,6 +24,7 @@ add_subdirectory(engine/rendergraph)
 add_subdirectory(engine/scene)
 aether_resolve_fastgltf()
 add_subdirectory(engine/mesh)
+add_subdirectory(engine/gaussian)
 aether_resolve_zstd()
 add_subdirectory(engine/package)
 

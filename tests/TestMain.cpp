@@ -4,6 +4,8 @@
 #include <aether/core/Log.hpp>
 #include <aether/core/Profiler.hpp>
 #include <aether/core/ResourceLocator.hpp>
+#include <aether/gaussian/PlyLoader.hpp>
+#include <aether/gaussian/ReferenceRasterizer.hpp>
 #include <aether/mesh/GltfLoader.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/package/Sha256.hpp>
@@ -12,6 +14,8 @@
 #include <aether/scene/CameraController.hpp>
 #include <aether/scene/Scene.hpp>
 
+#include <array>
+#include <bit>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -274,6 +278,94 @@ void testAetherPackage() {
     std::filesystem::remove(path);
 }
 
+void testGaussianPly() {
+    const auto path = std::filesystem::temp_directory_path() / "aether-gaussian-test.ply";
+    {
+        std::ofstream stream(path, std::ios::binary);
+        stream << "ply\n"
+                  "format ascii 1.0\n"
+                  "comment deterministic AETHER fixture\n"
+                  "element vertex 1\n"
+                  "property float x\n"
+                  "property float y\n"
+                  "property float z\n"
+                  "property float f_dc_0\n"
+                  "property float f_dc_1\n"
+                  "property float f_dc_2\n"
+                  "property float opacity\n"
+                  "property float scale_0\n"
+                  "property float scale_1\n"
+                  "property float scale_2\n"
+                  "property float rot_0\n"
+                  "property float rot_1\n"
+                  "property float rot_2\n"
+                  "property float rot_3\n"
+                  "property float confidence\n"
+                  "end_header\n"
+                  "0 0 2 1 0 0 5 -2 -2 -2 2 0 0 0 0.75\n";
+    }
+    auto asset = aether::gaussian::PlyLoader::load(path);
+    expect(asset.has_value() && asset->gaussians.size() == 1, "Strict 3DGS PLY fixture loads");
+    if (asset) {
+        expect(asset->sphericalHarmonicDegree == 0, "PLY DC-only SH degree is detected");
+        expect(asset->diagnostics.size() == 1, "Unknown scalar property produces a diagnostic");
+        expect(std::abs(asset->gaussians[0].rotation[0] - 1.0F) < 1.0e-6F,
+               "PLY quaternion is normalized");
+
+        aether::gaussian::ReferenceCamera camera;
+        camera.width = 9;
+        camera.height = 9;
+        camera.focalX = 8.0F;
+        camera.focalY = 8.0F;
+        camera.centerX = 4.5F;
+        camera.centerY = 4.5F;
+        auto image = aether::gaussian::ReferenceRasterizer::render(*asset, camera);
+        expect(image.has_value(), "CPU Gaussian reference rasterizer accepts a calibrated camera");
+        if (image) {
+            constexpr std::size_t center = 4 * 9 + 4;
+            expect(image->color[center][3] > 0.9F,
+                   "CPU Gaussian reference produces opaque center coverage");
+            expect(std::abs(image->depth[center] - 2.0F) < 1.0e-6F,
+                   "CPU Gaussian reference writes first-hit depth");
+            expect(image->ids[center] == 1, "CPU Gaussian reference writes a stable source ID");
+        }
+    }
+    aether::gaussian::PlyLimits limits;
+    limits.maximumGaussians = 0;
+    expect(!aether::gaussian::PlyLoader::load(path, limits).has_value(),
+           "PLY Gaussian allocation limit is enforced before payload allocation");
+    std::filesystem::remove(path);
+
+    const auto binaryPath =
+        std::filesystem::temp_directory_path() / "aether-gaussian-binary-test.ply";
+    {
+        std::ofstream stream(binaryPath, std::ios::binary);
+        stream << "ply\n"
+                  "format binary_little_endian 1.0\n"
+                  "element vertex 1\n"
+                  "property float x\nproperty float y\nproperty float z\n"
+                  "property float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\n"
+                  "property float opacity\n"
+                  "property float scale_0\nproperty float scale_1\nproperty float scale_2\n"
+                  "property float rot_0\nproperty float rot_1\nproperty float rot_2\nproperty "
+                  "float rot_3\n"
+                  "end_header\n";
+        constexpr std::array values{0.0F,  0.0F,  3.0F,  0.0F, 0.0F, 0.0F, 2.0F,
+                                    -1.0F, -1.0F, -1.0F, 1.0F, 0.0F, 0.0F, 0.0F};
+        for (const float value : values) {
+            const std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
+            for (std::size_t byte = 0; byte < sizeof(bits); ++byte) {
+                const auto output = static_cast<char>((bits >> (byte * 8U)) & 0xffU);
+                stream.write(&output, 1);
+            }
+        }
+    }
+    const auto binaryAsset = aether::gaussian::PlyLoader::load(binaryPath);
+    expect(binaryAsset.has_value() && binaryAsset->gaussians[0].position[2] == 3.0F,
+           "Binary-little-endian 3DGS PLY loads deterministically");
+    std::filesystem::remove(binaryPath);
+}
+
 } // namespace
 
 int main() {
@@ -289,6 +381,7 @@ int main() {
     testGltfLoader();
     testSha256();
     testAetherPackage();
+    testGaussianPly();
     if (failures == 0) {
         std::cout << "All AETHER foundation tests passed\n";
     }

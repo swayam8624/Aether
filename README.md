@@ -14,6 +14,8 @@ verified, shippable milestones. The current foundation contains:
 - A SwiftUI macOS application whose Objective-C++ bridge keeps Metal objects out of Swift.
 - A versioned, hashed, bounded, per-chunk compressed [`.aether` container](docs/formats/AETHER_PACKAGE.md)
   with `aether-pack` and `aether-inspect` command-line tools.
+- A bounded [standard 3DGS PLY importer](docs/formats/GAUSSIAN_PLY.md) and deterministic
+  anisotropic CPU reference rasterizer.
 - A warnings-as-errors CPU CI path, sanitizer preset, and foundation tests.
 
 The project does **not** yet claim production Gaussian rendering or relighting. See
