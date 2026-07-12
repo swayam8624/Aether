@@ -7,6 +7,14 @@ target_compile_definitions(AetherTests PRIVATE
 aether_configure_target(AetherTests)
 add_test(NAME AetherTests COMMAND AetherTests)
 
+if(TARGET AetherCapture)
+    add_executable(AetherCaptureTests CaptureTests.cpp)
+    target_link_libraries(AetherCaptureTests PRIVATE Aether::Capture
+        "-framework CoreFoundation" "-framework CoreGraphics" "-framework ImageIO")
+    aether_configure_target(AetherCaptureTests)
+    add_test(NAME AetherCaptureTests COMMAND AetherCaptureTests)
+endif()
+
 if(TARGET AetherMetal AND TARGET AetherShaders)
     add_executable(AetherMetalTests MetalTests.cpp)
     target_link_libraries(AetherMetalTests PRIVATE Aether::Metal)

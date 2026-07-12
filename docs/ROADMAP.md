@@ -60,8 +60,12 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Version-pinned COLMAP 3.13.0 and Brush 0.3.0 process adapters with direct argv execution,
   version checks, deterministic seeds, cancellation forwarding, logs, hashed provenance, atomic
   stage markers, and tested resume behavior.
+- [x] ImageIO-backed capture validation with real decode rejection, bounded thumbnail analysis,
+  image dimensions, EXIF camera/exposure fields, luminance consistency, relative sharpness,
+  source sizing, deterministic ordering, structured issues, and machine-readable output.
 - [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
-- [ ] Dataset validation, proxy generation, checkpointing, and comparison views.
+- [ ] Feature-correspondence overlap and pose-coverage validation, proxy generation, checkpointing,
+  and comparison views.
 
 ## Phase 5 — Hybrid worlds
 
