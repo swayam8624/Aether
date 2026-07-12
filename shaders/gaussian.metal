@@ -165,6 +165,7 @@ kernel void aetherGaussianExclusiveScan(device const uint* counts [[buffer(0)]],
                                         device uint* offsets [[buffer(1)]],
                                         device atomic_uint* counters [[buffer(2)]],
                                         constant AetherGaussianCamera& camera [[buffer(3)]],
+                                        device uint* indirectDispatch [[buffer(4)]],
                                         uint index [[thread_position_in_grid]]) {
     if (index != 0)
         return;
@@ -175,6 +176,9 @@ kernel void aetherGaussianExclusiveScan(device const uint* counts [[buffer(0)]],
         total = next < total ? camera.tileGridCounts.w : min(next, camera.tileGridCounts.w);
     }
     atomic_store_explicit(&counters[1], total, memory_order_relaxed);
+    indirectDispatch[0] = (total + 255) / 256;
+    indirectDispatch[1] = 1;
+    indirectDispatch[2] = 1;
     uint requested = 0;
     if (camera.tileGridCounts.z > 0) {
         const uint last = camera.tileGridCounts.z - 1;
@@ -222,6 +226,7 @@ kernel void aetherGaussianScanBlocks(device const uint* counts [[buffer(0)]],
 kernel void aetherGaussianScanBlockSums(device uint* blockSums [[buffer(0)]],
                                         device atomic_uint* counters [[buffer(1)]],
                                         constant AetherGaussianCamera& camera [[buffer(2)]],
+                                        device uint* indirectDispatch [[buffer(3)]],
                                         uint index [[thread_position_in_grid]]) {
     if (index != 0)
         return;
@@ -234,11 +239,96 @@ kernel void aetherGaussianScanBlockSums(device uint* blockSums [[buffer(0)]],
     }
     const uint stored = uint(min(total, ulong(camera.tileGridCounts.w)));
     atomic_store_explicit(&counters[1], stored, memory_order_relaxed);
+    indirectDispatch[0] = (stored + 255) / 256;
+    indirectDispatch[1] = 1;
+    indirectDispatch[2] = 1;
     if (total > camera.tileGridCounts.w) {
         atomic_store_explicit(&counters[2],
                               uint(min(total - camera.tileGridCounts.w, ulong(0xffffffffu))),
                               memory_order_relaxed);
     }
+}
+
+uint aetherGaussianRadixDigit(uint2 key, uint pass) {
+    const uint component = pass < 8 ? key.x : key.y;
+    return (component >> ((pass & 7) * 4)) & 15;
+}
+
+kernel void aetherGaussianRadixHistogram(
+    device const uint2* keys [[buffer(0)]], device uint* groupHistograms [[buffer(1)]],
+    device const atomic_uint* counters [[buffer(2)]], constant uint& pass [[buffer(3)]],
+    uint index [[thread_position_in_grid]], uint localIndex [[thread_index_in_threadgroup]],
+    uint groupIndex [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]],
+    uint simdGroup [[simdgroup_index_in_threadgroup]], uint simdWidth [[threads_per_simdgroup]],
+    uint threadsPerGroup [[threads_per_threadgroup]]) {
+    threadgroup uint simdCounts[32][16];
+    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
+    const uint digit = index < count ? aetherGaussianRadixDigit(keys[index], pass) : 0xffffffffu;
+    for (uint bucket = 0; bucket < 16; ++bucket) {
+        const uint matches = digit == bucket ? 1 : 0;
+        const uint total = simd_sum(matches);
+        if (lane == 0)
+            simdCounts[simdGroup][bucket] = total;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint simdGroupCount = threadsPerGroup / simdWidth;
+    if (localIndex < 16) {
+        uint total = 0;
+        for (uint group = 0; group < simdGroupCount; ++group)
+            total += simdCounts[group][localIndex];
+        groupHistograms[groupIndex * 16 + localIndex] = total;
+    }
+}
+
+kernel void aetherGaussianRadixOffsets(device const uint* groupHistograms [[buffer(0)]],
+                                       device uint* groupOffsets [[buffer(1)]],
+                                       device const atomic_uint* counters [[buffer(2)]],
+                                       uint index [[thread_position_in_grid]]) {
+    if (index != 0)
+        return;
+    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
+    const uint groupCount = (count + 255) / 256;
+    uint base = 0;
+    for (uint bucket = 0; bucket < 16; ++bucket) {
+        for (uint group = 0; group < groupCount; ++group) {
+            const uint location = group * 16 + bucket;
+            groupOffsets[location] = base;
+            base += groupHistograms[location];
+        }
+    }
+}
+
+kernel void aetherGaussianRadixScatter(
+    device const uint2* inputKeys [[buffer(0)]], device const uint* inputValues [[buffer(1)]],
+    device uint2* outputKeys [[buffer(2)]], device uint* outputValues [[buffer(3)]],
+    device const uint* groupOffsets [[buffer(4)]],
+    device const atomic_uint* counters [[buffer(5)]], constant uint& pass [[buffer(6)]],
+    uint index [[thread_position_in_grid]], uint groupIndex [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]], uint simdGroup [[simdgroup_index_in_threadgroup]],
+    uint simdWidth [[threads_per_simdgroup]], uint threadsPerGroup [[threads_per_threadgroup]]) {
+    threadgroup uint simdCounts[32][16];
+    const uint count = atomic_load_explicit(&counters[1], memory_order_relaxed);
+    const uint digit = index < count ? aetherGaussianRadixDigit(inputKeys[index], pass) : 0xffffffffu;
+    uint rankWithinSimd = 0;
+    for (uint bucket = 0; bucket < 16; ++bucket) {
+        const uint matches = digit == bucket ? 1 : 0;
+        const uint prefix = simd_prefix_exclusive_sum(matches);
+        const uint total = simd_sum(matches);
+        if (lane == 0)
+            simdCounts[simdGroup][bucket] = total;
+        if (matches != 0)
+            rankWithinSimd = prefix;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (index >= count)
+        return;
+    uint localRank = rankWithinSimd;
+    const uint simdGroupCount = threadsPerGroup / simdWidth;
+    for (uint group = 0; group < min(simdGroup, simdGroupCount); ++group)
+        localRank += simdCounts[group][digit];
+    const uint destination = groupOffsets[groupIndex * 16 + digit] + localRank;
+    outputKeys[destination] = inputKeys[index];
+    outputValues[destination] = inputValues[index];
 }
 
 kernel void aetherGaussianAddBlockOffsets(device uint* offsets [[buffer(0)]],

@@ -22,6 +22,7 @@ aether-benchmark scene.aether --camera-path path.json \
   --width 1920 --height 1080 --frames 600 --warmup 30 --json
 ```
 
-The current bounded Metal 3 scan/radix correctness fallback makes results reproducible but is not the
-optimized release sorter. Numbers produced before the hierarchical parallel sorter and named medium
-benchmark scene are useful for regression detection only; they are not AETHER performance claims.
+The default Metal 3 path now uses block-parallel scans and stable 4-bit parallel radix passes, while
+retaining serial compatibility kernels. Numbers produced before the named medium benchmark scene and
+cross-device validation are useful for regression detection only; they are not AETHER performance
+claims.

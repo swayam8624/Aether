@@ -211,8 +211,12 @@ int main() {
 
     auto multiBlockAsset = *gaussianAsset;
     multiBlockAsset.gaussians.assign(513, gaussianAsset->gaussians.front());
-    for (auto& gaussian : multiBlockAsset.gaussians)
-        gaussian.opacityLogit = -10.0F;
+    for (std::size_t index = 0; index < multiBlockAsset.gaussians.size(); ++index) {
+        auto& gaussian = multiBlockAsset.gaussians[index];
+        gaussian.position[2] = 1.5F + static_cast<float>((index * 97U) % 513U) / 1026.0F;
+        gaussian.opacityLogit = -4.0F;
+        gaussian.dc[0] = static_cast<float>(index % 7U) * 0.15F;
+    }
     auto multiBlockPipeline =
         aether::metal::GaussianPipeline::create(device.get(), library.get(), 4096);
     auto multiBlockColor = makeTexture(device.get(), MTL::PixelFormatRGBA32Float, width, height);
@@ -235,10 +239,18 @@ int main() {
     auto multiBlockReference =
         aether::gaussian::ReferenceRasterizer::render(multiBlockAsset, referenceCamera);
     const auto multiBlockStats = (*multiBlockPipeline)->statistics();
+    bool centerMatches = multiBlockReference.has_value();
+    if (multiBlockReference) {
+        for (std::size_t channel = 0; channel < 4; ++channel) {
+            centerMatches =
+                centerMatches && std::abs(multiBlockPixels[center][channel] -
+                                          multiBlockReference->color[center][channel]) < 2.0e-4F;
+        }
+    }
     if (!multiBlockReference || multiBlockStats.visibleGaussians != 513 ||
         multiBlockStats.tileEntries != 513 || multiBlockStats.overflowedEntries != 0 ||
-        std::abs(multiBlockPixels[center].w - multiBlockReference->color[center][3]) > 2.0e-4F) {
-        std::cerr << "Hierarchical Gaussian scan disagrees across 256-item blocks\n";
+        !centerMatches) {
+        std::cerr << "Parallel Gaussian scan/radix disagrees across 256-item blocks\n";
         pool->release();
         return 1;
     }

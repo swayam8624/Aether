@@ -74,8 +74,8 @@ build/debug/apps/AetherBenchmark/aether-benchmark scene.aether \
 
 The benchmark performs warmup frames, waits for each real Metal command buffer, and reports GPU
 median/p95 time plus allocation and Gaussian workload counters. See
-[the benchmark contract](docs/BENCHMARKING.md). The current serial correctness sorter is not used to
-make release performance claims.
+[the benchmark contract](docs/BENCHMARKING.md). Serial kernels are compatibility fallbacks only, and
+tiny-fixture timings are never used as release performance claims.
 
 ## Repository history
 

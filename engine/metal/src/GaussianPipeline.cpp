@@ -17,10 +17,14 @@ enum PipelineIndex : std::size_t {
     scanBlockSums = 2,
     addBlockOffsets = 3,
     generateKeys = 4,
-    radix = 5,
-    initializeRanges = 6,
-    buildRanges = 7,
-    composite = 8,
+    radixHistogram = 5,
+    radixOffsets = 6,
+    radixScatter = 7,
+    initializeRanges = 8,
+    buildRanges = 9,
+    composite = 10,
+    serialScan = 11,
+    serialRadix = 12,
 };
 
 Result<MetalPtr<MTL::Buffer>> makeBuffer(MTL::Device* device, std::size_t bytes,
@@ -60,6 +64,16 @@ GaussianPipeline::create(MTL::Device* device, MTL::Library* library,
                    MTL::ResourceStorageModePrivate, "Gaussian Values B");
     auto counters = makeBuffer(device, sizeof(AetherGaussianCounters),
                                MTL::ResourceStorageModeShared, "Gaussian Counters");
+    const std::size_t radixGroupCount =
+        (static_cast<std::size_t>(maximumTileEntries) + 255U) / 256U;
+    auto radixHistograms = makeBuffer(device, radixGroupCount * 16U * sizeof(std::uint32_t),
+                                      MTL::ResourceStorageModePrivate, "Gaussian Radix Histograms");
+    auto radixGroupOffsets =
+        makeBuffer(device, radixGroupCount * 16U * sizeof(std::uint32_t),
+                   MTL::ResourceStorageModePrivate, "Gaussian Radix Group Offsets");
+    auto indirectDispatch =
+        makeBuffer(device, 3U * sizeof(std::uint32_t), MTL::ResourceStorageModePrivate,
+                   "Gaussian Radix Indirect Dispatch");
     if (!keysA)
         return std::unexpected(keysA.error());
     if (!keysB)
@@ -70,11 +84,20 @@ GaussianPipeline::create(MTL::Device* device, MTL::Library* library,
         return std::unexpected(valuesB.error());
     if (!counters)
         return std::unexpected(counters.error());
+    if (!radixHistograms)
+        return std::unexpected(radixHistograms.error());
+    if (!radixGroupOffsets)
+        return std::unexpected(radixGroupOffsets.error());
+    if (!indirectDispatch)
+        return std::unexpected(indirectDispatch.error());
     pipeline->keysA_ = std::move(*keysA);
     pipeline->keysB_ = std::move(*keysB);
     pipeline->valuesA_ = std::move(*valuesA);
     pipeline->valuesB_ = std::move(*valuesB);
     pipeline->counters_ = std::move(*counters);
+    pipeline->radixHistograms_ = std::move(*radixHistograms);
+    pipeline->radixGroupOffsets_ = std::move(*radixGroupOffsets);
+    pipeline->indirectDispatch_ = std::move(*indirectDispatch);
     return pipeline;
 }
 
@@ -84,9 +107,11 @@ GaussianPipeline::GaussianPipeline(MTL::Device* device, std::uint32_t maximumTil
 Result<void> GaussianPipeline::buildPipelines(MTL::Library* library) {
     constexpr std::array names{"aetherGaussianProject",          "aetherGaussianScanBlocks",
                                "aetherGaussianScanBlockSums",    "aetherGaussianAddBlockOffsets",
-                               "aetherGaussianGenerateKeys",     "aetherGaussianStableRadixPass",
+                               "aetherGaussianGenerateKeys",     "aetherGaussianRadixHistogram",
+                               "aetherGaussianRadixOffsets",     "aetherGaussianRadixScatter",
                                "aetherGaussianInitializeRanges", "aetherGaussianBuildRanges",
-                               "aetherGaussianComposite"};
+                               "aetherGaussianComposite",        "aetherGaussianExclusiveScan",
+                               "aetherGaussianStableRadixPass"};
     for (std::size_t index = 0; index < names.size(); ++index) {
         auto function =
             adopt(library->newFunction(NS::String::string(names[index], NS::UTF8StringEncoding)));
@@ -232,39 +257,52 @@ Result<void> GaussianPipeline::encode(MTL::CommandBuffer* commandBuffer,
                                  });
         !result)
         return result;
-    if (pipelines_[scanBlocks]->maxTotalThreadsPerThreadgroup() < 256)
-        return fail(ErrorCode::metal, "Metal device cannot run 256-thread Gaussian scans");
-    MTL::ComputeCommandEncoder* scanEncoder = commandBuffer->computeCommandEncoder();
-    if (!scanEncoder)
-        return fail(ErrorCode::metal, "Unable to create Gaussian block-scan encoder");
-    scanEncoder->setLabel(NS::String::string("Gaussian Block Scan", NS::UTF8StringEncoding));
-    scanEncoder->setComputePipelineState(pipelines_[scanBlocks].get());
-    scanEncoder->setBuffer(tileCounts_.get(), 0, 0);
-    scanEncoder->setBuffer(offsets_.get(), 0, 1);
-    scanEncoder->setBuffer(scanBlockSums_.get(), 0, 2);
-    scanEncoder->setBytes(&camera, sizeof(camera), 3);
-    const std::uint32_t scanBlockCount = (gaussianCount_ + 255U) / 256U;
-    scanEncoder->dispatchThreadgroups(MTL::Size::Make(scanBlockCount, 1, 1),
-                                      MTL::Size::Make(256, 1, 1));
-    scanEncoder->endEncoding();
-    if (auto result =
-            dispatch1D(commandBuffer, pipelines_[scanBlockSums].get(), 1, "Gaussian Block Prefix",
-                       [&](MTL::ComputeCommandEncoder* encoder) {
-                           encoder->setBuffer(scanBlockSums_.get(), 0, 0);
-                           encoder->setBuffer(counters_.get(), 0, 1);
-                           encoder->setBytes(&camera, sizeof(camera), 2);
-                       });
-        !result)
+    const bool parallelScan = pipelines_[scanBlocks]->maxTotalThreadsPerThreadgroup() >= 256;
+    if (parallelScan) {
+        MTL::ComputeCommandEncoder* scanEncoder = commandBuffer->computeCommandEncoder();
+        if (!scanEncoder)
+            return fail(ErrorCode::metal, "Unable to create Gaussian block-scan encoder");
+        scanEncoder->setLabel(NS::String::string("Gaussian Block Scan", NS::UTF8StringEncoding));
+        scanEncoder->setComputePipelineState(pipelines_[scanBlocks].get());
+        scanEncoder->setBuffer(tileCounts_.get(), 0, 0);
+        scanEncoder->setBuffer(offsets_.get(), 0, 1);
+        scanEncoder->setBuffer(scanBlockSums_.get(), 0, 2);
+        scanEncoder->setBytes(&camera, sizeof(camera), 3);
+        const std::uint32_t scanBlockCount = (gaussianCount_ + 255U) / 256U;
+        scanEncoder->dispatchThreadgroups(MTL::Size::Make(scanBlockCount, 1, 1),
+                                          MTL::Size::Make(256, 1, 1));
+        scanEncoder->endEncoding();
+        if (auto result = dispatch1D(commandBuffer, pipelines_[scanBlockSums].get(), 1,
+                                     "Gaussian Block Prefix",
+                                     [&](MTL::ComputeCommandEncoder* encoder) {
+                                         encoder->setBuffer(scanBlockSums_.get(), 0, 0);
+                                         encoder->setBuffer(counters_.get(), 0, 1);
+                                         encoder->setBytes(&camera, sizeof(camera), 2);
+                                         encoder->setBuffer(indirectDispatch_.get(), 0, 3);
+                                     });
+            !result)
+            return result;
+        if (auto result = dispatch1D(commandBuffer, pipelines_[addBlockOffsets].get(),
+                                     gaussianCount_, "Gaussian Block Offset Propagation",
+                                     [&](MTL::ComputeCommandEncoder* encoder) {
+                                         encoder->setBuffer(offsets_.get(), 0, 0);
+                                         encoder->setBuffer(scanBlockSums_.get(), 0, 1);
+                                         encoder->setBytes(&camera, sizeof(camera), 2);
+                                     });
+            !result)
+            return result;
+    } else if (auto result = dispatch1D(commandBuffer, pipelines_[serialScan].get(), 1,
+                                        "Gaussian Serial Scan Fallback",
+                                        [&](MTL::ComputeCommandEncoder* encoder) {
+                                            encoder->setBuffer(tileCounts_.get(), 0, 0);
+                                            encoder->setBuffer(offsets_.get(), 0, 1);
+                                            encoder->setBuffer(counters_.get(), 0, 2);
+                                            encoder->setBytes(&camera, sizeof(camera), 3);
+                                            encoder->setBuffer(indirectDispatch_.get(), 0, 4);
+                                        });
+               !result) {
         return result;
-    if (auto result = dispatch1D(commandBuffer, pipelines_[addBlockOffsets].get(), gaussianCount_,
-                                 "Gaussian Block Offset Propagation",
-                                 [&](MTL::ComputeCommandEncoder* encoder) {
-                                     encoder->setBuffer(offsets_.get(), 0, 0);
-                                     encoder->setBuffer(scanBlockSums_.get(), 0, 1);
-                                     encoder->setBytes(&camera, sizeof(camera), 2);
-                                 });
-        !result)
-        return result;
+    }
     if (auto result = dispatch1D(commandBuffer, pipelines_[generateKeys].get(), gaussianCount_,
                                  "Gaussian Key Generation",
                                  [&](MTL::ComputeCommandEncoder* encoder) {
@@ -277,24 +315,72 @@ Result<void> GaussianPipeline::encode(MTL::CommandBuffer* commandBuffer,
         !result)
         return result;
 
-    for (std::uint32_t pass = 0; pass < 8; ++pass) {
-        const bool even = (pass % 2U) == 0;
-        MTL::Buffer* inputKeys = even ? keysA_.get() : keysB_.get();
-        MTL::Buffer* inputValues = even ? valuesA_.get() : valuesB_.get();
-        MTL::Buffer* outputKeys = even ? keysB_.get() : keysA_.get();
-        MTL::Buffer* outputValues = even ? valuesB_.get() : valuesA_.get();
-        if (auto result =
-                dispatch1D(commandBuffer, pipelines_[radix].get(), 1, "Gaussian Stable Radix Pass",
-                           [&](MTL::ComputeCommandEncoder* encoder) {
-                               encoder->setBuffer(inputKeys, 0, 0);
-                               encoder->setBuffer(inputValues, 0, 1);
-                               encoder->setBuffer(outputKeys, 0, 2);
-                               encoder->setBuffer(outputValues, 0, 3);
-                               encoder->setBuffer(counters_.get(), 0, 4);
-                               encoder->setBytes(&pass, sizeof(pass), 5);
-                           });
-            !result)
-            return result;
+    const bool parallelRadix = pipelines_[radixHistogram]->maxTotalThreadsPerThreadgroup() >= 256 &&
+                               pipelines_[radixScatter]->maxTotalThreadsPerThreadgroup() >= 256;
+    if (parallelRadix) {
+        for (std::uint32_t pass = 0; pass < 16; ++pass) {
+            const bool even = (pass % 2U) == 0;
+            MTL::Buffer* inputKeys = even ? keysA_.get() : keysB_.get();
+            MTL::Buffer* inputValues = even ? valuesA_.get() : valuesB_.get();
+            MTL::Buffer* outputKeys = even ? keysB_.get() : keysA_.get();
+            MTL::Buffer* outputValues = even ? valuesB_.get() : valuesA_.get();
+            MTL::ComputeCommandEncoder* histogram = commandBuffer->computeCommandEncoder();
+            if (!histogram)
+                return fail(ErrorCode::metal, "Unable to create Gaussian radix histogram encoder");
+            histogram->setLabel(
+                NS::String::string("Gaussian Radix Histogram", NS::UTF8StringEncoding));
+            histogram->setComputePipelineState(pipelines_[radixHistogram].get());
+            histogram->setBuffer(inputKeys, 0, 0);
+            histogram->setBuffer(radixHistograms_.get(), 0, 1);
+            histogram->setBuffer(counters_.get(), 0, 2);
+            histogram->setBytes(&pass, sizeof(pass), 3);
+            histogram->dispatchThreadgroups(indirectDispatch_.get(), 0, MTL::Size::Make(256, 1, 1));
+            histogram->endEncoding();
+            if (auto result = dispatch1D(commandBuffer, pipelines_[radixOffsets].get(), 1,
+                                         "Gaussian Radix Group Prefix",
+                                         [&](MTL::ComputeCommandEncoder* encoder) {
+                                             encoder->setBuffer(radixHistograms_.get(), 0, 0);
+                                             encoder->setBuffer(radixGroupOffsets_.get(), 0, 1);
+                                             encoder->setBuffer(counters_.get(), 0, 2);
+                                         });
+                !result)
+                return result;
+            MTL::ComputeCommandEncoder* scatter = commandBuffer->computeCommandEncoder();
+            if (!scatter)
+                return fail(ErrorCode::metal, "Unable to create Gaussian radix scatter encoder");
+            scatter->setLabel(
+                NS::String::string("Gaussian Radix Stable Scatter", NS::UTF8StringEncoding));
+            scatter->setComputePipelineState(pipelines_[radixScatter].get());
+            scatter->setBuffer(inputKeys, 0, 0);
+            scatter->setBuffer(inputValues, 0, 1);
+            scatter->setBuffer(outputKeys, 0, 2);
+            scatter->setBuffer(outputValues, 0, 3);
+            scatter->setBuffer(radixGroupOffsets_.get(), 0, 4);
+            scatter->setBuffer(counters_.get(), 0, 5);
+            scatter->setBytes(&pass, sizeof(pass), 6);
+            scatter->dispatchThreadgroups(indirectDispatch_.get(), 0, MTL::Size::Make(256, 1, 1));
+            scatter->endEncoding();
+        }
+    } else {
+        for (std::uint32_t pass = 0; pass < 8; ++pass) {
+            const bool even = (pass % 2U) == 0;
+            MTL::Buffer* inputKeys = even ? keysA_.get() : keysB_.get();
+            MTL::Buffer* inputValues = even ? valuesA_.get() : valuesB_.get();
+            MTL::Buffer* outputKeys = even ? keysB_.get() : keysA_.get();
+            MTL::Buffer* outputValues = even ? valuesB_.get() : valuesA_.get();
+            if (auto result = dispatch1D(commandBuffer, pipelines_[serialRadix].get(), 1,
+                                         "Gaussian Serial Radix Fallback",
+                                         [&](MTL::ComputeCommandEncoder* encoder) {
+                                             encoder->setBuffer(inputKeys, 0, 0);
+                                             encoder->setBuffer(inputValues, 0, 1);
+                                             encoder->setBuffer(outputKeys, 0, 2);
+                                             encoder->setBuffer(outputValues, 0, 3);
+                                             encoder->setBuffer(counters_.get(), 0, 4);
+                                             encoder->setBytes(&pass, sizeof(pass), 5);
+                                         });
+                !result)
+                return result;
+        }
     }
 
     if (auto result = dispatch1D(commandBuffer, pipelines_[initializeRanges].get(), tileCount,

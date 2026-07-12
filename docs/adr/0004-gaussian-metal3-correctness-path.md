@@ -10,17 +10,16 @@ anisotropic covariance, culling, overlap counts, exclusive offsets, key generati
 radix ordering, tile ranges, front-to-back composition, depth, IDs, early termination, and bounded
 overflow counters. It uses only 32-bit atomics and therefore remains valid on the M1 baseline.
 
-The serial exclusive scan remains available as a deterministic fallback. The default path now uses
-256-threadgroup Blelloch scans, block-prefix propagation, saturated global budgets, and a Metal test
-that crosses three scan blocks. Stable radix ordering still executes its global passes in one GPU
-thread and is a correctness fallback, not the performance path used to make frame-rate claims. The
-production sorter will replace it with parallel histogram/prefix/scatter passes while retaining the
-same buffers, ordering contract, CPU image comparison, and fallback implementation.
+Serial exclusive scan and 8-bit stable radix kernels remain available as deterministic fallbacks.
+The default path uses 256-threadgroup Blelloch scans, block-prefix propagation, saturated global
+budgets, indirect dispatch, and a stable 16-pass 4-bit radix made of per-group histograms, group
+prefixes, and SIMD-prefix scatter. A Metal test crosses three scan/radix blocks with shuffled depths
+and varying colors, then compares the composed result to the CPU oracle.
 
 ## Consequences
 
-- Every stage is executable and validated now; optimization does not need to change public scene or
-  shader ABI.
+- Every stage and compatibility fallback is executable; optimization does not change public scene
+  or shader ABI.
 - Tile-entry allocation is explicitly budgeted. Overflow is counted and never writes out of bounds.
-- No performance claim or Phase 3 exit gate may cite the serial fallback.
+- No performance claim or Phase 3 exit gate may cite the serial fallback or tiny fixture.
 - M1 compatibility does not depend on 64-bit atomics.

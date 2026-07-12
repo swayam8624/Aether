@@ -63,13 +63,16 @@ class GaussianPipeline final {
     MetalPtr<MTL::Buffer> tileCounts_;
     MetalPtr<MTL::Buffer> offsets_;
     MetalPtr<MTL::Buffer> scanBlockSums_;
+    MetalPtr<MTL::Buffer> radixHistograms_;
+    MetalPtr<MTL::Buffer> radixGroupOffsets_;
+    MetalPtr<MTL::Buffer> indirectDispatch_;
     MetalPtr<MTL::Buffer> keysA_;
     MetalPtr<MTL::Buffer> keysB_;
     MetalPtr<MTL::Buffer> valuesA_;
     MetalPtr<MTL::Buffer> valuesB_;
     MetalPtr<MTL::Buffer> ranges_;
     MetalPtr<MTL::Buffer> counters_;
-    std::array<MetalPtr<MTL::ComputePipelineState>, 9> pipelines_;
+    std::array<MetalPtr<MTL::ComputePipelineState>, 13> pipelines_;
 };
 
 } // namespace aether::metal
