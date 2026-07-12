@@ -16,7 +16,9 @@ Required scalar properties are:
 `f_rest_N` properties are optional, but when present they must be dense and encode a complete SH
 degree: 9 values for degree 1, 24 for degree 2, or 45 for degree 3. Unregistered scalar properties
 are skipped with conversion diagnostics. Rotations are normalized on import in `(w, x, y, z)`
-order. Scale and opacity remain in log/logit space to preserve the trained representation.
+order. Higher-order coefficients retain GraphDECO's channel-major PLY order (15 red, 15 green, 15
+blue at degree 3); both CPU and Metal evaluators interpret that order through degree 3. Scale and
+opacity remain in log/logit space to preserve the trained representation.
 
 The default hostile-input limits are a 16 GiB file, 1 MiB header, 256 vertex properties, and 100
 million Gaussians. Callers may reduce every limit. A deterministic anisotropic CPU rasterizer is the

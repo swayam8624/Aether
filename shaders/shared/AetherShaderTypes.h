@@ -63,6 +63,7 @@ struct AetherGaussianCamera {
     AetherFloat4 focalCenter;
     AetherFloat4 depthViewport;
     AetherUInt4 tileGridCounts;
+    AetherFloat4 cameraWorldPosition;
 };
 
 struct AetherProjectedGaussian {
@@ -86,7 +87,7 @@ static_assert(sizeof(AetherMeshVertex) == 64);
 static_assert(sizeof(AetherFrameUniforms) == 176);
 static_assert(sizeof(AetherMaterialUniforms) == 64);
 static_assert(sizeof(AetherGaussianGpu) == 256);
-static_assert(sizeof(AetherGaussianCamera) == 112);
+static_assert(sizeof(AetherGaussianCamera) == 128);
 static_assert(sizeof(AetherProjectedGaussian) == 80);
 static_assert(sizeof(AetherGaussianCounters) == 16);
 #endif

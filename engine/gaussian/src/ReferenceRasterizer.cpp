@@ -84,6 +84,67 @@ float sigmoid(float value) {
     return 1.0F / (1.0F + std::exp(-std::clamp(value, -30.0F, 30.0F)));
 }
 
+std::array<float, 3> sphericalHarmonics(const Gaussian& gaussian,
+                                        const std::array<float, 3>& cameraPosition) {
+    std::array<float, 3> direction{gaussian.position[0] - cameraPosition[0],
+                                   gaussian.position[1] - cameraPosition[1],
+                                   gaussian.position[2] - cameraPosition[2]};
+    const float lengthSquared =
+        direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2];
+    if (lengthSquared > 1.0e-20F) {
+        const float inverseLength = 1.0F / std::sqrt(lengthSquared);
+        for (float& value : direction)
+            value *= inverseLength;
+    }
+    auto coefficient = [&](std::size_t index, std::size_t channel) {
+        return index == 0 ? gaussian.dc[channel] : gaussian.rest[channel * 15 + (index - 1)];
+    };
+    std::array<float, 3> result{};
+    auto add = [&](std::size_t index, float basis) {
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            result[channel] += basis * coefficient(index, channel);
+    };
+    constexpr float c0 = 0.28209479177387814F;
+    constexpr float c1 = 0.4886025119029199F;
+    add(0, c0);
+    if (gaussian.restCount >= 9) {
+        const float x = direction[0];
+        const float y = direction[1];
+        const float z = direction[2];
+        add(1, -c1 * y);
+        add(2, c1 * z);
+        add(3, -c1 * x);
+        if (gaussian.restCount >= 24) {
+            constexpr std::array c2{1.0925484305920792F, -1.0925484305920792F, 0.31539156525252005F,
+                                    -1.0925484305920792F, 0.5462742152960396F};
+            const float xx = x * x;
+            const float yy = y * y;
+            const float zz = z * z;
+            add(4, c2[0] * x * y);
+            add(5, c2[1] * y * z);
+            add(6, c2[2] * (2.0F * zz - xx - yy));
+            add(7, c2[3] * x * z);
+            add(8, c2[4] * (xx - yy));
+            if (gaussian.restCount >= 45) {
+                constexpr std::array c3{-0.5900435899266435F, 2.890611442640554F,
+                                        -0.4570457994644658F, 0.3731763325901154F,
+                                        -0.4570457994644658F, 1.445305721320277F,
+                                        -0.5900435899266435F};
+                add(9, c3[0] * y * (3.0F * xx - yy));
+                add(10, c3[1] * x * y * z);
+                add(11, c3[2] * y * (4.0F * zz - xx - yy));
+                add(12, c3[3] * z * (2.0F * zz - 3.0F * xx - 3.0F * yy));
+                add(13, c3[4] * x * (4.0F * zz - xx - yy));
+                add(14, c3[5] * z * (xx - yy));
+                add(15, c3[6] * x * (xx - 3.0F * yy));
+            }
+        }
+    }
+    for (float& channel : result)
+        channel = std::max(0.0F, channel + 0.5F);
+    return result;
+}
+
 Result<Projected> project(const Gaussian& gaussian, std::size_t sourceIndex,
                           const ReferenceCamera& camera) {
     const auto point = transformPoint(gaussian.position, camera.worldToCamera);
@@ -124,9 +185,7 @@ Result<Projected> project(const Gaussian& gaussian, std::size_t sourceIndex,
     if (!std::isfinite(result.radius) || result.radius > 1.0e6F)
         return fail(ErrorCode::resourceExhausted, "Gaussian projected radius is unsafe");
     result.opacity = sigmoid(gaussian.opacityLogit);
-    constexpr float shDc = 0.28209479177387814F;
-    for (std::size_t channel = 0; channel < 3; ++channel)
-        result.color[channel] = std::clamp(0.5F + shDc * gaussian.dc[channel], 0.0F, 1.0F);
+    result.color = sphericalHarmonics(gaussian, camera.cameraWorldPosition);
     return result;
 }
 

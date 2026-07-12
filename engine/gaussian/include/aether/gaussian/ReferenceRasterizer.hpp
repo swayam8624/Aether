@@ -19,6 +19,7 @@ struct ReferenceCamera final {
     float centerY{};
     float nearPlane{0.01F};
     float farPlane{10'000.0F};
+    std::array<float, 3> cameraWorldPosition{};
     /// Row-major world-to-camera transform. The camera looks along positive Z for this isolated
     /// reference API; adapters must make renderer coordinate conversion explicit.
     std::array<float, 16> worldToCamera{1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,

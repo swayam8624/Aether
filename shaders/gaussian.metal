@@ -18,6 +18,70 @@ float3x3 aetherQuaternionRotation(float4 quaternion) {
                            1.0f - 2.0f * (x * x + y * y)));
 }
 
+float aetherGaussianRest(device const AetherGaussianGpu& gaussian, uint index) {
+    return gaussian.shRest[index / 4][index & 3];
+}
+
+float3 aetherGaussianShCoefficient(device const AetherGaussianGpu& gaussian, uint index) {
+    if (index == 0)
+        return gaussian.dc.xyz;
+    const uint rest = index - 1;
+    return float3(aetherGaussianRest(gaussian, rest),
+                  aetherGaussianRest(gaussian, 15 + rest),
+                  aetherGaussianRest(gaussian, 30 + rest));
+}
+
+float3 aetherEvaluateSphericalHarmonics(device const AetherGaussianGpu& gaussian,
+                                       float3 cameraWorldPosition) {
+    constexpr float c0 = 0.28209479177387814f;
+    constexpr float c1 = 0.4886025119029199f;
+    const float3 direction = normalize(gaussian.positionOpacity.xyz - cameraWorldPosition);
+    const float x = direction.x;
+    const float y = direction.y;
+    const float z = direction.z;
+    float3 result = c0 * aetherGaussianShCoefficient(gaussian, 0);
+    const uint restCount = uint(gaussian.logScaleRestCount.w);
+    if (restCount >= 9) {
+        result += -c1 * y * aetherGaussianShCoefficient(gaussian, 1);
+        result += c1 * z * aetherGaussianShCoefficient(gaussian, 2);
+        result += -c1 * x * aetherGaussianShCoefficient(gaussian, 3);
+        if (restCount >= 24) {
+            constexpr float c2[] = {1.0925484305920792f, -1.0925484305920792f,
+                                    0.31539156525252005f, -1.0925484305920792f,
+                                    0.5462742152960396f};
+            const float xx = x * x;
+            const float yy = y * y;
+            const float zz = z * z;
+            result += c2[0] * x * y * aetherGaussianShCoefficient(gaussian, 4);
+            result += c2[1] * y * z * aetherGaussianShCoefficient(gaussian, 5);
+            result += c2[2] * (2.0f * zz - xx - yy) *
+                      aetherGaussianShCoefficient(gaussian, 6);
+            result += c2[3] * x * z * aetherGaussianShCoefficient(gaussian, 7);
+            result += c2[4] * (xx - yy) * aetherGaussianShCoefficient(gaussian, 8);
+            if (restCount >= 45) {
+                constexpr float c3[] = {-0.5900435899266435f, 2.890611442640554f,
+                                        -0.4570457994644658f, 0.3731763325901154f,
+                                        -0.4570457994644658f, 1.445305721320277f,
+                                        -0.5900435899266435f};
+                result += c3[0] * y * (3.0f * xx - yy) *
+                          aetherGaussianShCoefficient(gaussian, 9);
+                result += c3[1] * x * y * z * aetherGaussianShCoefficient(gaussian, 10);
+                result += c3[2] * y * (4.0f * zz - xx - yy) *
+                          aetherGaussianShCoefficient(gaussian, 11);
+                result += c3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) *
+                          aetherGaussianShCoefficient(gaussian, 12);
+                result += c3[4] * x * (4.0f * zz - xx - yy) *
+                          aetherGaussianShCoefficient(gaussian, 13);
+                result += c3[5] * z * (xx - yy) *
+                          aetherGaussianShCoefficient(gaussian, 14);
+                result += c3[6] * x * (xx - 3.0f * yy) *
+                          aetherGaussianShCoefficient(gaussian, 15);
+            }
+        }
+    }
+    return max(result + 0.5f, 0.0f);
+}
+
 kernel void aetherGaussianProject(device const AetherGaussianGpu* gaussians [[buffer(0)]],
                                   constant AetherGaussianCamera& camera [[buffer(1)]],
                                   device AetherProjectedGaussian* projected [[buffer(2)]],
@@ -88,8 +152,8 @@ kernel void aetherGaussianProject(device const AetherGaussianGpu* gaussians [[bu
     output.conicOpacity = float4(c / determinant, -b / determinant, a / determinant,
                                  1.0f / (1.0f + exp(-clamp(gaussian.positionOpacity.w, -30.0f,
                                                           30.0f))));
-    constexpr float shDc = 0.28209479177387814f;
-    output.color = float4(clamp(0.5f + shDc * gaussian.dc.xyz, 0.0f, 1.0f), 1.0f);
+    output.color = float4(
+        aetherEvaluateSphericalHarmonics(gaussians[index], camera.cameraWorldPosition.xyz), 1.0f);
     output.tileBounds = uint4(minimumTile, maximumTile);
     output.sourceCountValid = uint4(index, overlap, 1, 0);
     projected[index] = output;

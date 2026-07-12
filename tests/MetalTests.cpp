@@ -99,6 +99,11 @@ int main() {
     auto gaussianPipeline =
         aether::metal::GaussianPipeline::create(device.get(), library.get(), 4096);
     auto gaussianAsset = aether::gaussian::PlyLoader::load(AETHER_TEST_PLY);
+    if (gaussianAsset) {
+        gaussianAsset->sphericalHarmonicDegree = 1;
+        gaussianAsset->gaussians[0].restCount = 9;
+        gaussianAsset->gaussians[0].rest[1] = 0.25F;
+    }
     if (!gaussianPipeline || !gaussianAsset || !(*gaussianPipeline)->load(*gaussianAsset)) {
         std::cerr << "Unable to prepare Gaussian Metal test\n";
         pool->release();

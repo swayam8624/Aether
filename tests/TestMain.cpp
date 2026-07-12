@@ -363,6 +363,23 @@ void testGaussianPly() {
                    "CPU Gaussian reference writes first-hit depth");
             expect(image->ids[center] == 1, "CPU Gaussian reference writes a stable source ID");
         }
+
+        auto shAsset = *asset;
+        shAsset.sphericalHarmonicDegree = 1;
+        shAsset.gaussians[0].restCount = 9;
+        shAsset.gaussians[0].rest[1] = 0.25F;
+        auto frontView = aether::gaussian::ReferenceRasterizer::render(shAsset, camera);
+        camera.cameraWorldPosition = {0.0F, 0.0F, 4.0F};
+        auto backView = aether::gaussian::ReferenceRasterizer::render(shAsset, camera);
+        if (frontView && backView) {
+            constexpr std::size_t center = 4 * 9 + 4;
+            const float expectedFront = 0.5F + 0.28209479177387814F + 0.25F * 0.4886025119029199F;
+            expect(std::abs(frontView->color[center][0] / frontView->color[center][3] -
+                            expectedFront) < 1.0e-4F,
+                   "CPU Gaussian reference evaluates degree-1 SH in GraphDECO ordering");
+            expect(frontView->color[center][0] > backView->color[center][0],
+                   "CPU Gaussian SH appearance changes with world-space view direction");
+        }
     }
     aether::gaussian::PlyLimits limits;
     limits.maximumGaussians = 0;

@@ -47,7 +47,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   compositing, depth/IDs, counters, and app presentation correctness path.
 - [x] Pixel-level CPU/GPU agreement test and explicit tile-entry overflow test.
 - [ ] Hierarchical parallel scan/radix optimization and M1/M2 performance exit gates.
-- [ ] Higher-order SH evaluation, picking workflow, and research/debug visualizations.
+- [x] Degree 0–3 GraphDECO-order spherical-harmonic appearance in CPU and Metal paths.
+- [ ] Picking workflow and research/debug visualizations.
 
 ## Phase 4 — Fully local reconstruction
 

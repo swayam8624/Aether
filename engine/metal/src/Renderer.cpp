@@ -246,6 +246,9 @@ void Renderer::draw(MTK::View* view) noexcept {
                 gaussianCamera.depthViewport = {
                     camera.nearPlane, camera.infiniteFarPlane ? 10'000.0F : camera.farPlane,
                     static_cast<float>(width), static_cast<float>(height)};
+                const simd_float3 cameraPosition = cameraController_.position();
+                gaussianCamera.cameraWorldPosition = {cameraPosition.x, cameraPosition.y,
+                                                      cameraPosition.z, 1.0F};
                 auto encoded =
                     gaussianPipeline_->encode(commandBuffer, gaussianCamera, gaussianColor_.get(),
                                               gaussianDepth_.get(), gaussianIds_.get());
