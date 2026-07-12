@@ -8,22 +8,135 @@
 #include <aether/package/Package.hpp>
 #include <aether/scene/Camera.hpp>
 
+#include <CoreGraphics/CoreGraphics.h>
 #include <Foundation/Foundation.hpp>
 #include <Foundation/NSBundle.hpp>
 #include <Foundation/NSURL.hpp>
+#include <ImageIO/ImageIO.h>
 #include <QuartzCore/CAMetalDrawable.hpp>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <span>
 #include <utility>
 
 namespace aether::metal {
 namespace {
+struct DecodedImage final {
+    std::size_t width{};
+    std::size_t height{};
+    std::vector<std::uint8_t> rgba;
+};
+
+Result<DecodedImage> decodeImage(std::span<const std::byte> encoded) {
+    if (encoded.empty() ||
+        encoded.size() > static_cast<std::size_t>(std::numeric_limits<CFIndex>::max()))
+        return fail(ErrorCode::corruptData, "Encoded glTF image size is invalid");
+    CFDataRef data =
+        CFDataCreate(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(encoded.data()),
+                     static_cast<CFIndex>(encoded.size()));
+    if (!data)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate glTF image data");
+    CGImageSourceRef source = CGImageSourceCreateWithData(data, nullptr);
+    CFRelease(data);
+    if (!source)
+        return fail(ErrorCode::corruptData, "ImageIO could not identify glTF image bytes");
+    CGImageRef image = CGImageSourceCreateImageAtIndex(source, 0, nullptr);
+    CFRelease(source);
+    if (!image)
+        return fail(ErrorCode::corruptData, "ImageIO could not decode glTF image");
+    const std::size_t width = CGImageGetWidth(image);
+    const std::size_t height = CGImageGetHeight(image);
+    constexpr std::size_t maximumDimension = 16'384;
+    constexpr std::size_t maximumPixels = 67'108'864;
+    if (width == 0 || height == 0 || width > maximumDimension || height > maximumDimension ||
+        width > maximumPixels / height ||
+        width > std::numeric_limits<std::size_t>::max() / 4 / height) {
+        CGImageRelease(image);
+        return fail(ErrorCode::resourceExhausted, "Decoded glTF image dimensions are unsafe");
+    }
+    DecodedImage result{width, height, std::vector<std::uint8_t>(width * height * 4)};
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef context = CGBitmapContextCreate(
+        result.rgba.data(), width, height, 8, width * 4, colorSpace,
+        static_cast<CGBitmapInfo>(static_cast<std::uint32_t>(kCGImageAlphaPremultipliedLast) |
+                                  static_cast<std::uint32_t>(kCGBitmapByteOrder32Big)));
+    CGColorSpaceRelease(colorSpace);
+    if (!context) {
+        CGImageRelease(image);
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate glTF image decode context");
+    }
+    CGContextTranslateCTM(context, 0.0, static_cast<CGFloat>(height));
+    CGContextScaleCTM(context, 1.0, -1.0);
+    CGContextDrawImage(context,
+                       CGRectMake(0, 0, static_cast<CGFloat>(width), static_cast<CGFloat>(height)),
+                       image);
+    CGContextRelease(context);
+    CGImageRelease(image);
+    for (std::size_t pixel = 0; pixel < width * height; ++pixel) {
+        const std::uint8_t alpha = result.rgba[pixel * 4 + 3];
+        if (alpha == 0)
+            continue;
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            const std::uint32_t premultiplied = result.rgba[pixel * 4 + channel];
+            result.rgba[pixel * 4 + channel] = static_cast<std::uint8_t>(
+                std::min(255U, (premultiplied * 255U + alpha / 2U) / alpha));
+        }
+    }
+    return result;
+}
+
+Result<MetalPtr<MTL::Texture>> uploadTexture(MTL::Device* device, MTL::CommandQueue* queue,
+                                             const DecodedImage& image, MTL::PixelFormat format,
+                                             const char* label) {
+    const std::size_t maximumSide = std::max(image.width, image.height);
+    const auto mipLevels = static_cast<NS::UInteger>(std::bit_width(maximumSide));
+    auto descriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    descriptor->setTextureType(MTL::TextureType2D);
+    descriptor->setPixelFormat(format);
+    descriptor->setWidth(image.width);
+    descriptor->setHeight(image.height);
+    descriptor->setMipmapLevelCount(mipLevels);
+    descriptor->setStorageMode(MTL::StorageModeShared);
+    descriptor->setUsage(MTL::TextureUsageShaderRead);
+    auto texture = adopt(device->newTexture(descriptor.get()));
+    if (!texture)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate glTF texture", label);
+    texture->setLabel(NS::String::string(label, NS::UTF8StringEncoding));
+    texture->replaceRegion(MTL::Region::Make2D(0, 0, image.width, image.height), 0,
+                           image.rgba.data(), image.width * 4);
+    if (mipLevels > 1) {
+        MTL::CommandBuffer* commandBuffer = queue->commandBuffer();
+        MTL::BlitCommandEncoder* blit =
+            commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+        if (!commandBuffer || !blit)
+            return fail(ErrorCode::metal, "Unable to create glTF mipmap encoder", label);
+        blit->setLabel(NS::String::string("glTF Mipmap Generation", NS::UTF8StringEncoding));
+        blit->generateMipmaps(texture.get());
+        blit->endEncoding();
+        commandBuffer->commit();
+    }
+    return texture;
+}
+
+MTL::SamplerAddressMode samplerAddress(mesh::SamplerAddressMode mode) {
+    switch (mode) {
+    case mesh::SamplerAddressMode::clampToEdge:
+        return MTL::SamplerAddressModeClampToEdge;
+    case mesh::SamplerAddressMode::repeat:
+        return MTL::SamplerAddressModeRepeat;
+    case mesh::SamplerAddressMode::mirroredRepeat:
+        return MTL::SamplerAddressModeMirrorRepeat;
+    }
+    return MTL::SamplerAddressModeRepeat;
+}
+
 std::uint32_t tileEntryBudget(std::size_t gaussianCount) {
     constexpr std::uint64_t minimumEntries = 4'096;
     constexpr std::uint64_t maximumEntries = 4'194'304;
@@ -179,20 +292,34 @@ void Renderer::draw(MTK::View* view) noexcept {
             auto frameSlice = frame.allocateUpload(sizeof(uniforms));
             if (frameSlice) {
                 std::memcpy(frameSlice->cpuAddress, &uniforms, sizeof(uniforms));
-                encoder->setRenderPipelineState(pbrPipeline_.get());
-                encoder->setDepthStencilState(reverseZDepthState_.get());
                 encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
                 encoder->setVertexBuffer(frameSlice->buffer, frameSlice->offset, 1);
                 encoder->setFragmentBuffer(frameSlice->buffer, frameSlice->offset, 1);
-                for (const auto& primitive : meshPrimitives_) {
-                    encoder->setCullMode(primitive.doubleSided ? MTL::CullModeNone
-                                                               : MTL::CullModeBack);
-                    encoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
-                    encoder->setFragmentBytes(&primitive.material, sizeof(primitive.material), 2);
-                    encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, primitive.indexCount,
-                                                   MTL::IndexTypeUInt32, primitive.indices.get(),
-                                                   0);
-                }
+                auto renderMaterialClass = [&](bool alphaBlend) {
+                    encoder->setRenderPipelineState(alphaBlend ? pbrBlendPipeline_.get()
+                                                               : pbrPipeline_.get());
+                    encoder->setDepthStencilState(alphaBlend ? reverseZReadOnlyDepthState_.get()
+                                                             : reverseZDepthState_.get());
+                    for (const auto& primitive : meshPrimitives_) {
+                        const auto& material = meshMaterials_.at(primitive.materialIndex);
+                        if (material.alphaBlend != alphaBlend)
+                            continue;
+                        encoder->setCullMode(material.doubleSided ? MTL::CullModeNone
+                                                                  : MTL::CullModeBack);
+                        encoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
+                        encoder->setFragmentBytes(&material.material, sizeof(material.material), 2);
+                        for (std::size_t texture = 0; texture < material.textures.size();
+                             ++texture) {
+                            encoder->setFragmentTexture(material.textures[texture], texture);
+                            encoder->setFragmentSamplerState(material.samplers[texture], texture);
+                        }
+                        encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle,
+                                                       primitive.indexCount, MTL::IndexTypeUInt32,
+                                                       primitive.indices.get(), 0);
+                    }
+                };
+                renderMaterialClass(false);
+                renderMaterialClass(true);
             }
         }
     }
@@ -223,6 +350,89 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         return std::unexpected(loaded.error());
     }
 
+    std::vector<DecodedImage> decodedImages;
+    decodedImages.reserve(loaded->images.size());
+    for (const auto& image : loaded->images) {
+        auto decoded = decodeImage(image.bytes);
+        if (!decoded)
+            return std::unexpected(decoded.error());
+        decodedImages.push_back(std::move(*decoded));
+    }
+    std::vector<GpuTexture> uploadedTextures;
+    uploadedTextures.reserve(loaded->textures.size());
+    for (std::size_t index = 0; index < loaded->textures.size(); ++index) {
+        const auto& sourceTexture = loaded->textures[index];
+        const auto& image = decodedImages.at(sourceTexture.imageIndex);
+        const std::string srgbLabel = "glTF Texture " + std::to_string(index) + " sRGB";
+        const std::string linearLabel = "glTF Texture " + std::to_string(index) + " Linear";
+        auto srgb = uploadTexture(device_.get(), commandQueue_.get(), image,
+                                  MTL::PixelFormatRGBA8Unorm_sRGB, srgbLabel.c_str());
+        auto linear = uploadTexture(device_.get(), commandQueue_.get(), image,
+                                    MTL::PixelFormatRGBA8Unorm, linearLabel.c_str());
+        if (!srgb)
+            return std::unexpected(srgb.error());
+        if (!linear)
+            return std::unexpected(linear.error());
+        auto descriptor = adopt(MTL::SamplerDescriptor::alloc()->init());
+        descriptor->setMinFilter(sourceTexture.minification == mesh::SamplerFilter::nearest
+                                     ? MTL::SamplerMinMagFilterNearest
+                                     : MTL::SamplerMinMagFilterLinear);
+        descriptor->setMagFilter(sourceTexture.magnification == mesh::SamplerFilter::nearest
+                                     ? MTL::SamplerMinMagFilterNearest
+                                     : MTL::SamplerMinMagFilterLinear);
+        switch (sourceTexture.mipFilter) {
+        case mesh::SamplerMipFilter::none:
+            descriptor->setMipFilter(MTL::SamplerMipFilterNotMipmapped);
+            break;
+        case mesh::SamplerMipFilter::nearest:
+            descriptor->setMipFilter(MTL::SamplerMipFilterNearest);
+            break;
+        case mesh::SamplerMipFilter::linear:
+            descriptor->setMipFilter(MTL::SamplerMipFilterLinear);
+            break;
+        }
+        descriptor->setSAddressMode(samplerAddress(sourceTexture.addressU));
+        descriptor->setTAddressMode(samplerAddress(sourceTexture.addressV));
+        auto sampler = adopt(device_->newSamplerState(descriptor.get()));
+        if (!sampler)
+            return fail(ErrorCode::resourceExhausted, "Unable to allocate glTF sampler");
+        uploadedTextures.push_back(
+            GpuTexture{std::move(*srgb), std::move(*linear), std::move(sampler)});
+    }
+
+    std::vector<GpuMaterial> uploadedMaterials;
+    uploadedMaterials.reserve(loaded->materials.size());
+    for (const auto& sourceMaterial : loaded->materials) {
+        GpuMaterial material;
+        material.material.baseColor = sourceMaterial.baseColor;
+        material.material.emissiveMetallic = {sourceMaterial.emissive.x, sourceMaterial.emissive.y,
+                                              sourceMaterial.emissive.z, sourceMaterial.metallic};
+        material.material.roughnessNormalOcclusionAlpha = {
+            sourceMaterial.roughness, sourceMaterial.normalScale, sourceMaterial.occlusionStrength,
+            sourceMaterial.alphaCutoff};
+        std::uint32_t textureMask = 0;
+        auto bindTexture = [&](const std::optional<std::size_t>& binding, std::size_t slot,
+                               bool srgb, std::uint32_t flag) {
+            if (!binding)
+                return;
+            const auto& texture = uploadedTextures.at(*binding);
+            material.textures[slot] = srgb ? texture.srgb.get() : texture.linear.get();
+            material.samplers[slot] = texture.sampler.get();
+            textureMask |= flag;
+        };
+        bindTexture(sourceMaterial.baseColorTexture, 0, true, 1U);
+        bindTexture(sourceMaterial.metallicRoughnessTexture, 1, false, 2U);
+        bindTexture(sourceMaterial.normalTexture, 2, false, 4U);
+        bindTexture(sourceMaterial.occlusionTexture, 3, false, 8U);
+        bindTexture(sourceMaterial.emissiveTexture, 4, true, 16U);
+        const std::uint32_t alphaMode =
+            sourceMaterial.alphaMask ? 1U : (sourceMaterial.alphaBlend ? 2U : 0U);
+        material.material.textureFlags = {textureMask, alphaMode, 0U, 0U};
+        material.doubleSided = sourceMaterial.doubleSided;
+        material.alphaBlend = sourceMaterial.alphaBlend;
+        uploadedMaterials.push_back(std::move(material));
+    }
+
     std::vector<GpuMeshPrimitive> uploaded;
     uploaded.reserve(loaded->primitives.size());
     for (const auto& primitive : loaded->primitives) {
@@ -239,18 +449,13 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         if (primitive.indices.size() > std::numeric_limits<std::uint32_t>::max()) {
             return fail(ErrorCode::resourceExhausted, "Mesh primitive exceeds Metal index count");
         }
-        const auto& sourceMaterial = loaded->materials.at(primitive.materialIndex);
-        AetherMaterialUniforms material{};
-        material.baseColor = sourceMaterial.baseColor;
-        material.emissiveMetallic = {sourceMaterial.emissive.x, sourceMaterial.emissive.y,
-                                     sourceMaterial.emissive.z, sourceMaterial.metallic};
-        material.roughnessFlags = {sourceMaterial.roughness,
-                                   sourceMaterial.doubleSided ? 1.0F : 0.0F, 0.0F, 0.0F};
         uploaded.push_back(GpuMeshPrimitive{std::move(*vertices), std::move(*indices),
                                             static_cast<std::uint32_t>(primitive.indices.size()),
-                                            material, sourceMaterial.doubleSided});
+                                            primitive.materialIndex});
     }
     meshPrimitives_ = std::move(uploaded);
+    meshTextures_ = std::move(uploadedTextures);
+    meshMaterials_ = std::move(uploadedMaterials);
     gaussianPipeline_.reset();
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
                                               std::to_string(meshPrimitives_.size()) +
@@ -269,6 +474,8 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     if (auto loaded = (*pipeline)->load(*asset); !loaded)
         return std::unexpected(loaded.error());
     meshPrimitives_.clear();
+    meshTextures_.clear();
+    meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
     Log::instance().write(LogLevel::info, "Loaded PLY scene with " +
                                               std::to_string(asset->gaussians.size()) +
@@ -293,6 +500,8 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     if (auto loaded = (*pipeline)->load(*asset); !loaded)
         return std::unexpected(loaded.error());
     meshPrimitives_.clear();
+    meshTextures_.clear();
+    meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
     Log::instance().write(LogLevel::info, "Loaded AETHER scene with " +
                                               std::to_string(asset->gaussians.size()) +
@@ -460,6 +669,25 @@ Result<void> Renderer::buildViewportPipeline() {
                                           : "Unknown PBR pipeline compilation error";
         return fail(ErrorCode::metal, "Unable to create AETHER PBR pipeline", message);
     }
+    auto* blendAttachment = pbrDescriptor->colorAttachments()->object(0);
+    blendAttachment->setBlendingEnabled(true);
+    blendAttachment->setSourceRGBBlendFactor(MTL::BlendFactorSourceAlpha);
+    blendAttachment->setDestinationRGBBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+    blendAttachment->setSourceAlphaBlendFactor(MTL::BlendFactorOne);
+    blendAttachment->setDestinationAlphaBlendFactor(MTL::BlendFactorOneMinusSourceAlpha);
+    pbrDescriptor->setLabel(
+        NS::String::string("AETHER PBR Alpha Blend Pipeline", NS::UTF8StringEncoding));
+    if (binaryArchive_) {
+        error = nullptr;
+        (void)binaryArchive_->addRenderPipelineFunctions(pbrDescriptor.get(), &error);
+    }
+    error = nullptr;
+    pbrBlendPipeline_ = adopt(device_->newRenderPipelineState(pbrDescriptor.get(), &error));
+    if (!pbrBlendPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown blend pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create AETHER alpha blend pipeline", message);
+    }
 
     auto depthDescriptor = adopt(MTL::DepthStencilDescriptor::alloc()->init());
     depthDescriptor->setLabel(NS::String::string("AETHER Reverse-Z Depth", NS::UTF8StringEncoding));
@@ -469,6 +697,12 @@ Result<void> Renderer::buildViewportPipeline() {
     if (!reverseZDepthState_) {
         return fail(ErrorCode::metal, "Unable to create reverse-Z depth state");
     }
+    depthDescriptor->setLabel(
+        NS::String::string("AETHER Reverse-Z Read-Only Depth", NS::UTF8StringEncoding));
+    depthDescriptor->setDepthWriteEnabled(false);
+    reverseZReadOnlyDepthState_ = adopt(device_->newDepthStencilState(depthDescriptor.get()));
+    if (!reverseZReadOnlyDepthState_)
+        return fail(ErrorCode::metal, "Unable to create read-only reverse-Z depth state");
     if (binaryArchive_) {
         error = nullptr;
         if (!binaryArchive_->serializeToURL(archiveUrl, &error) && error) {

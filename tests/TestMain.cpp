@@ -229,6 +229,26 @@ void testGltfLoader() {
     tinyLimits.maximumFileBytes = 1;
     expect(!aether::mesh::GltfLoader::load(path, tinyLimits).has_value(),
            "glTF file-size limit is enforced");
+
+    const auto texturedPath =
+        std::filesystem::path(AETHER_TEST_FIXTURES) / "textured-triangle.gltf";
+    auto textured = aether::mesh::GltfLoader::load(texturedPath);
+    expect(textured.has_value(), "Data-URI textured glTF fixture loads locally");
+    if (textured) {
+        expect(textured->images.size() == 1 && !textured->images[0].bytes.empty(),
+               "glTF encoded image bytes are retained");
+        expect(
+            textured->textures.size() == 1 &&
+                textured->textures[0].mipFilter == aether::mesh::SamplerMipFilter::linear &&
+                textured->textures[0].addressU == aether::mesh::SamplerAddressMode::clampToEdge &&
+                textured->textures[0].addressV == aether::mesh::SamplerAddressMode::mirroredRepeat,
+            "glTF sampler filtering and address modes are retained");
+        expect(textured->materials[1].baseColorTexture == 0,
+               "glTF material texture binding is retained");
+        const simd_float4 tangent = textured->primitives[0].vertices[0].tangent;
+        expect(simd_length(simd_float3{tangent.x, tangent.y, tangent.z}) > 0.99F,
+               "Missing glTF tangents are generated from UV gradients");
+    }
 }
 
 void testSha256() {

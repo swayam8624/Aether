@@ -2,6 +2,8 @@ find_library(METAL_FRAMEWORK Metal REQUIRED)
 find_library(METALKIT_FRAMEWORK MetalKit REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
 
 add_library(AetherMetal STATIC
     src/FrameContext.cpp
@@ -24,6 +26,8 @@ target_link_libraries(AetherMetal
         ${METALKIT_FRAMEWORK}
         ${FOUNDATION_FRAMEWORK}
         ${QUARTZCORE_FRAMEWORK}
+        ${IMAGEIO_FRAMEWORK}
+        ${COREGRAPHICS_FRAMEWORK}
 )
 target_compile_options(AetherMetal PRIVATE -fblocks)
 aether_configure_target(AetherMetal)

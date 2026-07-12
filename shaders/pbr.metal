@@ -7,6 +7,8 @@ struct PbrVertexOutput {
     float4 position [[position]];
     float3 worldPosition;
     float3 worldNormal;
+    float4 worldTangent;
+    float2 uv;
 };
 
 vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
@@ -18,6 +20,10 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
     output.position = frame.viewProjection * worldPosition;
     output.worldPosition = worldPosition.xyz;
     output.worldNormal = normalize((frame.model * float4(meshVertex.normal, 0.0f)).xyz);
+    output.worldTangent =
+        float4(normalize((frame.model * float4(meshVertex.tangent.xyz, 0.0f)).xyz),
+               meshVertex.tangent.w);
+    output.uv = meshVertex.textureCoordinate;
     return output;
 }
 
@@ -50,14 +56,45 @@ float3 acesApproximation(float3 color) {
 
 fragment half4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  constant AetherFrameUniforms& frame [[buffer(1)]],
-                                 constant AetherMaterialUniforms& material [[buffer(2)]]) {
-    const float3 normal = normalize(input.worldNormal);
+                                 constant AetherMaterialUniforms& material [[buffer(2)]],
+                                 texture2d<float> baseColorTexture [[texture(0)]],
+                                 texture2d<float> metallicRoughnessTexture [[texture(1)]],
+                                 texture2d<float> normalTexture [[texture(2)]],
+                                 texture2d<float> occlusionTexture [[texture(3)]],
+                                 texture2d<float> emissiveTexture [[texture(4)]],
+                                 sampler baseColorSampler [[sampler(0)]],
+                                 sampler metallicRoughnessSampler [[sampler(1)]],
+                                 sampler normalSampler [[sampler(2)]],
+                                 sampler occlusionSampler [[sampler(3)]],
+                                 sampler emissiveSampler [[sampler(4)]]) {
+    const uint textureMask = material.textureFlags.x;
+    float4 sampledBaseColor = material.baseColor;
+    if ((textureMask & 1u) != 0)
+        sampledBaseColor *= baseColorTexture.sample(baseColorSampler, input.uv);
+    if (material.textureFlags.y == 1u &&
+        sampledBaseColor.a < material.roughnessNormalOcclusionAlpha.w)
+        discard_fragment();
+
+    float3 normal = normalize(input.worldNormal);
+    if ((textureMask & 4u) != 0) {
+        float3 tangent = normalize(input.worldTangent.xyz);
+        const float3 bitangent = normalize(cross(normal, tangent)) * input.worldTangent.w;
+        float3 tangentNormal = normalTexture.sample(normalSampler, input.uv).xyz * 2.0f - 1.0f;
+        tangentNormal.xy *= material.roughnessNormalOcclusionAlpha.y;
+        normal = normalize(float3x3(tangent, bitangent, normal) * tangentNormal);
+    }
     const float3 view = normalize(frame.cameraPosition.xyz - input.worldPosition);
     const float3 light = normalize(-frame.lightDirectionIntensity.xyz);
     const float3 halfway = normalize(view + light);
-    const float metallic = clamp(material.emissiveMetallic.w, 0.0f, 1.0f);
-    const float roughness = clamp(material.roughnessFlags.x, 0.045f, 1.0f);
-    const float3 baseColor = max(material.baseColor.rgb, 0.0f);
+    float metallic = clamp(material.emissiveMetallic.w, 0.0f, 1.0f);
+    float roughness = clamp(material.roughnessNormalOcclusionAlpha.x, 0.045f, 1.0f);
+    if ((textureMask & 2u) != 0) {
+        const float4 metallicRoughness =
+            metallicRoughnessTexture.sample(metallicRoughnessSampler, input.uv);
+        roughness *= metallicRoughness.g;
+        metallic *= metallicRoughness.b;
+    }
+    const float3 baseColor = max(sampledBaseColor.rgb, 0.0f);
     const float3 f0 = mix(float3(0.04f), baseColor, metallic);
 
     const float nDotV = max(dot(normal, view), 0.0f);
@@ -70,9 +107,18 @@ fragment half4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         (distribution * geometry * fresnel) / max(4.0f * nDotV * nDotL, 1.0e-4f);
     const float3 diffuse = (1.0f - fresnel) * (1.0f - metallic) * baseColor / M_PI_F;
     const float3 radiance = frame.lightColorExposure.rgb * frame.lightDirectionIntensity.w;
-    const float3 ambient = baseColor * (1.0f - metallic) * 0.025f;
+    float ambientOcclusion = 1.0f;
+    if ((textureMask & 8u) != 0) {
+        const float sampledOcclusion = occlusionTexture.sample(occlusionSampler, input.uv).r;
+        ambientOcclusion = mix(1.0f, sampledOcclusion,
+                               material.roughnessNormalOcclusionAlpha.z);
+    }
+    float3 emissive = material.emissiveMetallic.xyz;
+    if ((textureMask & 16u) != 0)
+        emissive *= emissiveTexture.sample(emissiveSampler, input.uv).rgb;
+    const float3 ambient = baseColor * (1.0f - metallic) * 0.025f * ambientOcclusion;
     float3 color =
-        ambient + (diffuse + specular) * radiance * nDotL + material.emissiveMetallic.xyz;
+        ambient + (diffuse + specular) * radiance * nDotL + emissive;
     color *= exp2(frame.lightColorExposure.w);
-    return half4(half3(acesApproximation(color)), half(material.baseColor.a));
+    return half4(half3(acesApproximation(color)), half(sampledBaseColor.a));
 }

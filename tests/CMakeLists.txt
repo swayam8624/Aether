@@ -14,6 +14,7 @@ if(TARGET AetherMetal)
     target_compile_definitions(AetherMetalTests PRIVATE
         AETHER_TEST_SHADER_LIBRARY="${PROJECT_BINARY_DIR}/apps/AetherStudio/AetherShaders.metallib"
         AETHER_TEST_GLTF="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/triangle.gltf"
+        AETHER_TEST_TEXTURED_GLTF="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textured-triangle.gltf"
         AETHER_TEST_PLY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gaussian-minimal.ply")
     if(TARGET AetherShaders)
         add_dependencies(AetherMetalTests AetherShaders)

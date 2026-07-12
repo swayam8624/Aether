@@ -19,6 +19,9 @@ verified, shippable milestones. The current foundation contains:
 - A Metal 3 Gaussian correctness path with projection, covariance, stable tile/depth ordering,
   bounded compositing, depth/IDs/counters, CPU/GPU agreement tests, and PLY/`.aether` presentation
   in AetherStudio.
+- A core glTF metallic-roughness path with bounded embedded/external image ingestion, ImageIO decode,
+  generated mipmaps and tangents, glTF samplers, material texture maps, normal mapping, and alpha
+  mask/blend states.
 - A warnings-as-errors CPU CI path, sanitizer preset, and foundation tests.
 
 The project does **not** yet claim production Gaussian rendering or relighting. See

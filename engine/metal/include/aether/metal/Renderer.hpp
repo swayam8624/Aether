@@ -72,7 +72,9 @@ class Renderer final {
     MetalPtr<MTL::BinaryArchive> binaryArchive_;
     MetalPtr<MTL::RenderPipelineState> viewportPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrPipeline_;
+    MetalPtr<MTL::RenderPipelineState> pbrBlendPipeline_;
     MetalPtr<MTL::DepthStencilState> reverseZDepthState_;
+    MetalPtr<MTL::DepthStencilState> reverseZReadOnlyDepthState_;
     dispatch_semaphore_t frameSemaphore_{};
     DeviceCapabilities capabilities_;
     CGSize drawableSize_{};
@@ -85,10 +87,23 @@ class Renderer final {
         MetalPtr<MTL::Buffer> vertices;
         MetalPtr<MTL::Buffer> indices;
         std::uint32_t indexCount{};
+        std::size_t materialIndex{};
+    };
+    struct GpuTexture {
+        MetalPtr<MTL::Texture> srgb;
+        MetalPtr<MTL::Texture> linear;
+        MetalPtr<MTL::SamplerState> sampler;
+    };
+    struct GpuMaterial {
         AetherMaterialUniforms material{};
         bool doubleSided{};
+        bool alphaBlend{};
+        std::array<MTL::Texture*, 5> textures{};
+        std::array<MTL::SamplerState*, 5> samplers{};
     };
     std::vector<GpuMeshPrimitive> meshPrimitives_;
+    std::vector<GpuTexture> meshTextures_;
+    std::vector<GpuMaterial> meshMaterials_;
     std::unique_ptr<GaussianPipeline> gaussianPipeline_;
     MetalPtr<MTL::Texture> gaussianColor_;
     MetalPtr<MTL::Texture> gaussianDepth_;

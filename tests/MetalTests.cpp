@@ -82,6 +82,11 @@ int main() {
         pool->release();
         return 1;
     }
+    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_TEXTURED_GLTF); !loaded) {
+        std::cerr << loaded.error().describe() << '\n';
+        pool->release();
+        return 1;
+    }
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

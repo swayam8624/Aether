@@ -32,7 +32,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Generation-safe scene transforms, reverse-Z cameras, and keyboard/mouse fly controls.
 - [ ] Persisted and cinematic camera paths.
 - [x] Bounded glTF 2.0 parsing, indexed meshes, generated normals, and material factors.
-- [ ] glTF textures, samplers, tangents, skins, and animation.
+- [x] Bounded glTF image ingestion, ImageIO decode, mipmaps, samplers, generated/imported tangents,
+  core PBR texture maps, normal mapping, alpha masking, and alpha blend pipeline.
+- [ ] Skinning, morph targets, animation playback, transformed UV sets, and transparent draw sorting.
 - [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
 - [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.

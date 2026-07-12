@@ -46,7 +46,8 @@ struct AetherFrameUniforms {
 struct AetherMaterialUniforms {
     AetherFloat4 baseColor;
     AetherFloat4 emissiveMetallic;
-    AetherFloat4 roughnessFlags;
+    AetherFloat4 roughnessNormalOcclusionAlpha;
+    AetherUInt4 textureFlags;
 };
 
 struct AetherGaussianGpu {
@@ -83,7 +84,7 @@ struct AetherGaussianCounters {
 static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherMeshVertex) == 64);
 static_assert(sizeof(AetherFrameUniforms) == 176);
-static_assert(sizeof(AetherMaterialUniforms) == 48);
+static_assert(sizeof(AetherMaterialUniforms) == 64);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 112);
 static_assert(sizeof(AetherProjectedGaussian) == 80);

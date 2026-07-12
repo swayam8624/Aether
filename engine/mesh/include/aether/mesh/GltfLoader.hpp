@@ -13,6 +13,8 @@ struct GltfLimits final {
     std::size_t maximumPrimitives{1'000'000};
     std::size_t maximumVertices{50'000'000};
     std::size_t maximumIndices{150'000'000};
+    std::size_t maximumImages{100'000};
+    std::size_t maximumImageBytes{1ULL * 1024ULL * 1024ULL * 1024ULL};
 };
 
 class GltfLoader final {
