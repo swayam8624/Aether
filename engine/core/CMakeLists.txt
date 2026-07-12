@@ -1,4 +1,6 @@
 add_library(AetherCore STATIC
+    src/Diagnostics.cpp
+    src/JobSystem.cpp
     src/Log.cpp
     src/Profiler.cpp
     src/ResourceLocator.cpp

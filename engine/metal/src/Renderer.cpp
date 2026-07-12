@@ -2,29 +2,49 @@
 
 #include <aether/core/Log.hpp>
 #include <aether/core/Profiler.hpp>
+#include <aether/mesh/GltfLoader.hpp>
+#include <aether/scene/Camera.hpp>
 
 #include <Foundation/Foundation.hpp>
+#include <Foundation/NSBundle.hpp>
+#include <Foundation/NSURL.hpp>
 #include <QuartzCore/CAMetalDrawable.hpp>
 
 #include <array>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <limits>
 #include <utility>
 
 namespace aether::metal {
 
-Result<std::unique_ptr<Renderer>> Renderer::create(MTL::Device* device) {
+Result<std::unique_ptr<Renderer>> Renderer::create(MTL::Device* device,
+                                                   std::filesystem::path shaderLibraryPath) {
     if (!device) {
         return fail(ErrorCode::metal, "No Metal device is available on this Mac");
     }
-    auto renderer = std::unique_ptr<Renderer>(new Renderer(device));
+    auto renderer = std::unique_ptr<Renderer>(new Renderer(device, std::move(shaderLibraryPath)));
     if (!renderer->commandQueue_) {
         return fail(ErrorCode::metal, "Metal failed to create the primary command queue");
+    }
+    for (std::uint32_t index = 0; index < renderer->frameContexts_.size(); ++index) {
+        auto context = FrameContext::create(device, index);
+        if (!context) {
+            return std::unexpected(context.error());
+        }
+        renderer->frameContexts_[index] = std::move(*context);
+    }
+    if (auto pipeline = renderer->buildViewportPipeline(); !pipeline) {
+        return std::unexpected(pipeline.error());
     }
     return renderer;
 }
 
-Renderer::Renderer(MTL::Device* device)
+Renderer::Renderer(MTL::Device* device, std::filesystem::path shaderLibraryPath)
     : device_(retain(device)), commandQueue_(adopt(device->newCommandQueue())),
-      frameSemaphore_(dispatch_semaphore_create(3)), capabilities_(inspect(device)) {
+      frameSemaphore_(dispatch_semaphore_create(3)), capabilities_(inspect(device)),
+      shaderLibraryPath_(std::move(shaderLibraryPath)) {
     if (commandQueue_) {
         commandQueue_->setLabel(NS::String::string("AETHER Primary Queue", NS::UTF8StringEncoding));
     }
@@ -35,6 +55,12 @@ Renderer::~Renderer() {
     for (int index = 0; index < 3; ++index) {
         dispatch_semaphore_wait(frameSemaphore_, DISPATCH_TIME_FOREVER);
     }
+    for (int index = 0; index < 3; ++index) {
+        dispatch_semaphore_signal(frameSemaphore_);
+    }
+#if !OS_OBJECT_USE_OBJC
+    dispatch_release(frameSemaphore_);
+#endif
 }
 
 void Renderer::draw(MTK::View* view) noexcept {
@@ -44,6 +70,9 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
 
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
+    const Clock::TimePoint frameTime = Clock::now();
+    cameraController_.update(Clock::secondsBetween(previousFrameTime_, frameTime));
+    previousFrameTime_ = frameTime;
     MTL::RenderPassDescriptor* renderPass = view->currentRenderPassDescriptor();
     CA::MetalDrawable* drawable = view->currentDrawable();
     if (!renderPass || !drawable) {
@@ -52,6 +81,8 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
 
     dispatch_semaphore_wait(frameSemaphore_, DISPATCH_TIME_FOREVER);
+    FrameContext& frame = *frameContexts_[frameNumber_ % frameContexts_.size()];
+    frame.beginFrame();
     MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
     if (!commandBuffer) {
         dispatch_semaphore_signal(frameSemaphore_);
@@ -66,12 +97,57 @@ void Renderer::draw(MTK::View* view) noexcept {
         pool->release();
         return;
     }
-    encoder->setLabel(NS::String::string("Viewport Clear", NS::UTF8StringEncoding));
+    encoder->setLabel(NS::String::string("Scene Main Pass", NS::UTF8StringEncoding));
+    encoder->setRenderPipelineState(viewportPipeline_.get());
+    encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
+
+    if (!meshPrimitives_.empty() && pbrPipeline_ && reverseZDepthState_) {
+        scene::Camera camera;
+        const scene::Transform cameraTransform = cameraController_.transform();
+        const float width = static_cast<float>(drawableSize_.width);
+        const float height = static_cast<float>(drawableSize_.height);
+        const float aspect = height > 0.0F ? width / height : 16.0F / 9.0F;
+        const auto projection = camera.projectionMatrix(aspect);
+        const auto viewMatrix = camera.viewMatrix(cameraTransform);
+        if (projection && viewMatrix) {
+            AetherFrameUniforms uniforms{};
+            uniforms.viewProjection = simd_mul(*projection, *viewMatrix);
+            uniforms.model = matrix_identity_float4x4;
+            const simd_float3 cameraPosition = cameraController_.position();
+            uniforms.cameraPosition = {cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0F};
+            uniforms.lightDirectionIntensity = {-0.4F, -1.0F, -0.6F, 4.0F};
+            uniforms.lightColorExposure = {1.0F, 0.95F, 0.85F, 0.0F};
+            auto frameSlice = frame.allocateUpload(sizeof(uniforms));
+            if (frameSlice) {
+                std::memcpy(frameSlice->cpuAddress, &uniforms, sizeof(uniforms));
+                encoder->setRenderPipelineState(pbrPipeline_.get());
+                encoder->setDepthStencilState(reverseZDepthState_.get());
+                encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
+                encoder->setVertexBuffer(frameSlice->buffer, frameSlice->offset, 1);
+                encoder->setFragmentBuffer(frameSlice->buffer, frameSlice->offset, 1);
+                for (const auto& primitive : meshPrimitives_) {
+                    encoder->setCullMode(primitive.doubleSided ? MTL::CullModeNone
+                                                               : MTL::CullModeBack);
+                    encoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
+                    encoder->setFragmentBytes(&primitive.material, sizeof(primitive.material), 2);
+                    encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, primitive.indexCount,
+                                                   MTL::IndexTypeUInt32, primitive.indices.get(),
+                                                   0);
+                }
+            }
+        }
+    }
     encoder->endEncoding();
 
     dispatch_semaphore_t semaphore = frameSemaphore_;
-    commandBuffer->addCompletedHandler(
-        [semaphore](MTL::CommandBuffer*) { dispatch_semaphore_signal(semaphore); });
+    commandBuffer->addCompletedHandler([this, semaphore](MTL::CommandBuffer* completed) {
+        const double gpuSeconds = completed->GPUEndTime() - completed->GPUStartTime();
+        if (gpuSeconds >= 0.0) {
+            lastGpuMilliseconds_.store(gpuSeconds * 1000.0, std::memory_order_relaxed);
+        }
+        completedFrames_.fetch_add(1, std::memory_order_relaxed);
+        dispatch_semaphore_signal(semaphore);
+    });
     commandBuffer->presentDrawable(drawable);
     commandBuffer->commit();
     ++frameNumber_;
@@ -80,6 +156,219 @@ void Renderer::draw(MTK::View* view) noexcept {
 
 void Renderer::drawableSizeWillChange(CGSize size) noexcept {
     drawableSize_ = size;
+}
+
+Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
+    auto loaded = mesh::GltfLoader::load(path);
+    if (!loaded) {
+        return std::unexpected(loaded.error());
+    }
+
+    std::vector<GpuMeshPrimitive> uploaded;
+    uploaded.reserve(loaded->primitives.size());
+    for (const auto& primitive : loaded->primitives) {
+        auto vertices = uploadPrivateBuffer(primitive.vertices.data(),
+                                            primitive.vertices.size() * sizeof(mesh::MeshVertex),
+                                            "glTF Vertex Buffer");
+        auto indices = uploadPrivateBuffer(primitive.indices.data(),
+                                           primitive.indices.size() * sizeof(std::uint32_t),
+                                           "glTF Index Buffer");
+        if (!vertices)
+            return std::unexpected(vertices.error());
+        if (!indices)
+            return std::unexpected(indices.error());
+        if (primitive.indices.size() > std::numeric_limits<std::uint32_t>::max()) {
+            return fail(ErrorCode::resourceExhausted, "Mesh primitive exceeds Metal index count");
+        }
+        const auto& sourceMaterial = loaded->materials.at(primitive.materialIndex);
+        AetherMaterialUniforms material{};
+        material.baseColor = sourceMaterial.baseColor;
+        material.emissiveMetallic = {sourceMaterial.emissive.x, sourceMaterial.emissive.y,
+                                     sourceMaterial.emissive.z, sourceMaterial.metallic};
+        material.roughnessFlags = {sourceMaterial.roughness,
+                                   sourceMaterial.doubleSided ? 1.0F : 0.0F, 0.0F, 0.0F};
+        uploaded.push_back(GpuMeshPrimitive{std::move(*vertices), std::move(*indices),
+                                            static_cast<std::uint32_t>(primitive.indices.size()),
+                                            material, sourceMaterial.doubleSided});
+    }
+    meshPrimitives_ = std::move(uploaded);
+    Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
+                                              std::to_string(meshPrimitives_.size()) +
+                                              " primitives");
+    return {};
+}
+
+void Renderer::setCameraMovement(scene::CameraMove movement, bool active) noexcept {
+    cameraController_.setMoving(movement, active);
+}
+
+void Renderer::addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept {
+    cameraController_.addLookDelta(horizontalPixels, verticalPixels);
+}
+
+void Renderer::addCameraDolly(float amount) noexcept {
+    cameraController_.addDolly(amount);
+}
+
+void Renderer::clearCameraMovement() noexcept {
+    cameraController_.clearMovement();
+}
+
+RendererStatistics Renderer::statistics() const noexcept {
+    return RendererStatistics{frameNumber_, completedFrames_.load(std::memory_order_relaxed),
+                              lastGpuMilliseconds_.load(std::memory_order_relaxed)};
+}
+
+Result<void> Renderer::buildViewportPipeline() {
+    std::string libraryPath;
+    if (shaderLibraryPath_.empty()) {
+        const NS::String* resourcePath = NS::Bundle::mainBundle()->resourcePath();
+        if (!resourcePath) {
+            return fail(ErrorCode::notFound, "Application bundle has no resource directory");
+        }
+        libraryPath = std::string(resourcePath->utf8String()) + "/AetherShaders.metallib";
+    } else {
+        libraryPath = shaderLibraryPath_.string();
+    }
+    NS::Error* error = nullptr;
+    shaderLibrary_ = adopt(device_->newLibrary(
+        NS::String::string(libraryPath.c_str(), NS::UTF8StringEncoding), &error));
+    if (!shaderLibrary_) {
+        const std::string message =
+            error ? error->localizedDescription()->utf8String() : "Unknown Metal library error";
+        return fail(ErrorCode::metal, "Unable to load offline AETHER shader library",
+                    message + " · " + libraryPath);
+    }
+    shaderLibrary_->setLabel(NS::String::string("AETHER Offline Library", NS::UTF8StringEncoding));
+
+    auto vertex = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherViewportVertex", NS::UTF8StringEncoding)));
+    auto fragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherViewportFragment", NS::UTF8StringEncoding)));
+    if (!vertex || !fragment) {
+        return fail(ErrorCode::metal, "Offline shader library is missing viewport entry points");
+    }
+
+    auto descriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    descriptor->setLabel(NS::String::string("AETHER Viewport Pipeline", NS::UTF8StringEncoding));
+    descriptor->setVertexFunction(vertex.get());
+    descriptor->setFragmentFunction(fragment.get());
+    descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm_sRGB);
+    descriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
+
+    std::filesystem::path cacheRoot;
+    if (const char* home = std::getenv("HOME")) {
+        cacheRoot = std::filesystem::path(home) / "Library/Caches/com.swayamsingal.aether";
+    } else {
+        cacheRoot = std::filesystem::temp_directory_path() / "com.swayamsingal.aether";
+    }
+    std::error_code filesystemError;
+    std::filesystem::create_directories(cacheRoot, filesystemError);
+    const auto archivePath = cacheRoot / "AetherPipelines.bin";
+    auto archiveDescriptor = adopt(MTL::BinaryArchiveDescriptor::alloc()->init());
+    NS::URL* archiveUrl =
+        NS::URL::fileURLWithPath(NS::String::string(archivePath.c_str(), NS::UTF8StringEncoding));
+    if (std::filesystem::is_regular_file(archivePath)) {
+        archiveDescriptor->setUrl(archiveUrl);
+    }
+    binaryArchive_ = adopt(device_->newBinaryArchive(archiveDescriptor.get(), &error));
+    if (!binaryArchive_ && std::filesystem::is_regular_file(archivePath)) {
+        std::filesystem::remove(archivePath, filesystemError);
+        archiveDescriptor->setUrl(nullptr);
+        error = nullptr;
+        binaryArchive_ = adopt(device_->newBinaryArchive(archiveDescriptor.get(), &error));
+    }
+    if (binaryArchive_) {
+        binaryArchive_->setLabel(
+            NS::String::string("AETHER Pipeline Binary Archive", NS::UTF8StringEncoding));
+        descriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+        error = nullptr;
+        if (!binaryArchive_->addRenderPipelineFunctions(descriptor.get(), &error) && error) {
+            Log::instance().write(LogLevel::warning,
+                                  std::string("Pipeline archive warm-up failed: ") +
+                                      error->localizedDescription()->utf8String());
+        }
+    }
+
+    error = nullptr;
+    viewportPipeline_ = adopt(device_->newRenderPipelineState(descriptor.get(), &error));
+    if (!viewportPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create AETHER viewport pipeline", message);
+    }
+
+    auto pbrVertex = adopt(
+        shaderLibrary_->newFunction(NS::String::string("aetherPbrVertex", NS::UTF8StringEncoding)));
+    auto pbrFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherPbrFragment", NS::UTF8StringEncoding)));
+    if (!pbrVertex || !pbrFragment) {
+        return fail(ErrorCode::metal, "Offline shader library is missing PBR entry points");
+    }
+    auto pbrDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    pbrDescriptor->setLabel(NS::String::string("AETHER PBR Pipeline", NS::UTF8StringEncoding));
+    pbrDescriptor->setVertexFunction(pbrVertex.get());
+    pbrDescriptor->setFragmentFunction(pbrFragment.get());
+    pbrDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm_sRGB);
+    pbrDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
+    if (binaryArchive_) {
+        pbrDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+        error = nullptr;
+        if (!binaryArchive_->addRenderPipelineFunctions(pbrDescriptor.get(), &error) && error) {
+            Log::instance().write(LogLevel::warning,
+                                  std::string("PBR archive warm-up failed: ") +
+                                      error->localizedDescription()->utf8String());
+        }
+    }
+    error = nullptr;
+    pbrPipeline_ = adopt(device_->newRenderPipelineState(pbrDescriptor.get(), &error));
+    if (!pbrPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown PBR pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create AETHER PBR pipeline", message);
+    }
+
+    auto depthDescriptor = adopt(MTL::DepthStencilDescriptor::alloc()->init());
+    depthDescriptor->setLabel(NS::String::string("AETHER Reverse-Z Depth", NS::UTF8StringEncoding));
+    depthDescriptor->setDepthCompareFunction(MTL::CompareFunctionGreater);
+    depthDescriptor->setDepthWriteEnabled(true);
+    reverseZDepthState_ = adopt(device_->newDepthStencilState(depthDescriptor.get()));
+    if (!reverseZDepthState_) {
+        return fail(ErrorCode::metal, "Unable to create reverse-Z depth state");
+    }
+    if (binaryArchive_) {
+        error = nullptr;
+        if (!binaryArchive_->serializeToURL(archiveUrl, &error) && error) {
+            Log::instance().write(LogLevel::warning,
+                                  std::string("Pipeline archive serialization failed: ") +
+                                      error->localizedDescription()->utf8String());
+        }
+    }
+    return {};
+}
+
+Result<MetalPtr<MTL::Buffer>> Renderer::uploadPrivateBuffer(const void* bytes, std::size_t size,
+                                                            const char* labelText) {
+    if (!bytes || size == 0) {
+        return fail(ErrorCode::invalidArgument, "Cannot upload an empty GPU buffer", labelText);
+    }
+    auto destination = adopt(device_->newBuffer(size, MTL::ResourceStorageModePrivate));
+    auto staging = adopt(device_->newBuffer(bytes, size, MTL::ResourceStorageModeShared));
+    if (!destination || !staging) {
+        return fail(ErrorCode::resourceExhausted, "Metal buffer allocation failed", labelText);
+    }
+    destination->setLabel(NS::String::string(labelText, NS::UTF8StringEncoding));
+    MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
+    MTL::BlitCommandEncoder* blit = commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+    if (!commandBuffer || !blit) {
+        return fail(ErrorCode::metal, "Unable to create mesh upload command encoder", labelText);
+    }
+    blit->setLabel(NS::String::string("Mesh Upload", NS::UTF8StringEncoding));
+    blit->copyFromBuffer(staging.get(), 0, destination.get(), 0, size);
+    blit->endEncoding();
+    commandBuffer->addCompletedHandler([staging](MTL::CommandBuffer*) { (void)staging; });
+    commandBuffer->commit();
+    return destination;
 }
 
 DeviceCapabilities Renderer::inspect(MTL::Device* device) {

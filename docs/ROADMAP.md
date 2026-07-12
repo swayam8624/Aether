@@ -21,16 +21,19 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Missing drawable/render-pass/encoder safety and GPU debug labels.
 - [x] Offline `.metal` → `.air` → `.metallib` build embedded in the application bundle.
 - [x] SwiftUI shell and opaque Objective-C++ viewport bridge.
-- [ ] Upload/readback rings, deferred destruction, transient heaps, pipeline binary archive, and GPU
+- [x] Upload/readback rings, deferred destruction, transient heaps, pipeline binary archive, and GPU
   timestamps.
-- [ ] Job system, diagnostics bundle, app document model, autosave, undo/redo, and preferences.
+- [x] Job system, diagnostics bundle, app document model, autosave, undo/redo, and preferences.
 - [ ] Thirty-minute Metal validation soak and frame capture with named resources.
 
 ## Phase 2 — Mesh/PBR renderer
 
-- [ ] Scene transforms, cameras, input, and camera paths.
-- [ ] glTF 2.0 meshes, materials, textures, skins, and animation.
-- [ ] Reverse-Z, HDR, GGX PBR, lights, IBL, shadows, TAA, bloom, tone mapping, and debug views.
+- [x] Generation-safe scene transforms, reverse-Z cameras, and keyboard/mouse fly controls.
+- [ ] Persisted and cinematic camera paths.
+- [x] Bounded glTF 2.0 parsing, indexed meshes, generated normals, and material factors.
+- [ ] glTF textures, samplers, tangents, skins, and animation.
+- [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
+- [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

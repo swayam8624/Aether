@@ -13,5 +13,21 @@
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array><dict>
+        <key>UTTypeIdentifier</key><string>com.swayamsingal.aether.project</string>
+        <key>UTTypeDescription</key><string>AETHER Project</string>
+        <key>UTTypeConformsTo</key><array><string>public.json</string></array>
+        <key>UTTypeTagSpecification</key><dict>
+            <key>public.filename-extension</key><array><string>aetherproject</string></array>
+            <key>public.mime-type</key><string>application/vnd.aether.project+json</string>
+        </dict>
+    </dict></array>
+    <key>CFBundleDocumentTypes</key>
+    <array><dict>
+        <key>CFBundleTypeName</key><string>AETHER Project</string>
+        <key>CFBundleTypeRole</key><string>Editor</string>
+        <key>LSItemContentTypes</key><array><string>com.swayamsingal.aether.project</string></array>
+    </dict></array>
 </dict>
 </plist>

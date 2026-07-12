@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum Workspace: String, CaseIterable, Identifiable {
     case scene = "Scene"
@@ -24,7 +26,11 @@ private enum Workspace: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
+    @Binding var document: AetherProjectDocument
+    let projectURL: URL?
     @State private var selection: Workspace? = .scene
+    @Environment(\.undoManager) private var undoManager
+    @AppStorage("showRendererDiagnostics") private var showRendererDiagnostics = true
 
     var body: some View {
         NavigationSplitView {
@@ -32,7 +38,7 @@ struct ContentView: View {
                 Label(workspace.rawValue, systemImage: workspace.symbol)
                     .tag(workspace)
             }
-            .navigationTitle("AETHER")
+            .navigationTitle(document.state.displayName)
             .navigationSplitViewColumnWidth(min: 180, ideal: 220)
         } detail: {
             VStack(spacing: 0) {
@@ -47,20 +53,56 @@ struct ContentView: View {
                 .frame(height: 42)
                 .background(.bar)
 
-                AetherViewport()
+                AetherViewport(scenePath: resolvedScenePath)
                     .overlay(alignment: .topLeading) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("AETHER FOUNDATION")
-                                .font(.caption.bold())
-                            Text("Metal viewport active")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        if showRendererDiagnostics {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("AETHER FOUNDATION")
+                                    .font(.caption.bold())
+                                Text("Metal viewport active")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(10)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(12)
                         }
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .padding(12)
                     }
             }
         }
+        .onChange(of: selection) { _, newValue in
+            guard let newValue else { return }
+            document.state.selectedWorkspace = newValue.rawValue
+        }
+        .onAppear {
+            selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene
+        }
+        .toolbar {
+            ToolbarItemGroup {
+                Button("Import glTF", systemImage: "square.and.arrow.down") { importGltf() }
+                Button("Undo", systemImage: "arrow.uturn.backward") { undoManager?.undo() }
+                    .disabled(undoManager?.canUndo != true)
+                Button("Redo", systemImage: "arrow.uturn.forward") { undoManager?.redo() }
+                    .disabled(undoManager?.canRedo != true)
+            }
+        }
+    }
+
+    private func importGltf() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = ["gltf", "glb"].compactMap { UTType(filenameExtension: $0) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        document.state.scenePath = url.path
+        document.state.displayName = url.deletingPathExtension().lastPathComponent
+    }
+
+    private var resolvedScenePath: String? {
+        guard let scenePath = document.state.scenePath else { return nil }
+        if NSString(string: scenePath).isAbsolutePath {
+            return scenePath
+        }
+        return projectURL?.deletingLastPathComponent().appendingPathComponent(scenePath).path
     }
 }

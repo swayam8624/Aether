@@ -17,9 +17,13 @@ option(AETHER_REQUIRE_METAL_TOOLCHAIN "Fail configuration when metal/metallib ar
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(AetherWarnings)
+include(AetherDependencies)
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/rendergraph)
+add_subdirectory(engine/scene)
+aether_resolve_fastgltf()
+add_subdirectory(engine/mesh)
 
 if(AETHER_BUILD_TOOLS)
     add_subdirectory(tools/aether-inspect)
