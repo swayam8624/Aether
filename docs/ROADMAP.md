@@ -11,7 +11,7 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Add CMake presets, strict warnings, sanitizer support, tests, and CPU CI configuration.
 - [x] Remove source-controlled absolute machine paths.
 - [x] Establish licensing, contribution, security, dependency, and architecture records.
-- [ ] Confirm a clean clone on a second filesystem path before merging.
+- [x] Confirm a clean clone on a second filesystem path before merging.
 
 ## Phase 1 — Production Metal and application foundation
 
