@@ -1,5 +1,6 @@
 {
   "asset": { "version": "2.0", "generator": "AETHER textured fixture" },
+  "extensionsUsed": ["KHR_texture_transform"],
   "buffers": [{
     "byteLength": 66,
     "uri": "data:application/octet-stream;base64,AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAD8AAIA/AAABAAIA"
@@ -23,7 +24,16 @@
   "textures": [{ "source": 0, "sampler": 0 }],
   "materials": [{
     "name": "Textured Material",
-    "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } }
+    "pbrMetallicRoughness": {
+      "baseColorTexture": {
+        "index": 0,
+        "extensions": {
+          "KHR_texture_transform": {
+            "offset": [0.25, 0.125], "rotation": 0.5, "scale": [2.0, 0.5]
+          }
+        }
+      }
+    }
   }],
   "meshes": [{
     "name": "Textured Triangle",

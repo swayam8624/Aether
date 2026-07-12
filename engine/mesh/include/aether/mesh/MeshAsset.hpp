@@ -3,6 +3,7 @@
 #include <shared/AetherShaderTypes.h>
 #include <simd/simd.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -38,6 +39,11 @@ struct TextureAsset final {
 };
 
 struct PbrMaterial final {
+    struct UvTransform final {
+        simd_float2 scale{1.0F, 1.0F};
+        simd_float2 offset{};
+        float rotation{};
+    };
     std::string name;
     simd_float4 baseColor{1.0F, 1.0F, 1.0F, 1.0F};
     simd_float3 emissive{};
@@ -54,6 +60,7 @@ struct PbrMaterial final {
     std::optional<std::size_t> normalTexture;
     std::optional<std::size_t> occlusionTexture;
     std::optional<std::size_t> emissiveTexture;
+    std::array<UvTransform, 5> uvTransforms{};
 };
 
 struct MeshPrimitive final {

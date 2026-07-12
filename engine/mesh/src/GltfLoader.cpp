@@ -267,26 +267,41 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
         material.doubleSided = sourceMaterial.doubleSided;
         material.alphaBlend = sourceMaterial.alphaMode == fastgltf::AlphaMode::Blend;
         material.alphaMask = sourceMaterial.alphaMode == fastgltf::AlphaMode::Mask;
-        auto resolveTexture = [&](const auto& binding,
+        auto resolveTexture = [&](const auto& binding, std::size_t slot,
                                   const char* purpose) -> Result<std::optional<std::size_t>> {
             if (!binding)
                 return std::optional<std::size_t>{};
             if (binding->textureIndex >= result.textures.size())
                 return fail(ErrorCode::corruptData, "glTF material texture index is invalid",
                             purpose);
-            if (binding->texCoordIndex != 0 || binding->transform)
+            const std::size_t textureCoordinates = binding->transform && binding->transform->texCoordIndex
+                                                       ? *binding->transform->texCoordIndex
+                                                       : binding->texCoordIndex;
+            if (textureCoordinates != 0)
                 return fail(ErrorCode::unsupported,
-                            "AETHER currently requires TEXCOORD_0 without texture transforms",
-                            purpose);
+                            "AETHER currently requires texture bindings to use TEXCOORD_0", purpose);
+            if (binding->transform) {
+                auto& transform = material.uvTransforms[slot];
+                transform.scale = {static_cast<float>(binding->transform->uvScale[0]),
+                                   static_cast<float>(binding->transform->uvScale[1])};
+                transform.offset = {static_cast<float>(binding->transform->uvOffset[0]),
+                                    static_cast<float>(binding->transform->uvOffset[1])};
+                transform.rotation = static_cast<float>(binding->transform->rotation);
+                if (!std::isfinite(transform.scale.x) || !std::isfinite(transform.scale.y) ||
+                    !std::isfinite(transform.offset.x) || !std::isfinite(transform.offset.y) ||
+                    !std::isfinite(transform.rotation))
+                    return fail(ErrorCode::corruptData, "glTF texture transform is not finite",
+                                purpose);
+            }
             return std::optional<std::size_t>{binding->textureIndex};
         };
         auto baseColorTexture =
-            resolveTexture(sourceMaterial.pbrData.baseColorTexture, "base color");
+            resolveTexture(sourceMaterial.pbrData.baseColorTexture, 0, "base color");
         auto metallicRoughnessTexture =
-            resolveTexture(sourceMaterial.pbrData.metallicRoughnessTexture, "metallic roughness");
-        auto normalTexture = resolveTexture(sourceMaterial.normalTexture, "normal");
-        auto occlusionTexture = resolveTexture(sourceMaterial.occlusionTexture, "occlusion");
-        auto emissiveTexture = resolveTexture(sourceMaterial.emissiveTexture, "emissive");
+            resolveTexture(sourceMaterial.pbrData.metallicRoughnessTexture, 1, "metallic roughness");
+        auto normalTexture = resolveTexture(sourceMaterial.normalTexture, 2, "normal");
+        auto occlusionTexture = resolveTexture(sourceMaterial.occlusionTexture, 3, "occlusion");
+        auto emissiveTexture = resolveTexture(sourceMaterial.emissiveTexture, 4, "emissive");
         if (!baseColorTexture)
             return std::unexpected(baseColorTexture.error());
         if (!metallicRoughnessTexture)

@@ -305,6 +305,12 @@ void testGltfLoader() {
     if (textured) {
         expect(textured->images.size() == 1 && !textured->images[0].bytes.empty(),
                "glTF encoded image bytes are retained");
+        const auto& uvTransform = textured->materials[1].uvTransforms[0];
+        expect(std::abs(uvTransform.scale.x - 2.0F) < 1.0e-6F &&
+                   std::abs(uvTransform.scale.y - 0.5F) < 1.0e-6F &&
+                   std::abs(uvTransform.offset.x - 0.25F) < 1.0e-6F &&
+                   std::abs(uvTransform.rotation - 0.5F) < 1.0e-6F,
+               "KHR_texture_transform parameters are retained per texture slot");
         expect(
             textured->textures.size() == 1 &&
                 textured->textures[0].mipFilter == aether::mesh::SamplerMipFilter::linear &&

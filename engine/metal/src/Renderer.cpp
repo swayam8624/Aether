@@ -451,6 +451,13 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         const std::uint32_t alphaMode =
             sourceMaterial.alphaMask ? 1U : (sourceMaterial.alphaBlend ? 2U : 0U);
         material.material.textureFlags = {textureMask, alphaMode, 0U, 0U};
+        for (std::size_t index = 0; index < sourceMaterial.uvTransforms.size(); ++index) {
+            const auto& transform = sourceMaterial.uvTransforms[index];
+            material.material.uvScaleOffset[index] = {transform.scale.x, transform.scale.y,
+                                                      transform.offset.x, transform.offset.y};
+            material.material.uvRotation[index] = {std::cos(transform.rotation),
+                                                   std::sin(transform.rotation), 0.0F, 0.0F};
+        }
         material.doubleSided = sourceMaterial.doubleSided;
         material.alphaBlend = sourceMaterial.alphaBlend;
         uploadedMaterials.push_back(std::move(material));

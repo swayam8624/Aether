@@ -36,7 +36,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   core PBR texture maps, normal mapping, alpha masking, and alpha blend pipeline.
 - [x] Default-scene traversal, nested node transforms, shared mesh instances, inverse-transpose
   normal transforms, bounded instance counts, and stable back-to-front transparent draw sorting.
-- [ ] Skinning, morph targets, animation playback, and transformed UV sets.
+- [x] Per-texture-slot `KHR_texture_transform` scale, rotation, and offset through CPU/MSL ABI.
+- [ ] Skinning, morph targets, and animation playback.
 - [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
 - [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
