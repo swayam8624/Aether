@@ -39,7 +39,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Per-texture-slot `KHR_texture_transform` scale, rotation, and offset through CPU/MSL ABI.
 - [x] Bounded glTF TRS animation loading, STEP/LINEAR/CUBICSPLINE evaluation, quaternion slerp,
   loop/clamp controls, hierarchical world resolution, and live mesh-instance playback.
-- [ ] Skinning and morph targets.
+- [x] Bounded glTF skins, JOINTS_0/WEIGHTS_0 normalization, inverse-bind validation, animated joint
+  palettes, mirrored transforms, and Metal position/normal/tangent skinning.
+- [ ] Morph targets.
 - [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
 - [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.

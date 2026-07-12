@@ -219,6 +219,7 @@ void Renderer::draw(MTK::View* view) noexcept {
             Log::instance().write(LogLevel::error, worldTransforms.error().describe());
             selectedAnimation_.reset();
         } else {
+            meshWorldTransforms_ = *worldTransforms;
             for (auto& instance : meshInstances_) {
                 if (instance.nodeIndex >= worldTransforms->size()) continue;
                 instance.worldTransform = (*worldTransforms)[instance.nodeIndex];
@@ -351,6 +352,45 @@ void Renderer::draw(MTK::View* view) noexcept {
                         uniforms.normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
                         encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
                         encoder->setFragmentBytes(&uniforms, sizeof(uniforms), 1);
+                        AetherSkinDraw skinDraw{};
+                        AetherJointMatrix identityJoint{matrix_identity_float4x4,
+                                                        matrix_identity_float4x4};
+                        if (instance.skinIndex && meshAnimationAsset_ &&
+                            *instance.skinIndex < meshAnimationAsset_->skins.size()) {
+                            const auto& skin = meshAnimationAsset_->skins[*instance.skinIndex];
+                            std::vector<AetherJointMatrix> palette;
+                            palette.reserve(skin.jointNodeIndices.size());
+                            const auto inverseMesh = simd_inverse(instance.worldTransform);
+                            for (std::size_t joint = 0; joint < skin.jointNodeIndices.size(); ++joint) {
+                                const auto nodeIndex = skin.jointNodeIndices[joint];
+                                if (nodeIndex >= meshWorldTransforms_.size()) break;
+                                const auto position = simd_mul(
+                                    simd_mul(inverseMesh, meshWorldTransforms_[nodeIndex]),
+                                    skin.inverseBindMatrices[joint]);
+                                palette.push_back(AetherJointMatrix{
+                                    position, simd_transpose(simd_inverse(position))});
+                            }
+                            if (palette.size() != skin.jointNodeIndices.size()) {
+                                Log::instance().write(LogLevel::error,
+                                                      "Skin joint world transform is unavailable");
+                                continue;
+                            }
+                            auto paletteSlice = frame.allocateUpload(
+                                palette.size() * sizeof(AetherJointMatrix), 256);
+                            if (!paletteSlice) {
+                                Log::instance().write(LogLevel::error,
+                                                      paletteSlice.error().describe());
+                                continue;
+                            }
+                            std::memcpy(paletteSlice->cpuAddress, palette.data(),
+                                        palette.size() * sizeof(AetherJointMatrix));
+                            encoder->setVertexBuffer(paletteSlice->buffer, paletteSlice->offset, 2);
+                            skinDraw.jointCount = static_cast<std::uint32_t>(palette.size());
+                            skinDraw.enabled = 1;
+                        } else {
+                            encoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 2);
+                        }
+                        encoder->setVertexBytes(&skinDraw, sizeof(skinDraw), 3);
                         encoder->setFrontFacingWinding(instance.mirrored
                                                            ? MTL::WindingClockwise
                                                            : MTL::WindingCounterClockwise);
@@ -398,6 +438,16 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     auto loaded = mesh::GltfLoader::load(path);
     if (!loaded) {
         return std::unexpected(loaded.error());
+    }
+    std::size_t skinUploadBytes = 0;
+    for (const auto& instance : loaded->instances) {
+        if (!instance.skinIndex) continue;
+        const auto jointBytes = loaded->skins.at(*instance.skinIndex).jointNodeIndices.size() *
+                                sizeof(AetherJointMatrix);
+        if (jointBytes > frameContexts_[0]->uploadCapacity() - skinUploadBytes)
+            return fail(ErrorCode::resourceExhausted,
+                        "glTF skin palettes exceed the per-frame upload budget");
+        skinUploadBytes += jointBytes;
     }
 
     std::vector<DecodedImage> decodedImages;
@@ -524,7 +574,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             sourceInstance.worldTransform,
                                             {transformed.x, transformed.y, transformed.z},
                                             simd_determinant(sourceInstance.worldTransform) < 0.0F,
-                                            sourceInstance.nodeIndex});
+                                            sourceInstance.nodeIndex, sourceInstance.skinIndex});
     }
     meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);
@@ -532,6 +582,14 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     meshAnimationAsset_.emplace();
     meshAnimationAsset_->nodes = std::move(loaded->nodes);
     meshAnimationAsset_->animations = std::move(loaded->animations);
+    meshAnimationAsset_->skins = std::move(loaded->skins);
+    std::vector<scene::Transform> initialTransforms;
+    initialTransforms.reserve(meshAnimationAsset_->nodes.size());
+    for (const auto& node : meshAnimationAsset_->nodes)
+        initialTransforms.push_back(node.localTransform);
+    auto initialWorlds = mesh::resolveWorldTransforms(*meshAnimationAsset_, initialTransforms);
+    if (!initialWorlds) return std::unexpected(initialWorlds.error());
+    meshWorldTransforms_ = std::move(*initialWorlds);
     selectedAnimation_ = meshAnimationAsset_->animations.empty()
                              ? std::nullopt
                              : std::optional<std::size_t>{0};
@@ -576,6 +634,7 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     meshPrimitives_.clear();
     meshInstances_.clear();
     meshAnimationAsset_.reset();
+    meshWorldTransforms_.clear();
     selectedAnimation_.reset();
     meshTextures_.clear();
     meshMaterials_.clear();
@@ -605,6 +664,7 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     meshPrimitives_.clear();
     meshInstances_.clear();
     meshAnimationAsset_.reset();
+    meshWorldTransforms_.clear();
     selectedAnimation_.reset();
     meshTextures_.clear();
     meshMaterials_.clear();

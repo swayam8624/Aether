@@ -236,6 +236,42 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
             result.nodes[child].parentIndex = nodeIndex;
         }
     }
+    if (sourceAsset.skins.size() > limits.maximumSkins)
+        return fail(ErrorCode::resourceExhausted, "glTF exceeds skin-count limit");
+    std::size_t totalJoints = 0;
+    result.skins.reserve(sourceAsset.skins.size());
+    for (const auto& sourceSkin : sourceAsset.skins) {
+        if (sourceSkin.joints.empty() ||
+            sourceSkin.joints.size() > limits.maximumJoints - totalJoints)
+            return fail(ErrorCode::resourceExhausted, "glTF exceeds joint-count limit");
+        totalJoints += sourceSkin.joints.size();
+        MeshSkin skin;
+        skin.name = sourceSkin.name.empty() ? "Skin " + std::to_string(result.skins.size())
+                                            : std::string(sourceSkin.name);
+        skin.jointNodeIndices.assign(sourceSkin.joints.begin(), sourceSkin.joints.end());
+        if (std::ranges::any_of(skin.jointNodeIndices,
+                                [&](std::size_t joint) { return joint >= result.nodes.size(); }))
+            return fail(ErrorCode::corruptData, "glTF skin joint index is invalid", skin.name);
+        skin.inverseBindMatrices.assign(skin.jointNodeIndices.size(), matrix_identity_float4x4);
+        if (sourceSkin.inverseBindMatrices) {
+            if (*sourceSkin.inverseBindMatrices >= sourceAsset.accessors.size())
+                return fail(ErrorCode::corruptData, "glTF inverse-bind accessor is invalid", skin.name);
+            const auto& accessor = sourceAsset.accessors[*sourceSkin.inverseBindMatrices];
+            if (accessor.type != fastgltf::AccessorType::Mat4 ||
+                accessor.componentType != fastgltf::ComponentType::Float ||
+                accessor.count != skin.jointNodeIndices.size())
+                return fail(ErrorCode::corruptData, "glTF inverse-bind matrices are invalid", skin.name);
+            fastgltf::iterateAccessorWithIndex<fastgltf::math::fmat4x4>(
+                sourceAsset, accessor, [&](const auto& matrix, std::size_t index) {
+                    skin.inverseBindMatrices[index] = toSimd(matrix);
+                });
+            if (std::ranges::any_of(skin.inverseBindMatrices, [](const simd_float4x4& matrix) {
+                    return !std::isfinite(simd_determinant(matrix));
+                }))
+                return fail(ErrorCode::corruptData, "glTF inverse-bind matrix is not finite", skin.name);
+        }
+        result.skins.push_back(std::move(skin));
+    }
     if (sourceAsset.images.size() > limits.maximumImages)
         return fail(ErrorCode::resourceExhausted, "glTF exceeds image-count limit");
     std::size_t totalImageBytes = 0;
@@ -399,6 +435,8 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
             bool hasNormals = false;
             bool hasTextureCoordinates = false;
             bool hasTangents = false;
+            bool hasJoints = false;
+            bool hasWeights = false;
             if (const auto* normalAttribute = sourcePrimitive.findAttribute("NORMAL");
                 normalAttribute != sourcePrimitive.attributes.end()) {
                 const auto& accessor = sourceAsset.accessors[normalAttribute->accessorIndex];
@@ -440,6 +478,47 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
                                                              value.w()};
                     });
                 hasTangents = true;
+            }
+            if (const auto* jointAttribute = sourcePrimitive.findAttribute("JOINTS_0");
+                jointAttribute != sourcePrimitive.attributes.end()) {
+                const auto& accessor = sourceAsset.accessors[jointAttribute->accessorIndex];
+                if (accessor.count != primitive.vertices.size())
+                    return fail(ErrorCode::corruptData, "glTF joint count does not match positions");
+                fastgltf::iterateAccessorWithIndex<fastgltf::math::uvec4>(
+                    sourceAsset, accessor, [&](const auto& value, std::size_t index) {
+                        primitive.vertices[index].joints = {
+                            static_cast<std::uint32_t>(value.x()),
+                            static_cast<std::uint32_t>(value.y()),
+                            static_cast<std::uint32_t>(value.z()),
+                            static_cast<std::uint32_t>(value.w())};
+                    });
+                hasJoints = true;
+            }
+            if (const auto* weightAttribute = sourcePrimitive.findAttribute("WEIGHTS_0");
+                weightAttribute != sourcePrimitive.attributes.end()) {
+                const auto& accessor = sourceAsset.accessors[weightAttribute->accessorIndex];
+                if (accessor.count != primitive.vertices.size())
+                    return fail(ErrorCode::corruptData, "glTF weight count does not match positions");
+                fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
+                    sourceAsset, accessor, [&](const auto& value, std::size_t index) {
+                        primitive.vertices[index].weights = {value.x(), value.y(), value.z(), value.w()};
+                    });
+                hasWeights = true;
+            }
+            if (hasJoints != hasWeights)
+                return fail(ErrorCode::corruptData, "glTF skin attributes must provide JOINTS_0 and WEIGHTS_0 together");
+            if (hasWeights) {
+                for (auto& vertex : primitive.vertices) {
+                    for (std::size_t component = 0; component < 4; ++component)
+                        if (!std::isfinite(vertex.weights[component]) ||
+                            vertex.weights[component] < 0.0F)
+                            return fail(ErrorCode::corruptData, "glTF skin weight is invalid");
+                    const float sum = simd_reduce_add(vertex.weights);
+                    if (sum <= 1.0e-8F)
+                        return fail(ErrorCode::corruptData, "glTF skin weights sum to zero");
+                    vertex.weights /= sum;
+                }
+                primitive.hasSkinAttributes = true;
             }
 
             primitive.indices.resize(indexAccessor.count);
@@ -492,11 +571,16 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
     }
     bool instanceOverflow = false;
     bool singularTransform = false;
+    bool invalidSkin = false;
     fastgltf::iterateSceneNodes(sourceAsset, sceneIndex, fastgltf::math::fmat4x4{},
         [&](const fastgltf::Node& node, const fastgltf::math::fmat4x4& worldTransform) {
             if (!node.meshIndex || *node.meshIndex >= sourceAsset.meshes.size()) return;
             const auto meshIndex = *node.meshIndex;
             const auto count = sourceAsset.meshes[meshIndex].primitives.size();
+            if (node.skinIndex && *node.skinIndex >= result.skins.size()) {
+                invalidSkin = true;
+                return;
+            }
             const auto transform = toSimd(worldTransform);
             const float determinant = simd_determinant(transform);
             if (!std::isfinite(determinant) || std::abs(determinant) < 1.0e-8F) {
@@ -508,11 +592,28 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
                     instanceOverflow = true;
                     return;
                 }
+                const auto primitiveIndex = firstPrimitive[meshIndex] + localPrimitive;
+                const auto& primitive = result.primitives[primitiveIndex];
+                if (node.skinIndex) {
+                    if (!primitive.hasSkinAttributes) {
+                        invalidSkin = true;
+                        return;
+                    }
+                    const auto jointCount = result.skins[*node.skinIndex].jointNodeIndices.size();
+                    for (const auto& vertex : primitive.vertices)
+                        for (std::size_t component = 0; component < 4; ++component)
+                            if (vertex.weights[component] > 0.0F &&
+                                vertex.joints[component] >= jointCount) {
+                                invalidSkin = true;
+                                return;
+                            }
+                }
                 const auto nodeIndex = static_cast<std::size_t>(&node - sourceAsset.nodes.data());
                 result.instances.push_back(MeshInstance{
                     node.name.empty() ? std::string(sourceAsset.meshes[meshIndex].name)
                                       : std::string(node.name),
-                    firstPrimitive[meshIndex] + localPrimitive, transform, nodeIndex});
+                    firstPrimitive[meshIndex] + localPrimitive, transform, nodeIndex,
+                    node.skinIndex ? std::optional<std::size_t>{*node.skinIndex} : std::nullopt});
             }
         });
     if (instanceOverflow) {
@@ -520,6 +621,9 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
     }
     if (singularTransform)
         return fail(ErrorCode::corruptData, "glTF mesh node has a singular world transform");
+    if (invalidSkin)
+        return fail(ErrorCode::corruptData,
+                    "glTF skinned instance has invalid skin or vertex joint attributes");
     if (result.instances.empty())
         return fail(ErrorCode::corruptData, "glTF scene contains no renderable mesh instances");
 

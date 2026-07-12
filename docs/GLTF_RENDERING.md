@@ -20,5 +20,12 @@ TRS animation channels support `STEP`, `LINEAR`, and `CUBICSPLINE`. Rotation use
 for linear keys and normalized Hermite results for cubic keys. Sampling returns immutable local
 snapshots, resolves the node hierarchy separately, and can clamp or loop. The renderer exposes clip
 selection, play/pause, and seek controls and automatically plays the first clip after loading an
-animated asset. Skinning, morph targets, animation blending, and editor-facing timeline controls
+animated asset.
+
+Skinning supports four `JOINTS_0`/`WEIGHTS_0` influences per vertex. Weights are finite,
+non-negative, non-zero, and normalized during import. Joint indices are checked against the skin
+used by every mesh instance. Inverse-bind matrices and joint-node references are bounded and
+validated. Each frame builds position and inverse-transpose normal palettes from animated joint
+world transforms; a scene whose palettes exceed the fixed frame upload budget fails at load time.
+Morph targets, secondary influence sets, animation blending, and editor-facing timeline controls
 remain open Phase 2 work and must not be claimed as implemented.

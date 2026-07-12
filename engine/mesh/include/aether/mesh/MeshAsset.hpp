@@ -20,6 +20,8 @@ static_assert(offsetof(MeshVertex, position) == 0);
 static_assert(offsetof(MeshVertex, normal) == 16);
 static_assert(offsetof(MeshVertex, tangent) == 32);
 static_assert(offsetof(MeshVertex, textureCoordinate) == 48);
+static_assert(offsetof(MeshVertex, joints) == 64);
+static_assert(offsetof(MeshVertex, weights) == 80);
 
 enum class SamplerFilter { nearest, linear };
 enum class SamplerMipFilter { none, nearest, linear };
@@ -70,6 +72,7 @@ struct MeshPrimitive final {
     std::vector<std::uint32_t> indices;
     std::size_t materialIndex{};
     simd_float3 localBoundsCenter{};
+    bool hasSkinAttributes{};
 };
 
 /// One scene-node use of a mesh primitive. Geometry remains shared across instances.
@@ -78,6 +81,13 @@ struct MeshInstance final {
     std::size_t primitiveIndex{};
     simd_float4x4 worldTransform{matrix_identity_float4x4};
     std::size_t nodeIndex{};
+    std::optional<std::size_t> skinIndex;
+};
+
+struct MeshSkin final {
+    std::string name;
+    std::vector<std::size_t> jointNodeIndices;
+    std::vector<simd_float4x4> inverseBindMatrices;
 };
 
 struct SceneNode final {
@@ -114,6 +124,7 @@ struct MeshAsset final {
     std::vector<MeshInstance> instances;
     std::vector<SceneNode> nodes;
     std::vector<AnimationClip> animations;
+    std::vector<MeshSkin> skins;
 
     [[nodiscard]] std::size_t vertexCount() const noexcept;
     [[nodiscard]] std::size_t indexCount() const noexcept;

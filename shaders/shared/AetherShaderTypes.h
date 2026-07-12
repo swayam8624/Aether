@@ -33,6 +33,20 @@ struct AetherMeshVertex {
     AetherFloat4 tangent;
     AetherFloat2 textureCoordinate;
     AetherFloat2 padding;
+    AetherUInt4 joints;
+    AetherFloat4 weights;
+};
+
+struct AetherJointMatrix {
+    AetherFloat4x4 position;
+    AetherFloat4x4 normal;
+};
+
+struct AetherSkinDraw {
+    AetherUInt jointCount;
+    AetherUInt enabled;
+    AetherUInt padding0;
+    AetherUInt padding1;
 };
 
 struct AetherFrameUniforms {
@@ -87,7 +101,9 @@ struct AetherGaussianCounters {
 
 #ifndef __METAL_VERSION__
 static_assert(sizeof(AetherFullscreenVertex) == 16);
-static_assert(sizeof(AetherMeshVertex) == 64);
+static_assert(sizeof(AetherMeshVertex) == 96);
+static_assert(sizeof(AetherJointMatrix) == 128);
+static_assert(sizeof(AetherSkinDraw) == 16);
 static_assert(sizeof(AetherFrameUniforms) == 240);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);

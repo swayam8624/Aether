@@ -13,15 +13,32 @@ struct PbrVertexOutput {
 
 vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
                                        device const AetherMeshVertex* vertices [[buffer(0)]],
-                                       constant AetherFrameUniforms& frame [[buffer(1)]]) {
+                                       constant AetherFrameUniforms& frame [[buffer(1)]],
+                                       device const AetherJointMatrix* joints [[buffer(2)]],
+                                       constant AetherSkinDraw& skin [[buffer(3)]]) {
     const AetherMeshVertex meshVertex = vertices[vertexId];
-    const float4 worldPosition = frame.model * float4(meshVertex.position, 1.0f);
+    float4 localPosition = float4(meshVertex.position, 1.0f);
+    float3 localNormal = meshVertex.normal;
+    float3 localTangent = meshVertex.tangent.xyz;
+    if (skin.enabled != 0u) {
+        float4x4 positionSkin = float4x4(0.0f);
+        float4x4 normalSkin = float4x4(0.0f);
+        for (uint influence = 0u; influence < 4u; ++influence) {
+            const uint joint = min(meshVertex.joints[influence], skin.jointCount - 1u);
+            positionSkin += joints[joint].position * meshVertex.weights[influence];
+            normalSkin += joints[joint].normal * meshVertex.weights[influence];
+        }
+        localPosition = positionSkin * localPosition;
+        localNormal = normalize((normalSkin * float4(localNormal, 0.0f)).xyz);
+        localTangent = normalize((normalSkin * float4(localTangent, 0.0f)).xyz);
+    }
+    const float4 worldPosition = frame.model * localPosition;
     PbrVertexOutput output;
     output.position = frame.viewProjection * worldPosition;
     output.worldPosition = worldPosition.xyz;
-    output.worldNormal = normalize((frame.normalTransform * float4(meshVertex.normal, 0.0f)).xyz);
+    output.worldNormal = normalize((frame.normalTransform * float4(localNormal, 0.0f)).xyz);
     output.worldTangent =
-        float4(normalize((frame.normalTransform * float4(meshVertex.tangent.xyz, 0.0f)).xyz),
+        float4(normalize((frame.normalTransform * float4(localTangent, 0.0f)).xyz),
                meshVertex.tangent.w * sign(determinant(float3x3(frame.model[0].xyz,
                                                                 frame.model[1].xyz,
                                                                 frame.model[2].xyz))));

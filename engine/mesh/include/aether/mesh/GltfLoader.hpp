@@ -18,6 +18,8 @@ struct GltfLimits final {
     std::size_t maximumImageBytes{1ULL * 1024ULL * 1024ULL * 1024ULL};
     std::size_t maximumAnimationChannels{1'000'000};
     std::size_t maximumAnimationKeyframes{10'000'000};
+    std::size_t maximumSkins{100'000};
+    std::size_t maximumJoints{1'000'000};
 };
 
 class GltfLoader final {

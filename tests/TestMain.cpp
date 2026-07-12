@@ -312,6 +312,19 @@ void testGltfLoader() {
         expect(pose.has_value() && std::abs((*pose)[0].translation.x - 2.0F) < 1.0e-6F,
                "Loaded glTF animation evaluates at runtime");
     }
+    const auto skinnedPath =
+        std::filesystem::path(AETHER_TEST_FIXTURES) / "skinned-triangle.gltf";
+    auto skinned = aether::mesh::GltfLoader::load(skinnedPath);
+    expect(skinned.has_value(), "glTF skin, joints, weights, and inverse binds load");
+    if (skinned) {
+        expect(skinned->skins.size() == 1 && skinned->skins[0].jointNodeIndices.size() == 1 &&
+                   skinned->instances[0].skinIndex == 0 &&
+                   skinned->primitives[0].hasSkinAttributes,
+               "glTF skin remains associated with its mesh-node instance");
+        expect(skinned->primitives[0].vertices[0].joints.x == 0 &&
+                   std::abs(skinned->primitives[0].vertices[0].weights.x - 1.0F) < 1.0e-6F,
+               "glTF joint indices and normalized weights reach the mesh vertex ABI");
+    }
 
     const auto texturedPath =
         std::filesystem::path(AETHER_TEST_FIXTURES) / "textured-triangle.gltf";
