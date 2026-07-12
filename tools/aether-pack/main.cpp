@@ -1,3 +1,5 @@
+#include <aether/gaussian/GaussianCodec.hpp>
+#include <aether/gaussian/PlyLoader.hpp>
 #include <aether/package/Package.hpp>
 
 #include <algorithm>
@@ -71,8 +73,8 @@ std::string escapeJson(std::string_view value) {
 int usage() {
     std::cout << "Usage: aether-pack <scene-directory> [--output scene.aether] "
                  "[--preset balanced] [--dry-run] [--json]\n\n"
-                 "The directory schema uses metadata.json and base-gaussians.bin as required "
-                 "chunks. Optional chunk filenames are documented by aether-pack --help.\n"
+                 "The directory schema uses metadata.json and either base-gaussians.ply or "
+                 "canonical base-gaussians.bin as required inputs.\n"
                  "Presets: full, balanced, memory-constrained, performance, cinematic.\n";
     return 0;
 }
@@ -170,14 +172,32 @@ int main(int argc, char** argv) {
     std::size_t chunkCount = 0;
     std::uint64_t sourceBytes = 0;
     for (const ChunkSource& source : sources) {
-        const auto path = options->input / source.filename;
+        auto path = options->input / source.filename;
+        const bool isBaseGaussians = source.type == aether::package::ChunkType::baseGaussians;
+        const auto plyPath = options->input / "base-gaussians.ply";
+        if (isBaseGaussians && std::filesystem::is_regular_file(plyPath, error))
+            path = plyPath;
         const bool exists = std::filesystem::is_regular_file(path, error);
         if (!exists) {
             if (source.required)
                 return fail("Missing required chunk file: " + path.string(), options->json);
             continue;
         }
-        auto bytes = readFile(path);
+        aether::Result<std::vector<std::byte>> bytes =
+            aether::fail(aether::ErrorCode::internal, "Chunk source was not processed");
+        if (isBaseGaussians && path.extension() == ".ply") {
+            auto asset = aether::gaussian::PlyLoader::load(path);
+            if (!asset)
+                return fail(asset.error().describe(), options->json, 3);
+            bytes = aether::gaussian::GaussianCodec::encode(*asset);
+        } else {
+            bytes = readFile(path);
+            if (isBaseGaussians && bytes) {
+                auto decoded = aether::gaussian::GaussianCodec::decode(*bytes);
+                if (!decoded)
+                    return fail(decoded.error().describe(), options->json, 3);
+            }
+        }
         if (!bytes)
             return fail(bytes.error().describe(), options->json, 3);
         sourceBytes += bytes->size();

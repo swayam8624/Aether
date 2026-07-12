@@ -4,6 +4,7 @@
 #include <aether/core/Log.hpp>
 #include <aether/core/Profiler.hpp>
 #include <aether/core/ResourceLocator.hpp>
+#include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
 #include <aether/mesh/GltfLoader.hpp>
@@ -311,6 +312,19 @@ void testGaussianPly() {
         expect(asset->diagnostics.size() == 1, "Unknown scalar property produces a diagnostic");
         expect(std::abs(asset->gaussians[0].rotation[0] - 1.0F) < 1.0e-6F,
                "PLY quaternion is normalized");
+        auto encoded = aether::gaussian::GaussianCodec::encode(*asset);
+        expect(encoded.has_value() &&
+                   encoded->size() == aether::gaussian::GaussianCodec::headerBytes +
+                                          aether::gaussian::GaussianCodec::recordBytes,
+               "Canonical Gaussian chunk has a fixed, compiler-independent record size");
+        if (encoded) {
+            auto decoded = aether::gaussian::GaussianCodec::decode(*encoded);
+            expect(decoded.has_value() && decoded->gaussians[0].position[2] == 2.0F,
+                   "Canonical Gaussian chunk round-trips through strict decoding");
+            (*encoded)[0] = std::byte{0};
+            expect(!aether::gaussian::GaussianCodec::decode(*encoded).has_value(),
+                   "Canonical Gaussian decoder rejects invalid magic");
+        }
 
         aether::gaussian::ReferenceCamera camera;
         camera.width = 9;
