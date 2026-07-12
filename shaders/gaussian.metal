@@ -185,6 +185,70 @@ kernel void aetherGaussianExclusiveScan(device const uint* counts [[buffer(0)]],
                               memory_order_relaxed);
 }
 
+kernel void aetherGaussianScanBlocks(device const uint* counts [[buffer(0)]],
+                                     device uint* offsets [[buffer(1)]],
+                                     device uint* blockSums [[buffer(2)]],
+                                     constant AetherGaussianCamera& camera [[buffer(3)]],
+                                     uint index [[thread_position_in_grid]],
+                                     uint localIndex [[thread_index_in_threadgroup]],
+                                     uint groupIndex [[threadgroup_position_in_grid]]) {
+    threadgroup uint scratch[256];
+    scratch[localIndex] = index < camera.tileGridCounts.z ? counts[index] : 0;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 1; stride < 256; stride <<= 1) {
+        const uint element = (localIndex + 1) * stride * 2 - 1;
+        if (element < 256)
+            scratch[element] += scratch[element - stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (localIndex == 0) {
+        blockSums[groupIndex] = scratch[255];
+        scratch[255] = 0;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        const uint element = (localIndex + 1) * stride * 2 - 1;
+        if (element < 256) {
+            const uint previous = scratch[element - stride];
+            scratch[element - stride] = scratch[element];
+            scratch[element] += previous;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (index < camera.tileGridCounts.z)
+        offsets[index] = scratch[localIndex];
+}
+
+kernel void aetherGaussianScanBlockSums(device uint* blockSums [[buffer(0)]],
+                                        device atomic_uint* counters [[buffer(1)]],
+                                        constant AetherGaussianCamera& camera [[buffer(2)]],
+                                        uint index [[thread_position_in_grid]]) {
+    if (index != 0)
+        return;
+    const uint blockCount = (camera.tileGridCounts.z + 255) / 256;
+    ulong total = 0;
+    for (uint block = 0; block < blockCount; ++block) {
+        const uint count = blockSums[block];
+        blockSums[block] = uint(min(total, ulong(camera.tileGridCounts.w)));
+        total += count;
+    }
+    const uint stored = uint(min(total, ulong(camera.tileGridCounts.w)));
+    atomic_store_explicit(&counters[1], stored, memory_order_relaxed);
+    if (total > camera.tileGridCounts.w) {
+        atomic_store_explicit(&counters[2],
+                              uint(min(total - camera.tileGridCounts.w, ulong(0xffffffffu))),
+                              memory_order_relaxed);
+    }
+}
+
+kernel void aetherGaussianAddBlockOffsets(device uint* offsets [[buffer(0)]],
+                                          device const uint* blockSums [[buffer(1)]],
+                                          constant AetherGaussianCamera& camera [[buffer(2)]],
+                                          uint index [[thread_position_in_grid]]) {
+    if (index < camera.tileGridCounts.z)
+        offsets[index] += blockSums[index / 256];
+}
+
 kernel void aetherGaussianGenerateKeys(
     device const AetherProjectedGaussian* projected [[buffer(0)]],
     device const uint* offsets [[buffer(1)]], device uint2* keys [[buffer(2)]],

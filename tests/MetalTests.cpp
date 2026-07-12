@@ -209,6 +209,40 @@ int main() {
         }
     }
 
+    auto multiBlockAsset = *gaussianAsset;
+    multiBlockAsset.gaussians.assign(513, gaussianAsset->gaussians.front());
+    for (auto& gaussian : multiBlockAsset.gaussians)
+        gaussian.opacityLogit = -10.0F;
+    auto multiBlockPipeline =
+        aether::metal::GaussianPipeline::create(device.get(), library.get(), 4096);
+    auto multiBlockColor = makeTexture(device.get(), MTL::PixelFormatRGBA32Float, width, height);
+    auto multiBlockDepth = makeTexture(device.get(), MTL::PixelFormatR32Float, width, height);
+    auto multiBlockIds = makeTexture(device.get(), MTL::PixelFormatR32Uint, width, height);
+    MTL::CommandBuffer* multiBlockCommand = queue->commandBuffer();
+    if (!multiBlockPipeline || !(*multiBlockPipeline)->load(multiBlockAsset) ||
+        !multiBlockCommand ||
+        !(*multiBlockPipeline)
+             ->encode(multiBlockCommand, camera, multiBlockColor.get(), multiBlockDepth.get(),
+                      multiBlockIds.get())) {
+        std::cerr << "Unable to encode multi-block Gaussian scan test\n";
+        pool->release();
+        return 1;
+    }
+    multiBlockCommand->commit();
+    multiBlockCommand->waitUntilCompleted();
+    std::vector<simd_float4> multiBlockPixels(width * height);
+    multiBlockColor->getBytes(multiBlockPixels.data(), width * sizeof(simd_float4), region, 0);
+    auto multiBlockReference =
+        aether::gaussian::ReferenceRasterizer::render(multiBlockAsset, referenceCamera);
+    const auto multiBlockStats = (*multiBlockPipeline)->statistics();
+    if (!multiBlockReference || multiBlockStats.visibleGaussians != 513 ||
+        multiBlockStats.tileEntries != 513 || multiBlockStats.overflowedEntries != 0 ||
+        std::abs(multiBlockPixels[center].w - multiBlockReference->color[center][3]) > 2.0e-4F) {
+        std::cerr << "Hierarchical Gaussian scan disagrees across 256-item blocks\n";
+        pool->release();
+        return 1;
+    }
+
     auto boundedPipeline = aether::metal::GaussianPipeline::create(device.get(), library.get(), 1);
     auto boundedColor = makeTexture(device.get(), MTL::PixelFormatRGBA32Float, 32, 32);
     auto boundedDepth = makeTexture(device.get(), MTL::PixelFormatR32Float, 32, 32);

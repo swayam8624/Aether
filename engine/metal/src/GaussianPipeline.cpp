@@ -13,12 +13,14 @@ namespace {
 
 enum PipelineIndex : std::size_t {
     project = 0,
-    scan = 1,
-    generateKeys = 2,
-    radix = 3,
-    initializeRanges = 4,
-    buildRanges = 5,
-    composite = 6,
+    scanBlocks = 1,
+    scanBlockSums = 2,
+    addBlockOffsets = 3,
+    generateKeys = 4,
+    radix = 5,
+    initializeRanges = 6,
+    buildRanges = 7,
+    composite = 8,
 };
 
 Result<MetalPtr<MTL::Buffer>> makeBuffer(MTL::Device* device, std::size_t bytes,
@@ -80,7 +82,8 @@ GaussianPipeline::GaussianPipeline(MTL::Device* device, std::uint32_t maximumTil
     : device_(retain(device)), maximumTileEntries_(maximumTileEntries) {}
 
 Result<void> GaussianPipeline::buildPipelines(MTL::Library* library) {
-    constexpr std::array names{"aetherGaussianProject",          "aetherGaussianExclusiveScan",
+    constexpr std::array names{"aetherGaussianProject",          "aetherGaussianScanBlocks",
+                               "aetherGaussianScanBlockSums",    "aetherGaussianAddBlockOffsets",
                                "aetherGaussianGenerateKeys",     "aetherGaussianStableRadixPass",
                                "aetherGaussianInitializeRanges", "aetherGaussianBuildRanges",
                                "aetherGaussianComposite"};
@@ -130,6 +133,9 @@ Result<void> GaussianPipeline::load(const gaussian::GaussianAsset& asset) {
                              MTL::ResourceStorageModePrivate, "Gaussian Tile Counts");
     auto offsets = makeBuffer(device_.get(), converted.size() * sizeof(std::uint32_t),
                               MTL::ResourceStorageModePrivate, "Gaussian Tile Offsets");
+    const std::size_t scanBlockCount = (converted.size() + 255U) / 256U;
+    auto scanBlockSums = makeBuffer(device_.get(), scanBlockCount * sizeof(std::uint32_t),
+                                    MTL::ResourceStorageModePrivate, "Gaussian Scan Block Sums");
     if (!gaussians)
         return std::unexpected(gaussians.error());
     if (!projectedBuffer)
@@ -138,12 +144,15 @@ Result<void> GaussianPipeline::load(const gaussian::GaussianAsset& asset) {
         return std::unexpected(counts.error());
     if (!offsets)
         return std::unexpected(offsets.error());
+    if (!scanBlockSums)
+        return std::unexpected(scanBlockSums.error());
     std::memcpy((*gaussians)->contents(), converted.data(),
                 converted.size() * sizeof(AetherGaussianGpu));
     gaussians_ = std::move(*gaussians);
     projected_ = std::move(*projectedBuffer);
     tileCounts_ = std::move(*counts);
     offsets_ = std::move(*offsets);
+    scanBlockSums_ = std::move(*scanBlockSums);
     gaussianCount_ = static_cast<std::uint32_t>(converted.size());
     return {};
 }
@@ -223,14 +232,37 @@ Result<void> GaussianPipeline::encode(MTL::CommandBuffer* commandBuffer,
                                  });
         !result)
         return result;
+    if (pipelines_[scanBlocks]->maxTotalThreadsPerThreadgroup() < 256)
+        return fail(ErrorCode::metal, "Metal device cannot run 256-thread Gaussian scans");
+    MTL::ComputeCommandEncoder* scanEncoder = commandBuffer->computeCommandEncoder();
+    if (!scanEncoder)
+        return fail(ErrorCode::metal, "Unable to create Gaussian block-scan encoder");
+    scanEncoder->setLabel(NS::String::string("Gaussian Block Scan", NS::UTF8StringEncoding));
+    scanEncoder->setComputePipelineState(pipelines_[scanBlocks].get());
+    scanEncoder->setBuffer(tileCounts_.get(), 0, 0);
+    scanEncoder->setBuffer(offsets_.get(), 0, 1);
+    scanEncoder->setBuffer(scanBlockSums_.get(), 0, 2);
+    scanEncoder->setBytes(&camera, sizeof(camera), 3);
+    const std::uint32_t scanBlockCount = (gaussianCount_ + 255U) / 256U;
+    scanEncoder->dispatchThreadgroups(MTL::Size::Make(scanBlockCount, 1, 1),
+                                      MTL::Size::Make(256, 1, 1));
+    scanEncoder->endEncoding();
     if (auto result =
-            dispatch1D(commandBuffer, pipelines_[scan].get(), 1, "Gaussian Exclusive Scan",
+            dispatch1D(commandBuffer, pipelines_[scanBlockSums].get(), 1, "Gaussian Block Prefix",
                        [&](MTL::ComputeCommandEncoder* encoder) {
-                           encoder->setBuffer(tileCounts_.get(), 0, 0);
-                           encoder->setBuffer(offsets_.get(), 0, 1);
-                           encoder->setBuffer(counters_.get(), 0, 2);
-                           encoder->setBytes(&camera, sizeof(camera), 3);
+                           encoder->setBuffer(scanBlockSums_.get(), 0, 0);
+                           encoder->setBuffer(counters_.get(), 0, 1);
+                           encoder->setBytes(&camera, sizeof(camera), 2);
                        });
+        !result)
+        return result;
+    if (auto result = dispatch1D(commandBuffer, pipelines_[addBlockOffsets].get(), gaussianCount_,
+                                 "Gaussian Block Offset Propagation",
+                                 [&](MTL::ComputeCommandEncoder* encoder) {
+                                     encoder->setBuffer(offsets_.get(), 0, 0);
+                                     encoder->setBuffer(scanBlockSums_.get(), 0, 1);
+                                     encoder->setBytes(&camera, sizeof(camera), 2);
+                                 });
         !result)
         return result;
     if (auto result = dispatch1D(commandBuffer, pipelines_[generateKeys].get(), gaussianCount_,

@@ -46,7 +46,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Bounded Metal 3 projection, covariance, culling, scan, stable radix ordering, tile ranges,
   compositing, depth/IDs, counters, and app presentation correctness path.
 - [x] Pixel-level CPU/GPU agreement test and explicit tile-entry overflow test.
-- [ ] Hierarchical parallel scan/radix optimization and M1/M2 performance exit gates.
+- [x] Hierarchical 256-threadgroup overlap scan with cross-block CPU/GPU validation.
+- [ ] Parallel radix optimization and M1/M2 performance exit gates.
 - [x] Degree 0–3 GraphDECO-order spherical-harmonic appearance in CPU and Metal paths.
 - [ ] Picking workflow and research/debug visualizations.
 

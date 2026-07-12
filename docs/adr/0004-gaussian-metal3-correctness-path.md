@@ -10,11 +10,12 @@ anisotropic covariance, culling, overlap counts, exclusive offsets, key generati
 radix ordering, tile ranges, front-to-back composition, depth, IDs, early termination, and bounded
 overflow counters. It uses only 32-bit atomics and therefore remains valid on the M1 baseline.
 
-The initial exclusive scan and stable radix passes deliberately execute their global prefix work in
-one GPU thread. They are deterministic correctness fallbacks and test oracles, not the performance
-path used to make frame-rate claims. The production path will replace them with hierarchical
-threadgroup scans and parallel histogram/prefix/scatter passes while retaining the same buffers,
-ordering contract, CPU image comparison, and fallback implementation.
+The serial exclusive scan remains available as a deterministic fallback. The default path now uses
+256-threadgroup Blelloch scans, block-prefix propagation, saturated global budgets, and a Metal test
+that crosses three scan blocks. Stable radix ordering still executes its global passes in one GPU
+thread and is a correctness fallback, not the performance path used to make frame-rate claims. The
+production sorter will replace it with parallel histogram/prefix/scatter passes while retaining the
+same buffers, ordering contract, CPU image comparison, and fallback implementation.
 
 ## Consequences
 
