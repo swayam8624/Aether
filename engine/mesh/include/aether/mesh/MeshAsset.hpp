@@ -61,6 +61,14 @@ struct MeshPrimitive final {
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::size_t materialIndex{};
+    simd_float3 localBoundsCenter{};
+};
+
+/// One scene-node use of a mesh primitive. Geometry remains shared across instances.
+struct MeshInstance final {
+    std::string name;
+    std::size_t primitiveIndex{};
+    simd_float4x4 worldTransform{matrix_identity_float4x4};
 };
 
 struct MeshAsset final {
@@ -69,6 +77,7 @@ struct MeshAsset final {
     std::vector<EncodedImage> images;
     std::vector<TextureAsset> textures;
     std::vector<MeshPrimitive> primitives;
+    std::vector<MeshInstance> instances;
 
     [[nodiscard]] std::size_t vertexCount() const noexcept;
     [[nodiscard]] std::size_t indexCount() const noexcept;

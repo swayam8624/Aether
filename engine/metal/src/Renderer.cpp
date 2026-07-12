@@ -5,6 +5,7 @@
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/scene/Camera.hpp>
 
@@ -293,21 +294,39 @@ void Renderer::draw(MTK::View* view) noexcept {
             uniforms.cameraPosition = {cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0F};
             uniforms.lightDirectionIntensity = {-0.4F, -1.0F, -0.6F, 4.0F};
             uniforms.lightColorExposure = {1.0F, 0.95F, 0.85F, 0.0F};
-            auto frameSlice = frame.allocateUpload(sizeof(uniforms));
-            if (frameSlice) {
-                std::memcpy(frameSlice->cpuAddress, &uniforms, sizeof(uniforms));
+            {
                 encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
-                encoder->setVertexBuffer(frameSlice->buffer, frameSlice->offset, 1);
-                encoder->setFragmentBuffer(frameSlice->buffer, frameSlice->offset, 1);
                 auto renderMaterialClass = [&](bool alphaBlend) {
                     encoder->setRenderPipelineState(alphaBlend ? pbrBlendPipeline_.get()
                                                                : pbrPipeline_.get());
                     encoder->setDepthStencilState(alphaBlend ? reverseZReadOnlyDepthState_.get()
                                                              : reverseZDepthState_.get());
-                    for (const auto& primitive : meshPrimitives_) {
+                    std::vector<std::size_t> drawOrder;
+                    drawOrder.reserve(meshInstances_.size());
+                    for (std::size_t index = 0; index < meshInstances_.size(); ++index) {
+                        const auto& instance = meshInstances_[index];
+                        const auto& primitive = meshPrimitives_.at(instance.primitiveIndex);
                         const auto& material = meshMaterials_.at(primitive.materialIndex);
-                        if (material.alphaBlend != alphaBlend)
-                            continue;
+                        if (material.alphaBlend == alphaBlend) drawOrder.push_back(index);
+                    }
+                    if (alphaBlend) {
+                        std::vector<simd_float3> centers;
+                        centers.reserve(meshInstances_.size());
+                        for (const auto& instance : meshInstances_)
+                            centers.push_back(instance.worldBoundsCenter);
+                        drawOrder = mesh::stableBackToFront(drawOrder, centers, cameraPosition);
+                    }
+                    for (const auto instanceIndex : drawOrder) {
+                        const auto& instance = meshInstances_[instanceIndex];
+                        const auto& primitive = meshPrimitives_.at(instance.primitiveIndex);
+                        const auto& material = meshMaterials_.at(primitive.materialIndex);
+                        uniforms.model = instance.worldTransform;
+                        uniforms.normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
+                        encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
+                        encoder->setFragmentBytes(&uniforms, sizeof(uniforms), 1);
+                        encoder->setFrontFacingWinding(instance.mirrored
+                                                           ? MTL::WindingClockwise
+                                                           : MTL::WindingCounterClockwise);
                         encoder->setCullMode(material.doubleSided ? MTL::CullModeNone
                                                                   : MTL::CullModeBack);
                         encoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
@@ -458,12 +477,28 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             primitive.materialIndex});
     }
     meshPrimitives_ = std::move(uploaded);
+    std::vector<GpuMeshInstance> instances;
+    instances.reserve(loaded->instances.size());
+    for (const auto& sourceInstance : loaded->instances) {
+        if (sourceInstance.primitiveIndex >= loaded->primitives.size())
+            return fail(ErrorCode::corruptData, "glTF instance references invalid primitive");
+        const auto localCenter = loaded->primitives[sourceInstance.primitiveIndex].localBoundsCenter;
+        const auto transformed =
+            simd_mul(sourceInstance.worldTransform,
+                     simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
+        instances.push_back(GpuMeshInstance{sourceInstance.primitiveIndex,
+                                            sourceInstance.worldTransform,
+                                            {transformed.x, transformed.y, transformed.z},
+                                            simd_determinant(sourceInstance.worldTransform) < 0.0F});
+    }
+    meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);
     meshMaterials_ = std::move(uploadedMaterials);
     gaussianPipeline_.reset();
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
                                               std::to_string(meshPrimitives_.size()) +
-                                              " primitives");
+                                              " primitives and " +
+                                              std::to_string(meshInstances_.size()) + " instances");
     return {};
 }
 
@@ -478,6 +513,7 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     if (auto loaded = (*pipeline)->load(*asset); !loaded)
         return std::unexpected(loaded.error());
     meshPrimitives_.clear();
+    meshInstances_.clear();
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
@@ -504,6 +540,7 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     if (auto loaded = (*pipeline)->load(*asset); !loaded)
         return std::unexpected(loaded.error());
     meshPrimitives_.clear();
+    meshInstances_.clear();
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);

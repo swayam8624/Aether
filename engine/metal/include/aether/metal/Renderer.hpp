@@ -95,6 +95,12 @@ class Renderer final {
         std::uint32_t indexCount{};
         std::size_t materialIndex{};
     };
+    struct GpuMeshInstance {
+        std::size_t primitiveIndex{};
+        simd_float4x4 worldTransform{matrix_identity_float4x4};
+        simd_float3 worldBoundsCenter{};
+        bool mirrored{};
+    };
     struct GpuTexture {
         MetalPtr<MTL::Texture> srgb;
         MetalPtr<MTL::Texture> linear;
@@ -108,6 +114,7 @@ class Renderer final {
         std::array<MTL::SamplerState*, 5> samplers{};
     };
     std::vector<GpuMeshPrimitive> meshPrimitives_;
+    std::vector<GpuMeshInstance> meshInstances_;
     std::vector<GpuTexture> meshTextures_;
     std::vector<GpuMaterial> meshMaterials_;
     std::unique_ptr<GaussianPipeline> gaussianPipeline_;

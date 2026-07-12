@@ -11,6 +11,7 @@ namespace aether::mesh {
 struct GltfLimits final {
     std::uintmax_t maximumFileBytes{1ULL * 1024ULL * 1024ULL * 1024ULL};
     std::size_t maximumPrimitives{1'000'000};
+    std::size_t maximumInstances{1'000'000};
     std::size_t maximumVertices{50'000'000};
     std::size_t maximumIndices{150'000'000};
     std::size_t maximumImages{100'000};

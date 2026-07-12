@@ -18,6 +18,14 @@ Result<void> checkGrowth(std::size_t current, std::size_t additional, std::size_
     return {};
 }
 
+simd_float4x4 toSimd(const fastgltf::math::fmat4x4& source) {
+    simd_float4x4 result{};
+    for (std::size_t column = 0; column < 4; ++column)
+        for (std::size_t row = 0; row < 4; ++row)
+            result.columns[column][row] = source[column][row];
+    return result;
+}
+
 void generateNormals(MeshPrimitive& primitive) {
     for (auto& vertex : primitive.vertices) {
         vertex.normal = {0.0F, 0.0F, 0.0F};
@@ -405,6 +413,13 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
             }
             if (!hasTangents)
                 generateTangents(primitive);
+            simd_float3 minimum = primitive.vertices.front().position;
+            simd_float3 maximum = minimum;
+            for (const auto& vertex : primitive.vertices) {
+                minimum = simd_min(minimum, vertex.position);
+                maximum = simd_max(maximum, vertex.position);
+            }
+            primitive.localBoundsCenter = (minimum + maximum) * 0.5F;
             totalVertices += primitive.vertices.size();
             totalIndices += primitive.indices.size();
             result.primitives.push_back(std::move(primitive));
@@ -414,6 +429,49 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
     if (result.primitives.empty()) {
         return fail(ErrorCode::corruptData, "glTF contains no renderable triangle primitives");
     }
+    if (sourceAsset.scenes.empty())
+        return fail(ErrorCode::corruptData, "glTF contains no scene to instantiate");
+    const std::size_t sceneIndex = sourceAsset.defaultScene.value_or(0);
+    if (sceneIndex >= sourceAsset.scenes.size())
+        return fail(ErrorCode::corruptData, "glTF default scene index is invalid");
+
+    std::vector<std::size_t> firstPrimitive(sourceAsset.meshes.size());
+    std::size_t primitiveOffset = 0;
+    for (std::size_t meshIndex = 0; meshIndex < sourceAsset.meshes.size(); ++meshIndex) {
+        firstPrimitive[meshIndex] = primitiveOffset;
+        primitiveOffset += sourceAsset.meshes[meshIndex].primitives.size();
+    }
+    bool instanceOverflow = false;
+    bool singularTransform = false;
+    fastgltf::iterateSceneNodes(sourceAsset, sceneIndex, fastgltf::math::fmat4x4{},
+        [&](const fastgltf::Node& node, const fastgltf::math::fmat4x4& worldTransform) {
+            if (!node.meshIndex || *node.meshIndex >= sourceAsset.meshes.size()) return;
+            const auto meshIndex = *node.meshIndex;
+            const auto count = sourceAsset.meshes[meshIndex].primitives.size();
+            const auto transform = toSimd(worldTransform);
+            const float determinant = simd_determinant(transform);
+            if (!std::isfinite(determinant) || std::abs(determinant) < 1.0e-8F) {
+                singularTransform = true;
+                return;
+            }
+            for (std::size_t localPrimitive = 0; localPrimitive < count; ++localPrimitive) {
+                if (result.instances.size() >= limits.maximumInstances) {
+                    instanceOverflow = true;
+                    return;
+                }
+                result.instances.push_back(MeshInstance{
+                    node.name.empty() ? std::string(sourceAsset.meshes[meshIndex].name)
+                                      : std::string(node.name),
+                    firstPrimitive[meshIndex] + localPrimitive, transform});
+            }
+        });
+    if (instanceOverflow) {
+        return fail(ErrorCode::resourceExhausted, "glTF exceeds scene-instance limit");
+    }
+    if (singularTransform)
+        return fail(ErrorCode::corruptData, "glTF mesh node has a singular world transform");
+    if (result.instances.empty())
+        return fail(ErrorCode::corruptData, "glTF scene contains no renderable mesh instances");
     return result;
 }
 

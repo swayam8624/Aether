@@ -8,6 +8,7 @@
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/package/Sha256.hpp>
 #include <aether/rendergraph/RenderGraph.hpp>
@@ -253,6 +254,7 @@ void testGltfLoader() {
     expect(loaded.has_value(), "Valid glTF fixture loads");
     if (loaded) {
         expect(loaded->primitives.size() == 1, "glTF primitive is retained");
+        expect(loaded->instances.size() == 1, "glTF scene node creates one mesh instance");
         expect(loaded->vertexCount() == 3 && loaded->indexCount() == 3,
                "glTF vertex and index counts match");
         expect(loaded->materials.size() == 2, "Default and authored materials are present");
@@ -265,6 +267,36 @@ void testGltfLoader() {
     tinyLimits.maximumFileBytes = 1;
     expect(!aether::mesh::GltfLoader::load(path, tinyLimits).has_value(),
            "glTF file-size limit is enforced");
+
+    const auto instancedPath =
+        std::filesystem::path(AETHER_TEST_FIXTURES) / "instanced-triangle.gltf";
+    auto instanced = aether::mesh::GltfLoader::load(instancedPath);
+    expect(instanced.has_value(), "Instanced and nested glTF scene loads");
+    if (instanced) {
+        expect(instanced->primitives.size() == 1 && instanced->instances.size() == 3,
+               "glTF instances share one geometry primitive");
+        const auto firstOrigin = simd_mul(instanced->instances[0].worldTransform,
+                                          simd_float4{0.0F, 0.0F, 0.0F, 1.0F});
+        const auto secondOrigin = simd_mul(instanced->instances[1].worldTransform,
+                                           simd_float4{0.0F, 0.0F, 0.0F, 1.0F});
+        expect(std::abs(firstOrigin.x - 2.0F) < 1.0e-6F &&
+                   std::abs(secondOrigin.x + 1.0F) < 1.0e-6F &&
+                   std::abs(secondOrigin.y - 3.0F) < 1.0e-6F,
+               "Nested glTF world transforms are composed in scene order");
+    }
+    aether::mesh::GltfLimits instanceLimit;
+    instanceLimit.maximumInstances = 1;
+    expect(!aether::mesh::GltfLoader::load(instancedPath, instanceLimit).has_value(),
+           "glTF scene instance limit is enforced");
+
+    const std::array<std::size_t, 3> candidates{0, 1, 2};
+    const std::array<simd_float3, 3> centers{
+        simd_float3{0.0F, 0.0F, -2.0F}, simd_float3{0.0F, 0.0F, -5.0F},
+        simd_float3{0.0F, 0.0F, 2.0F}};
+    const auto transparentOrder = aether::mesh::stableBackToFront(
+        candidates, centers, simd_float3{0.0F, 0.0F, 0.0F});
+    expect(transparentOrder == std::vector<std::size_t>({1, 0, 2}),
+           "Transparent instances sort far-to-near with stable equal-distance ties");
 
     const auto texturedPath =
         std::filesystem::path(AETHER_TEST_FIXTURES) / "textured-triangle.gltf";

@@ -19,10 +19,12 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
     PbrVertexOutput output;
     output.position = frame.viewProjection * worldPosition;
     output.worldPosition = worldPosition.xyz;
-    output.worldNormal = normalize((frame.model * float4(meshVertex.normal, 0.0f)).xyz);
+    output.worldNormal = normalize((frame.normalTransform * float4(meshVertex.normal, 0.0f)).xyz);
     output.worldTangent =
-        float4(normalize((frame.model * float4(meshVertex.tangent.xyz, 0.0f)).xyz),
-               meshVertex.tangent.w);
+        float4(normalize((frame.normalTransform * float4(meshVertex.tangent.xyz, 0.0f)).xyz),
+               meshVertex.tangent.w * sign(determinant(float3x3(frame.model[0].xyz,
+                                                                frame.model[1].xyz,
+                                                                frame.model[2].xyz))));
     output.uv = meshVertex.textureCoordinate;
     return output;
 }

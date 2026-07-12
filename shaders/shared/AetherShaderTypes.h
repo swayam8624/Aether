@@ -38,6 +38,7 @@ struct AetherMeshVertex {
 struct AetherFrameUniforms {
     AetherFloat4x4 viewProjection;
     AetherFloat4x4 model;
+    AetherFloat4x4 normalTransform;
     AetherFloat4 cameraPosition;
     AetherFloat4 lightDirectionIntensity;
     AetherFloat4 lightColorExposure;
@@ -85,7 +86,7 @@ struct AetherGaussianCounters {
 #ifndef __METAL_VERSION__
 static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherMeshVertex) == 64);
-static_assert(sizeof(AetherFrameUniforms) == 176);
+static_assert(sizeof(AetherFrameUniforms) == 240);
 static_assert(sizeof(AetherMaterialUniforms) == 64);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);

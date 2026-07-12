@@ -34,7 +34,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Bounded glTF 2.0 parsing, indexed meshes, generated normals, and material factors.
 - [x] Bounded glTF image ingestion, ImageIO decode, mipmaps, samplers, generated/imported tangents,
   core PBR texture maps, normal mapping, alpha masking, and alpha blend pipeline.
-- [ ] Skinning, morph targets, animation playback, transformed UV sets, and transparent draw sorting.
+- [x] Default-scene traversal, nested node transforms, shared mesh instances, inverse-transpose
+  normal transforms, bounded instance counts, and stable back-to-front transparent draw sorting.
+- [ ] Skinning, morph targets, animation playback, and transformed UV sets.
 - [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
 - [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.

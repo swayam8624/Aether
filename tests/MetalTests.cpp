@@ -87,6 +87,12 @@ int main() {
         pool->release();
         return 1;
     }
+    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_INSTANCED_GLTF); !loaded) {
+        std::cerr << "Renderer could not upload shared instanced glTF geometry: "
+                  << loaded.error().describe() << '\n';
+        pool->release();
+        return 1;
+    }
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(
