@@ -33,6 +33,7 @@ add_subdirectory(engine/package)
 if(AETHER_BUILD_TOOLS)
     add_subdirectory(tools/aether-inspect)
     add_subdirectory(tools/aether-pack)
+    add_subdirectory(tools/aether-reconstruct)
 endif()
 
 if(AETHER_BUILD_STUDIO OR AETHER_BUILD_BENCHMARK)

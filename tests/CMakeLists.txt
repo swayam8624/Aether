@@ -46,3 +46,14 @@ if(TARGET aether-benchmark AND TARGET aether-pack)
     set_tests_properties(AetherBenchmarkSmoke PROPERTIES
         FIXTURES_REQUIRED AetherBenchmarkScene)
 endif()
+
+if(TARGET aether-reconstruct)
+    set(AETHER_RECONSTRUCTION_TEST_JOB "${CMAKE_CURRENT_BINARY_DIR}/reconstruction-job")
+    add_test(NAME AetherReconstructionAdapter
+        COMMAND $<TARGET_FILE:aether-reconstruct>
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-reconstruction"
+            --output "${AETHER_RECONSTRUCTION_TEST_JOB}"
+            --colmap "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
+            --brush "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
+            --seed 42 --steps 10 --json)
+endif()

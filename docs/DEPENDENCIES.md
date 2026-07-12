@@ -9,6 +9,8 @@
 | fastgltf 0.9.0 | Bounded glTF 2.0 parsing | MIT | FetchContent release archive pinned by SHA-256 |
 | simdjson 3.12.3 | Versioned camera-path JSON | Apache-2.0 | System config or pinned FetchContent archive |
 | Zstandard 1.5.7 | Per-chunk `.aether` compression | BSD-3-Clause | Static FetchContent archive pinned by SHA-256 |
+| COLMAP 3.13.0 | Local camera poses and sparse/dense reconstruction | BSD-3-Clause | External process pinned by commit |
+| Brush 0.3.0 | Local standard Gaussian training | Apache-2.0 | Cargo source build pinned by commit and lockfile |
 
 KairoMath was evaluated for scene math but is not consumed because its current repository has no
 explicit license file. AETHER uses Apple SIMD until that legal boundary changes.

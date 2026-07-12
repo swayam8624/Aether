@@ -71,6 +71,8 @@ build/debug/tools/aether-pack/aether-pack scene-directory --output scene.aether 
 build/debug/tools/aether-inspect/aether-inspect scene.aether --json
 build/debug/apps/AetherBenchmark/aether-benchmark scene.aether \
   --camera-path camera-path.json --width 1920 --height 1080 --json
+build/debug/tools/aether-reconstruct/aether-reconstruct dataset \
+  --output reconstruction-job --trainer brush --seed 42 --dry-run --json
 ```
 
 The benchmark performs warmup frames, waits for each real Metal command buffer, and reports GPU
