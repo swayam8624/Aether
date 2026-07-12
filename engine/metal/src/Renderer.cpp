@@ -391,6 +391,26 @@ void Renderer::draw(MTK::View* view) noexcept {
                             encoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 2);
                         }
                         encoder->setVertexBytes(&skinDraw, sizeof(skinDraw), 3);
+                        AetherMorphDraw morphDraw{};
+                        AetherMorphDelta zeroMorph{};
+                        float zeroMorphWeight = 0.0F;
+                        if (primitive.morphTargetCount > 0) {
+                            if (instance.morphWeights.size() != primitive.morphTargetCount) {
+                                Log::instance().write(LogLevel::error,
+                                                      "Morph weight count does not match GPU targets");
+                                continue;
+                            }
+                            encoder->setVertexBuffer(primitive.morphDeltas.get(), 0, 4);
+                            encoder->setVertexBytes(instance.morphWeights.data(),
+                                                    instance.morphWeights.size() * sizeof(float), 5);
+                            morphDraw.targetCount = primitive.morphTargetCount;
+                            morphDraw.vertexCount = primitive.vertexCount;
+                            morphDraw.enabled = 1;
+                        } else {
+                            encoder->setVertexBytes(&zeroMorph, sizeof(zeroMorph), 4);
+                            encoder->setVertexBytes(&zeroMorphWeight, sizeof(zeroMorphWeight), 5);
+                        }
+                        encoder->setVertexBytes(&morphDraw, sizeof(morphDraw), 6);
                         encoder->setFrontFacingWinding(instance.mirrored
                                                            ? MTL::WindingClockwise
                                                            : MTL::WindingCounterClockwise);
@@ -556,9 +576,34 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         if (primitive.indices.size() > std::numeric_limits<std::uint32_t>::max()) {
             return fail(ErrorCode::resourceExhausted, "Mesh primitive exceeds Metal index count");
         }
+        if (primitive.vertices.size() > std::numeric_limits<std::uint32_t>::max() ||
+            primitive.morphTargets.size() > std::numeric_limits<std::uint32_t>::max())
+            return fail(ErrorCode::resourceExhausted, "Mesh morph dimensions exceed Metal limits");
+        MetalPtr<MTL::Buffer> morphBuffer;
+        if (!primitive.morphTargets.empty()) {
+            std::vector<AetherMorphDelta> deltas;
+            deltas.reserve(primitive.morphTargets.size() * primitive.vertices.size());
+            for (const auto& target : primitive.morphTargets)
+                for (std::size_t vertex = 0; vertex < primitive.vertices.size(); ++vertex)
+                    deltas.push_back(AetherMorphDelta{
+                        {target.positionDeltas[vertex].x, target.positionDeltas[vertex].y,
+                         target.positionDeltas[vertex].z, 0.0F},
+                        {target.normalDeltas[vertex].x, target.normalDeltas[vertex].y,
+                         target.normalDeltas[vertex].z, 0.0F},
+                        {target.tangentDeltas[vertex].x, target.tangentDeltas[vertex].y,
+                         target.tangentDeltas[vertex].z, 0.0F}});
+            auto uploadedMorphs = uploadPrivateBuffer(deltas.data(),
+                                                       deltas.size() * sizeof(AetherMorphDelta),
+                                                       "glTF Morph Delta Buffer");
+            if (!uploadedMorphs) return std::unexpected(uploadedMorphs.error());
+            morphBuffer = std::move(*uploadedMorphs);
+        }
         uploaded.push_back(GpuMeshPrimitive{std::move(*vertices), std::move(*indices),
                                             static_cast<std::uint32_t>(primitive.indices.size()),
-                                            primitive.materialIndex, primitive.localBoundsCenter});
+                                            primitive.materialIndex, primitive.localBoundsCenter,
+                                            std::move(morphBuffer),
+                                            static_cast<std::uint32_t>(primitive.morphTargets.size()),
+                                            static_cast<std::uint32_t>(primitive.vertices.size())});
     }
     meshPrimitives_ = std::move(uploaded);
     std::vector<GpuMeshInstance> instances;
@@ -574,7 +619,8 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             sourceInstance.worldTransform,
                                             {transformed.x, transformed.y, transformed.z},
                                             simd_determinant(sourceInstance.worldTransform) < 0.0F,
-                                            sourceInstance.nodeIndex, sourceInstance.skinIndex});
+                                            sourceInstance.nodeIndex, sourceInstance.skinIndex,
+                                            sourceInstance.morphWeights});
     }
     meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);

@@ -325,6 +325,20 @@ void testGltfLoader() {
                    std::abs(skinned->primitives[0].vertices[0].weights.x - 1.0F) < 1.0e-6F,
                "glTF joint indices and normalized weights reach the mesh vertex ABI");
     }
+    const auto morphedPath =
+        std::filesystem::path(AETHER_TEST_FIXTURES) / "morphed-triangle.gltf";
+    auto morphed = aether::mesh::GltfLoader::load(morphedPath);
+    expect(morphed.has_value(), "glTF morph targets and node weights load");
+    if (!morphed) std::cerr << morphed.error().describe() << '\n';
+    if (morphed) {
+        expect(morphed->primitives[0].morphTargets.size() == 1 &&
+                   std::abs(morphed->primitives[0].morphTargets[0].positionDeltas[2].y - 1.0F) <
+                       1.0e-6F,
+               "glTF position morph deltas retain target-major vertex order");
+        expect(morphed->instances[0].morphWeights.size() == 1 &&
+                   std::abs(morphed->instances[0].morphWeights[0] - 0.75F) < 1.0e-6F,
+               "glTF node morph weights override mesh defaults");
+    }
 
     const auto texturedPath =
         std::filesystem::path(AETHER_TEST_FIXTURES) / "textured-triangle.gltf";

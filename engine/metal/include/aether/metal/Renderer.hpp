@@ -101,6 +101,9 @@ class Renderer final {
         std::uint32_t indexCount{};
         std::size_t materialIndex{};
         simd_float3 localBoundsCenter{};
+        MetalPtr<MTL::Buffer> morphDeltas;
+        std::uint32_t morphTargetCount{};
+        std::uint32_t vertexCount{};
     };
     struct GpuMeshInstance {
         std::size_t primitiveIndex{};
@@ -109,6 +112,7 @@ class Renderer final {
         bool mirrored{};
         std::size_t nodeIndex{};
         std::optional<std::size_t> skinIndex;
+        std::vector<float> morphWeights;
     };
     struct GpuTexture {
         MetalPtr<MTL::Texture> srgb;

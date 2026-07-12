@@ -49,6 +49,19 @@ struct AetherSkinDraw {
     AetherUInt padding1;
 };
 
+struct AetherMorphDelta {
+    AetherFloat4 position;
+    AetherFloat4 normal;
+    AetherFloat4 tangent;
+};
+
+struct AetherMorphDraw {
+    AetherUInt targetCount;
+    AetherUInt vertexCount;
+    AetherUInt enabled;
+    AetherUInt padding;
+};
+
 struct AetherFrameUniforms {
     AetherFloat4x4 viewProjection;
     AetherFloat4x4 model;
@@ -104,6 +117,8 @@ static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherMeshVertex) == 96);
 static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);
+static_assert(sizeof(AetherMorphDelta) == 48);
+static_assert(sizeof(AetherMorphDraw) == 16);
 static_assert(sizeof(AetherFrameUniforms) == 240);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);

@@ -13,6 +13,8 @@ static_assert(offsetof(AetherMeshVertex, joints) == 64);
 static_assert(offsetof(AetherMeshVertex, weights) == 80);
 static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);
+static_assert(sizeof(AetherMorphDelta) == 48);
+static_assert(sizeof(AetherMorphDraw) == 16);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherFrameUniforms) == 240);
 static_assert(offsetof(AetherFrameUniforms, normalTransform) == 128);

@@ -20,6 +20,8 @@ struct GltfLimits final {
     std::size_t maximumAnimationKeyframes{10'000'000};
     std::size_t maximumSkins{100'000};
     std::size_t maximumJoints{1'000'000};
+    std::size_t maximumMorphTargetsPerPrimitive{64};
+    std::size_t maximumMorphDeltaValues{100'000'000};
 };
 
 class GltfLoader final {

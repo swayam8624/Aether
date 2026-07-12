@@ -6,7 +6,7 @@
 |---|---|---|---|
 | Apple metal-cpp | C++ Metal bindings | Apache-2.0 | Vendored headers with license |
 | Apple platform frameworks | Metal, MetalKit, AppKit, SwiftUI | Apple SDK terms | System frameworks |
-| fastgltf 0.9.0 | Bounded glTF 2.0 parsing | MIT | FetchContent release archive pinned by SHA-256 |
+| fastgltf 0.9.0 | Bounded glTF 2.0 parsing | MIT | FetchContent archive pinned by SHA-256 plus reviewed node-weight parser patch |
 | simdjson 3.12.3 | Versioned camera-path JSON | Apache-2.0 | System config or pinned FetchContent archive |
 | Zstandard 1.5.7 | Per-chunk `.aether` compression | BSD-3-Clause | Static FetchContent archive pinned by SHA-256 |
 | COLMAP 3.13.0 | Local camera poses and sparse/dense reconstruction | BSD-3-Clause | External process pinned by commit |
@@ -28,3 +28,9 @@ explicit license file. AETHER uses Apple SIMD until that legal boundary changes.
 Every dependency addition must record an immutable version/commit, source URL, checksum, license,
 notices, update procedure, and whether its output may be redistributed. Dataset/model weights are
 audited independently from their code.
+
+The pinned fastgltf 0.9.0 release and upstream `main` at the time of integration invert the success
+branch while parsing `node.weights`. AETHER applies
+`cmake/patches/fastgltf-v0.9.0-node-weights.patch` during population. A clean out-of-tree build
+verifies the patch before the morph-target fixture runs; remove it only after advancing to an
+upstream revision with equivalent behavior.

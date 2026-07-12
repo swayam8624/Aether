@@ -41,7 +41,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   loop/clamp controls, hierarchical world resolution, and live mesh-instance playback.
 - [x] Bounded glTF skins, JOINTS_0/WEIGHTS_0 normalization, inverse-bind validation, animated joint
   palettes, mirrored transforms, and Metal position/normal/tangent skinning.
-- [ ] Morph targets.
+- [x] Bounded glTF POSITION/NORMAL/TANGENT morph targets, mesh defaults, node overrides, GPU
+  target-major delta buffers, and morph-before-skin vertex evaluation.
 - [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
 - [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.

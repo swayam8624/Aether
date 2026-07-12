@@ -392,6 +392,7 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
 
     std::size_t totalVertices = 0;
     std::size_t totalIndices = 0;
+    std::size_t totalMorphDeltaValues = 0;
     for (const auto& sourceMesh : sourceAsset.meshes) {
         for (const auto& sourcePrimitive : sourceMesh.primitives) {
             if (result.primitives.size() >= limits.maximumPrimitives) {
@@ -541,6 +542,67 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
             }
             if (!hasTangents)
                 generateTangents(primitive);
+            if (sourcePrimitive.targets.size() > limits.maximumMorphTargetsPerPrimitive)
+                return fail(ErrorCode::resourceExhausted,
+                            "glTF primitive exceeds morph-target limit");
+            primitive.morphTargets.reserve(sourcePrimitive.targets.size());
+            for (std::size_t targetIndex = 0; targetIndex < sourcePrimitive.targets.size();
+                 ++targetIndex) {
+                if (sourcePrimitive.targets[targetIndex].empty())
+                    return fail(ErrorCode::corruptData, "glTF morph target has no attributes");
+                if (primitive.vertices.size() > limits.maximumMorphDeltaValues / 3 ||
+                    primitive.vertices.size() * 3 > limits.maximumMorphDeltaValues -
+                                                        totalMorphDeltaValues)
+                    return fail(ErrorCode::resourceExhausted,
+                                "glTF exceeds morph-delta allocation limit");
+                totalMorphDeltaValues += primitive.vertices.size() * 3;
+                MeshPrimitive::MorphTarget target;
+                target.positionDeltas.assign(primitive.vertices.size(), simd_float3{});
+                target.normalDeltas.assign(primitive.vertices.size(), simd_float3{});
+                target.tangentDeltas.assign(primitive.vertices.size(), simd_float3{});
+                auto loadDeltas = [&](std::string_view semantic,
+                                      std::vector<simd_float3>& destination) -> Result<void> {
+                    const auto* attribute = sourcePrimitive.findTargetAttribute(targetIndex, semantic);
+                    if (attribute == sourcePrimitive.targets[targetIndex].end()) return {};
+                    const auto& accessor = sourceAsset.accessors[attribute->accessorIndex];
+                    if (accessor.count != primitive.vertices.size() ||
+                        accessor.type != fastgltf::AccessorType::Vec3 ||
+                        accessor.componentType != fastgltf::ComponentType::Float)
+                        return fail(ErrorCode::corruptData, "glTF morph target accessor is invalid",
+                                    std::string(semantic));
+                    fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
+                        sourceAsset, accessor, [&](const auto& value, std::size_t index) {
+                            destination[index] = {value.x(), value.y(), value.z()};
+                        });
+                    if (std::ranges::any_of(destination, [](simd_float3 value) {
+                            return !std::isfinite(value.x) || !std::isfinite(value.y) ||
+                                   !std::isfinite(value.z);
+                        }))
+                        return fail(ErrorCode::corruptData, "glTF morph deltas must be finite");
+                    return {};
+                };
+                if (auto loadedDeltas = loadDeltas("POSITION", target.positionDeltas); !loadedDeltas)
+                    return std::unexpected(loadedDeltas.error());
+                if (auto loadedDeltas = loadDeltas("NORMAL", target.normalDeltas); !loadedDeltas)
+                    return std::unexpected(loadedDeltas.error());
+                if (auto loadedDeltas = loadDeltas("TANGENT", target.tangentDeltas); !loadedDeltas)
+                    return std::unexpected(loadedDeltas.error());
+                primitive.morphTargets.push_back(std::move(target));
+            }
+            if (sourceMesh.weights.empty()) {
+                primitive.defaultMorphWeights.assign(primitive.morphTargets.size(), 0.0F);
+            } else {
+                if (sourceMesh.weights.size() != primitive.morphTargets.size())
+                    return fail(ErrorCode::corruptData,
+                                "glTF mesh morph-weight count does not match targets");
+                primitive.defaultMorphWeights.reserve(sourceMesh.weights.size());
+                for (const auto weight : sourceMesh.weights) {
+                    const float converted = static_cast<float>(weight);
+                    if (!std::isfinite(converted))
+                        return fail(ErrorCode::corruptData, "glTF morph weight is not finite");
+                    primitive.defaultMorphWeights.push_back(converted);
+                }
+            }
             simd_float3 minimum = primitive.vertices.front().position;
             simd_float3 maximum = minimum;
             for (const auto& vertex : primitive.vertices) {
@@ -571,14 +633,14 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
     }
     bool instanceOverflow = false;
     bool singularTransform = false;
-    bool invalidSkin = false;
+    bool invalidInstance = false;
     fastgltf::iterateSceneNodes(sourceAsset, sceneIndex, fastgltf::math::fmat4x4{},
         [&](const fastgltf::Node& node, const fastgltf::math::fmat4x4& worldTransform) {
             if (!node.meshIndex || *node.meshIndex >= sourceAsset.meshes.size()) return;
             const auto meshIndex = *node.meshIndex;
             const auto count = sourceAsset.meshes[meshIndex].primitives.size();
             if (node.skinIndex && *node.skinIndex >= result.skins.size()) {
-                invalidSkin = true;
+                invalidInstance = true;
                 return;
             }
             const auto transform = toSimd(worldTransform);
@@ -596,7 +658,7 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
                 const auto& primitive = result.primitives[primitiveIndex];
                 if (node.skinIndex) {
                     if (!primitive.hasSkinAttributes) {
-                        invalidSkin = true;
+                        invalidInstance = true;
                         return;
                     }
                     const auto jointCount = result.skins[*node.skinIndex].jointNodeIndices.size();
@@ -604,16 +666,34 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
                         for (std::size_t component = 0; component < 4; ++component)
                             if (vertex.weights[component] > 0.0F &&
                                 vertex.joints[component] >= jointCount) {
-                                invalidSkin = true;
+                                invalidInstance = true;
                                 return;
                             }
                 }
                 const auto nodeIndex = static_cast<std::size_t>(&node - sourceAsset.nodes.data());
+                std::vector<float> morphWeights = primitive.defaultMorphWeights;
+                if (!node.weights.empty()) {
+                    if (node.weights.size() != primitive.morphTargets.size()) {
+                        invalidInstance = true;
+                        return;
+                    }
+                    morphWeights.clear();
+                    morphWeights.reserve(node.weights.size());
+                    for (const auto weight : node.weights) {
+                        const float converted = static_cast<float>(weight);
+                        if (!std::isfinite(converted)) {
+                            invalidInstance = true;
+                            return;
+                        }
+                        morphWeights.push_back(converted);
+                    }
+                }
                 result.instances.push_back(MeshInstance{
                     node.name.empty() ? std::string(sourceAsset.meshes[meshIndex].name)
                                       : std::string(node.name),
                     firstPrimitive[meshIndex] + localPrimitive, transform, nodeIndex,
-                    node.skinIndex ? std::optional<std::size_t>{*node.skinIndex} : std::nullopt});
+                    node.skinIndex ? std::optional<std::size_t>{*node.skinIndex} : std::nullopt,
+                    std::move(morphWeights)});
             }
         });
     if (instanceOverflow) {
@@ -621,9 +701,9 @@ Result<MeshAsset> GltfLoader::load(const std::filesystem::path& path, const Gltf
     }
     if (singularTransform)
         return fail(ErrorCode::corruptData, "glTF mesh node has a singular world transform");
-    if (invalidSkin)
+    if (invalidInstance)
         return fail(ErrorCode::corruptData,
-                    "glTF skinned instance has invalid skin or vertex joint attributes");
+                    "glTF mesh instance has invalid skin, joint attributes, or morph weights");
     if (result.instances.empty())
         return fail(ErrorCode::corruptData, "glTF scene contains no renderable mesh instances");
 

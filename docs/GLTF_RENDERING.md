@@ -27,5 +27,9 @@ non-negative, non-zero, and normalized during import. Joint indices are checked 
 used by every mesh instance. Inverse-bind matrices and joint-node references are bounded and
 validated. Each frame builds position and inverse-transpose normal palettes from animated joint
 world transforms; a scene whose palettes exceed the fixed frame upload budget fails at load time.
-Morph targets, secondary influence sets, animation blending, and editor-facing timeline controls
-remain open Phase 2 work and must not be claimed as implemented.
+
+Morph targets support position, normal, and tangent deltas with up to 64 targets per primitive.
+Mesh default weights and node overrides are retained per instance, while target-major immutable
+delta buffers remain shared with geometry. Metal applies weighted morph deltas before joint
+skinning. Animated morph-weight channels, secondary influence sets, animation blending, and
+editor-facing timeline controls remain open Phase 2 work.

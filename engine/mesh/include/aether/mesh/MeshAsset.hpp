@@ -67,12 +67,19 @@ struct PbrMaterial final {
 };
 
 struct MeshPrimitive final {
+    struct MorphTarget final {
+        std::vector<simd_float3> positionDeltas;
+        std::vector<simd_float3> normalDeltas;
+        std::vector<simd_float3> tangentDeltas;
+    };
     std::string name;
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::size_t materialIndex{};
     simd_float3 localBoundsCenter{};
     bool hasSkinAttributes{};
+    std::vector<MorphTarget> morphTargets;
+    std::vector<float> defaultMorphWeights;
 };
 
 /// One scene-node use of a mesh primitive. Geometry remains shared across instances.
@@ -82,6 +89,7 @@ struct MeshInstance final {
     simd_float4x4 worldTransform{matrix_identity_float4x4};
     std::size_t nodeIndex{};
     std::optional<std::size_t> skinIndex;
+    std::vector<float> morphWeights;
 };
 
 struct MeshSkin final {

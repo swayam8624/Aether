@@ -15,11 +15,27 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
                                        device const AetherMeshVertex* vertices [[buffer(0)]],
                                        constant AetherFrameUniforms& frame [[buffer(1)]],
                                        device const AetherJointMatrix* joints [[buffer(2)]],
-                                       constant AetherSkinDraw& skin [[buffer(3)]]) {
+                                       constant AetherSkinDraw& skin [[buffer(3)]],
+                                       device const AetherMorphDelta* morphDeltas [[buffer(4)]],
+                                       device const float* morphWeights [[buffer(5)]],
+                                       constant AetherMorphDraw& morph [[buffer(6)]]) {
     const AetherMeshVertex meshVertex = vertices[vertexId];
     float4 localPosition = float4(meshVertex.position, 1.0f);
     float3 localNormal = meshVertex.normal;
     float3 localTangent = meshVertex.tangent.xyz;
+    if (morph.enabled != 0u) {
+        for (uint target = 0u; target < morph.targetCount; ++target) {
+            const AetherMorphDelta delta = morphDeltas[target * morph.vertexCount + vertexId];
+            const float weight = morphWeights[target];
+            localPosition.xyz += delta.position.xyz * weight;
+            localNormal += delta.normal.xyz * weight;
+            localTangent += delta.tangent.xyz * weight;
+        }
+        localNormal = dot(localNormal, localNormal) > 1.0e-12f ? normalize(localNormal)
+                                                               : meshVertex.normal;
+        localTangent = dot(localTangent, localTangent) > 1.0e-12f ? normalize(localTangent)
+                                                                  : meshVertex.tangent.xyz;
+    }
     if (skin.enabled != 0u) {
         float4x4 positionSkin = float4x4(0.0f);
         float4x4 normalSkin = float4x4(0.0f);
