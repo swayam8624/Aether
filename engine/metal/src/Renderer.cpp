@@ -249,6 +249,7 @@ void Renderer::draw(MTK::View* view) noexcept {
                 const simd_float3 cameraPosition = cameraController_.position();
                 gaussianCamera.cameraWorldPosition = {cameraPosition.x, cameraPosition.y,
                                                       cameraPosition.z, 1.0F};
+                gaussianCamera.debugOptions = {gaussianDebugMode_, 0U, 0U, 0U};
                 auto encoded =
                     gaussianPipeline_->encode(commandBuffer, gaussianCamera, gaussianColor_.get(),
                                               gaussianDepth_.get(), gaussianIds_.get());

@@ -20,6 +20,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (void)addCameraDolly:(CGFloat)amount;
 - (void)clearCameraMovement;
 - (NSInteger)pickGaussianX:(NSUInteger)x y:(NSUInteger)y;
+- (void)setGaussianDebugMode:(NSInteger)mode;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -142,6 +143,11 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     }
     return static_cast<NSInteger>(*result);
 }
+
+- (void)setGaussianDebugMode:(NSInteger)mode {
+    if (_renderer)
+        _renderer->setGaussianDebugMode(static_cast<std::uint32_t>(MAX(0, mode)));
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -176,6 +182,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     MTKView* _metalView;
     AetherViewportDelegate* _rendererDelegate;
     NSString* _scenePath;
+    NSInteger _gaussianDebugMode;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -273,6 +280,15 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (void)setPreferredFramesPerSecond:(NSInteger)value {
     _metalView.preferredFramesPerSecond = MAX(1, value);
+}
+
+- (NSInteger)gaussianDebugMode {
+    return _gaussianDebugMode;
+}
+
+- (void)setGaussianDebugMode:(NSInteger)value {
+    _gaussianDebugMode = value;
+    [_rendererDelegate setGaussianDebugMode:value];
 }
 
 - (NSString*)scenePath {

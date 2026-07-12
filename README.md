@@ -18,7 +18,8 @@ verified, shippable milestones. The current foundation contains:
   anisotropic CPU reference rasterizer.
 - A Metal 3 Gaussian correctness path with projection, covariance, stable tile/depth ordering,
   bounded compositing, depth/IDs/counters, CPU/GPU agreement tests, and PLY/`.aether` presentation
-  in AetherStudio, including click-to-pick source IDs from the real GPU attachment.
+  in AetherStudio, including click-to-pick source IDs and selectable depth, ID, occupancy, and
+  opacity views from the real GPU attachments.
 - A core glTF metallic-roughness path with bounded embedded/external image ingestion, ImageIO decode,
   generated mipmaps and tangents, glTF samplers, material texture maps, normal mapping, and alpha
   mask/blend states.

@@ -209,6 +209,26 @@ int main() {
         }
     }
 
+    camera.debugOptions.x = 2;
+    MTL::CommandBuffer* debugCommand = queue->commandBuffer();
+    if (!debugCommand ||
+        !(*gaussianPipeline)->encode(debugCommand, camera, color.get(), depth.get(), ids.get())) {
+        std::cerr << "Unable to encode Gaussian source-ID debug view\n";
+        pool->release();
+        return 1;
+    }
+    debugCommand->commit();
+    debugCommand->waitUntilCompleted();
+    color->getBytes(colorPixels.data(), width * sizeof(simd_float4), region, 0);
+    const simd_float4 debugPixel = colorPixels[center];
+    if (debugPixel.w != 1.0F ||
+        simd_length(simd_float3{debugPixel.x, debugPixel.y, debugPixel.z}) <= 0.0F) {
+        std::cerr << "Gaussian source-ID debug view did not produce a visible hash color\n";
+        pool->release();
+        return 1;
+    }
+    camera.debugOptions.x = 0;
+
     auto multiBlockAsset = *gaussianAsset;
     multiBlockAsset.gaussians.assign(513, gaussianAsset->gaussians.front());
     for (std::size_t index = 0; index < multiBlockAsset.gaussians.size(); ++index) {

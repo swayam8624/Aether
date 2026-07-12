@@ -25,11 +25,31 @@ private enum Workspace: String, CaseIterable, Identifiable {
     }
 }
 
+private enum GaussianDebugMode: Int, CaseIterable, Identifiable {
+    case appearance
+    case depth
+    case sourceIds
+    case tileOccupancy
+    case opacity
+
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .appearance: "Appearance"
+        case .depth: "Depth"
+        case .sourceIds: "Source IDs"
+        case .tileOccupancy: "Tile Occupancy"
+        case .opacity: "Opacity"
+        }
+    }
+}
+
 struct ContentView: View {
     @Binding var document: AetherProjectDocument
     let projectURL: URL?
     @State private var selection: Workspace? = .scene
     @State private var selectedGaussianId: Int?
+    @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @Environment(\.undoManager) private var undoManager
     @AppStorage("showRendererDiagnostics") private var showRendererDiagnostics = true
 
@@ -61,7 +81,8 @@ struct ContentView: View {
                 .background(.bar)
 
                 AetherViewport(scenePath: resolvedScenePath,
-                               selectedGaussianId: $selectedGaussianId)
+                               selectedGaussianId: $selectedGaussianId,
+                               gaussianDebugMode: gaussianDebugMode.rawValue)
                     .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
                             VStack(alignment: .leading, spacing: 4) {
@@ -99,6 +120,12 @@ struct ContentView: View {
                     .disabled(undoManager?.canUndo != true)
                 Button("Redo", systemImage: "arrow.uturn.forward") { undoManager?.redo() }
                     .disabled(undoManager?.canRedo != true)
+                Picker("Gaussian View", selection: $gaussianDebugMode) {
+                    ForEach(GaussianDebugMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
             }
         }
     }

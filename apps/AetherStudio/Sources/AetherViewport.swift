@@ -4,6 +4,7 @@ import SwiftUI
 struct AetherViewport: NSViewRepresentable {
     let scenePath: String?
     @Binding var selectedGaussianId: Int?
+    let gaussianDebugMode: Int
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
 
     func makeNSView(context: Context) -> AetherViewportView {
@@ -13,6 +14,7 @@ struct AetherViewport: NSViewRepresentable {
         view.onGaussianPicked = { sourceId in
             selectedGaussianId = sourceId == 0 ? nil : Int(sourceId)
         }
+        view.gaussianDebugMode = gaussianDebugMode
         return view
     }
 
@@ -22,6 +24,7 @@ struct AetherViewport: NSViewRepresentable {
         nsView.onGaussianPicked = { sourceId in
             selectedGaussianId = sourceId == 0 ? nil : Int(sourceId)
         }
+        nsView.gaussianDebugMode = gaussianDebugMode
         _ = nsView.rendererStatus
     }
 }

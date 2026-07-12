@@ -466,6 +466,34 @@ kernel void aetherGaussianComposite(
             }
         }
     }
+    const uint debugMode = camera.debugOptions.x;
+    if (debugMode == 1) {
+        const float normalizedDepth = isfinite(depth)
+                                          ? log2(1.0f + depth) /
+                                                log2(1.0f + camera.depthViewport.y)
+                                          : 1.0f;
+        color = 1.0f - normalizedDepth;
+        opacity = 1.0f;
+    } else if (debugMode == 2) {
+        uint hash = sourceId * 747796405u + 2891336453u;
+        hash = ((hash >> ((hash >> 28u) + 4u)) ^ hash) * 277803737u;
+        hash = (hash >> 22u) ^ hash;
+        color = sourceId == 0
+                    ? float3(0.0f)
+                    : float3(float(hash & 255u), float((hash >> 8u) & 255u),
+                             float((hash >> 16u) & 255u)) /
+                          255.0f;
+        opacity = 1.0f;
+    } else if (debugMode == 3) {
+        const float occupancy = range.x == 0xffffffffu
+                                    ? 0.0f
+                                    : min(float(range.y - range.x) / 64.0f, 1.0f);
+        color = float3(occupancy, occupancy * occupancy, 1.0f - occupancy);
+        opacity = 1.0f;
+    } else if (debugMode == 4) {
+        color = opacity;
+        opacity = 1.0f;
+    }
     colorTarget.write(float4(color, opacity), pixel);
     depthTarget.write(depth, pixel);
     idTarget.write(sourceId, pixel);

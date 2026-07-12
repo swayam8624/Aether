@@ -56,6 +56,9 @@ class Renderer final {
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
     void clearCameraMovement() noexcept;
+    void setGaussianDebugMode(std::uint32_t mode) noexcept {
+        gaussianDebugMode_ = mode <= 4 ? mode : 0;
+    }
     [[nodiscard]] const DeviceCapabilities& capabilities() const noexcept {
         return capabilities_;
     }
@@ -115,6 +118,7 @@ class Renderer final {
     std::uint32_t gaussianTargetHeight_{};
     std::filesystem::path shaderLibraryPath_;
     scene::CameraController cameraController_;
+    std::uint32_t gaussianDebugMode_{};
     Clock::TimePoint previousFrameTime_ = Clock::now();
 };
 
