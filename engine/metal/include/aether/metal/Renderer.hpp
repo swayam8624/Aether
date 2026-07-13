@@ -107,8 +107,10 @@ class Renderer final {
     MetalPtr<MTL::Texture> brdfLutTexture_;
     MetalPtr<MTL::SamplerState> environmentSampler_;
     MetalPtr<MTL::Texture> directionalShadowMap_;
+    MetalPtr<MTL::Texture> localShadowMap_;
     MetalPtr<MTL::SamplerState> shadowComparisonSampler_;
     scene::DirectionalShadowConfig shadowConfig_;
+    scene::LocalShadowConfig localShadowConfig_;
     float iblMaximumMip_{};
     float iblIntensity_{1.0F};
     dispatch_semaphore_t frameSemaphore_{};

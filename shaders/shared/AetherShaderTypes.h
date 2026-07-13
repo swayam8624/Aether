@@ -109,6 +109,17 @@ struct AetherShadowUniforms {
     AetherFloat4 biasNormalCascadeCount;
 };
 
+#define AETHER_LOCAL_SHADOW_SLICE_COUNT 16
+#define AETHER_LOCAL_SHADOW_LIGHT_COUNT 6
+
+struct AetherLocalShadowUniforms {
+    AetherFloat4x4 worldToShadow[AETHER_LOCAL_SHADOW_SLICE_COUNT];
+    // source light index, light type, base slice, slice count
+    AetherFloat4 lightMetadata[AETHER_LOCAL_SHADOW_LIGHT_COUNT];
+    // active light count, depth bias, normal bias, reserved
+    AetherFloat4 countBias;
+};
+
 struct AetherMaterialUniforms {
     AetherFloat4 baseColor;
     AetherFloat4 emissiveMetallic;
@@ -164,6 +175,7 @@ static_assert(sizeof(AetherLightCluster) == 8);
 static_assert(sizeof(AetherClusterUniforms) == 32);
 static_assert(sizeof(AetherIblUniforms) == 16);
 static_assert(sizeof(AetherShadowUniforms) == 288);
+static_assert(sizeof(AetherLocalShadowUniforms) == 1136);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);

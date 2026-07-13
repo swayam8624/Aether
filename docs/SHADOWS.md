@@ -14,13 +14,20 @@ extents, and non-finite matrices return structured failures.
 Tests verify cascade counts, increasing practical splits, exact final distance, finite invertible
 matrices, invalid lambda rejection, and the hard cascade-count bound.
 
-Spot and point lights now have a separate validated projection contract. Spot lights use their
+Spot and point lights have a separate validated projection contract. Spot lights use their
 outer cone as a finite perspective frustum; point lights produce the six Metal cube-face views in
 `+X, -X, +Y, -Y, +Z, -Z` order with a 90-degree projection. Both reject the wrong light type,
 invalid light data, zero resolution, and near planes outside the light range. Tests verify that each
 light axis lands at the viewport center, depth remains in Metal's `[0,1]` interval, and every matrix
-is finite and invertible. GPU local-light texture allocation, bounded selection, caster submission,
-and receiver sampling remain the next implementation slice.
+is finite and invertible.
+
+GPU local shadows use a fixed 16-slice 1024-square Depth32 array: four spot-light slices and two
+six-face point-light sets. Admission is deterministic in scene source order and validated by a
+unit-tested scene contract; over-budget local lights remain illuminated but unshadowed. Every
+admitted slice reuses the directional caster's morph-before-skin deformation, alpha-mask,
+double-sided, and mirrored-winding path. The PBR receiver identifies the exact source light, selects
+the dominant-axis point face when needed, and applies 3x3 comparison PCF with depth and normal bias.
+The allocation is deliberately fixed at 64 MiB and does not require 64-bit atomics or Metal 4.
 
 The renderer now owns a labeled four-slice Depth32 shadow array, comparison sampler, depth-only
 pipeline, receiver ABI, cascade selection, normal/depth bias fields, and 3x3 PCF implementation.
@@ -40,5 +47,5 @@ visible material path.
 The receiver uses the same live cascade matrices and split depths, selects by camera-space depth,
 and shadows only the directional light that owns the cascade set. Static, skinned, and morphed
 fixtures have each run under `MTL_DEBUG_LAYER=1` without binding or draw validation errors. Cascade
-transition blending, slope-scaled raster bias tuning, GPU local-light shadows, and golden-image
-quality thresholds remain open.
+transition blending, slope-scaled raster bias tuning, live local-shadow drawable validation, and
+golden-image quality thresholds remain open.

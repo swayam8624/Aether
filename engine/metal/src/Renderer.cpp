@@ -319,6 +319,11 @@ void Renderer::draw(MTK::View* view) noexcept {
     const auto meshView = meshCamera.viewMatrix(meshCameraTransform);
     std::optional<scene::DirectionalShadowCascades> shadowCascades;
     std::optional<std::uint32_t> shadowLightIndex;
+    AetherLocalShadowUniforms localShadowUniforms{};
+    for (auto& matrix : localShadowUniforms.worldToShadow)
+        matrix = matrix_identity_float4x4;
+    std::uint32_t localShadowLightCount = 0;
+    std::uint32_t localShadowSliceCount = 0;
     if (!meshPrimitives_.empty() && meshProjection && meshView) {
         for (std::size_t lightIndex = 0; lightIndex < lights_.size(); ++lightIndex) {
             const auto& light = lights_[lightIndex];
@@ -332,7 +337,40 @@ void Renderer::draw(MTK::View* view) noexcept {
             else Log::instance().write(LogLevel::error, built.error().describe());
             break;
         }
+        auto allocations = scene::selectLocalShadowLights(lights_);
+        if (!allocations) {
+            Log::instance().write(LogLevel::error, allocations.error().describe());
+        } else for (const auto& allocation : *allocations) {
+            const auto& light = lights_[allocation.sourceLightIndex];
+            if (light.type == scene::LightType::spot) {
+                auto projection = scene::buildSpotShadowProjection(light, localShadowConfig_);
+                if (!projection) {
+                    Log::instance().write(LogLevel::error, projection.error().describe());
+                    continue;
+                }
+                localShadowUniforms.worldToShadow[allocation.baseSlice] =
+                    projection->worldToShadowClip;
+                localShadowUniforms.lightMetadata[localShadowLightCount++] = {
+                    static_cast<float>(allocation.sourceLightIndex), static_cast<float>(light.type),
+                    static_cast<float>(allocation.baseSlice), 1.0F};
+            } else {
+                auto projection = scene::buildPointShadowProjection(light, localShadowConfig_);
+                if (!projection) {
+                    Log::instance().write(LogLevel::error, projection.error().describe());
+                    continue;
+                }
+                for (std::uint32_t face = 0; face < allocation.sliceCount; ++face)
+                    localShadowUniforms.worldToShadow[allocation.baseSlice + face] =
+                        projection->worldToShadowClip[face];
+                localShadowUniforms.lightMetadata[localShadowLightCount++] = {
+                    static_cast<float>(allocation.sourceLightIndex), static_cast<float>(light.type),
+                    static_cast<float>(allocation.baseSlice), 6.0F};
+            }
+            localShadowSliceCount = allocation.baseSlice + allocation.sliceCount;
+        }
     }
+    localShadowUniforms.countBias = {static_cast<float>(localShadowLightCount), 0.001F,
+                                     0.01F, 0.0F};
     std::vector<std::optional<BufferSlice>> frameSkinPalettes(meshInstances_.size());
     for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
         const auto& instance = meshInstances_[instanceIndex];
@@ -422,6 +460,44 @@ void Renderer::draw(MTK::View* view) noexcept {
                 if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex)) continue;
                 AetherFrameUniforms shadowFrame{};
                 shadowFrame.viewProjection = shadowCascades->worldToShadowClip[cascade];
+                shadowFrame.model = instance.worldTransform;
+                shadowEncoder->setVertexBytes(&shadowFrame, sizeof(shadowFrame), 1);
+                shadowEncoder->setFrontFacingWinding(instance.mirrored ? MTL::WindingClockwise
+                                                                       : MTL::WindingCounterClockwise);
+                shadowEncoder->setCullMode(material.doubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+                shadowEncoder->setFragmentBytes(&material.material, sizeof(material.material), 2);
+                shadowEncoder->setFragmentTexture(material.textures[0], 0);
+                shadowEncoder->setFragmentSamplerState(material.samplers[0], 0);
+                shadowEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, primitive.indexCount,
+                                                     MTL::IndexTypeUInt32, primitive.indices.get(), 0);
+            }
+            shadowEncoder->endEncoding();
+        }
+    }
+    if (localShadowSliceCount > 0 && localShadowMap_ && shadowPipeline_ && shadowDepthState_) {
+        for (std::uint32_t slice = 0; slice < localShadowSliceCount; ++slice) {
+            MTL::RenderPassDescriptor* shadowPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+            shadowPass->depthAttachment()->setTexture(localShadowMap_.get());
+            shadowPass->depthAttachment()->setSlice(slice);
+            shadowPass->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+            shadowPass->depthAttachment()->setStoreAction(MTL::StoreActionStore);
+            shadowPass->depthAttachment()->setClearDepth(1.0);
+            auto* shadowEncoder = commandBuffer->renderCommandEncoder(shadowPass);
+            if (!shadowEncoder) continue;
+            shadowEncoder->setLabel(
+                NS::String::string("Local Shadow Slice", NS::UTF8StringEncoding));
+            shadowEncoder->setRenderPipelineState(shadowPipeline_.get());
+            shadowEncoder->setDepthStencilState(shadowDepthState_.get());
+            shadowEncoder->setViewport(
+                MTL::Viewport{0, 0, static_cast<double>(localShadowConfig_.resolution),
+                              static_cast<double>(localShadowConfig_.resolution), 0.0, 1.0});
+            for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
+                const auto& instance = meshInstances_[instanceIndex];
+                const auto& primitive = meshPrimitives_[instance.primitiveIndex];
+                const auto& material = meshMaterials_[primitive.materialIndex];
+                if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex)) continue;
+                AetherFrameUniforms shadowFrame{};
+                shadowFrame.viewProjection = localShadowUniforms.worldToShadow[slice];
                 shadowFrame.model = instance.worldTransform;
                 shadowEncoder->setVertexBytes(&shadowFrame, sizeof(shadowFrame), 1);
                 shadowEncoder->setFrontFacingWinding(instance.mirrored ? MTL::WindingClockwise
@@ -572,6 +648,8 @@ void Renderer::draw(MTK::View* view) noexcept {
                 encoder->setFragmentBytes(&shadowUniforms, sizeof(shadowUniforms), 8);
                 encoder->setFragmentTexture(directionalShadowMap_.get(), 8);
                 encoder->setFragmentSamplerState(shadowComparisonSampler_.get(), 6);
+                encoder->setFragmentBytes(&localShadowUniforms, sizeof(localShadowUniforms), 9);
+                encoder->setFragmentTexture(localShadowMap_.get(), 9);
                 encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
                 auto renderMaterialClass = [&](bool alphaBlend) {
                     encoder->setRenderPipelineState(alphaBlend ? pbrBlendPipeline_.get()
@@ -1299,6 +1377,10 @@ Result<void> Renderer::buildViewportPipeline() {
     shadowTextureDescriptor->setStorageMode(MTL::StorageModePrivate);
     shadowTextureDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
     directionalShadowMap_ = adopt(device_->newTexture(shadowTextureDescriptor.get()));
+    shadowTextureDescriptor->setWidth(localShadowConfig_.resolution);
+    shadowTextureDescriptor->setHeight(localShadowConfig_.resolution);
+    shadowTextureDescriptor->setArrayLength(AETHER_LOCAL_SHADOW_SLICE_COUNT);
+    localShadowMap_ = adopt(device_->newTexture(shadowTextureDescriptor.get()));
     auto shadowSamplerDescriptor = adopt(MTL::SamplerDescriptor::alloc()->init());
     shadowSamplerDescriptor->setCompareFunction(MTL::CompareFunctionLessEqual);
     shadowSamplerDescriptor->setMinFilter(MTL::SamplerMinMagFilterLinear);
@@ -1306,10 +1388,12 @@ Result<void> Renderer::buildViewportPipeline() {
     shadowSamplerDescriptor->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
     shadowSamplerDescriptor->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
     shadowComparisonSampler_ = adopt(device_->newSamplerState(shadowSamplerDescriptor.get()));
-    if (!directionalShadowMap_ || !shadowComparisonSampler_)
-        return fail(ErrorCode::resourceExhausted, "Unable to allocate cascaded shadow resources");
+    if (!directionalShadowMap_ || !localShadowMap_ || !shadowComparisonSampler_)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate shadow resources");
     directionalShadowMap_->setLabel(
         NS::String::string("Directional Shadow Cascades", NS::UTF8StringEncoding));
+    localShadowMap_->setLabel(
+        NS::String::string("Local Shadow Slices", NS::UTF8StringEncoding));
     MTL::CommandBuffer* shadowClearBuffer = commandQueue_->commandBuffer();
     if (!shadowClearBuffer)
         return fail(ErrorCode::metal, "Unable to create shadow initialization command buffer");
@@ -1325,6 +1409,20 @@ Result<void> Renderer::buildViewportPipeline() {
             return fail(ErrorCode::metal, "Unable to encode shadow initialization");
         clearEncoder->setLabel(
             NS::String::string("Shadow Cascade Clear", NS::UTF8StringEncoding));
+        clearEncoder->endEncoding();
+    }
+    for (std::uint32_t slice = 0; slice < AETHER_LOCAL_SHADOW_SLICE_COUNT; ++slice) {
+        MTL::RenderPassDescriptor* clearPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+        clearPass->depthAttachment()->setTexture(localShadowMap_.get());
+        clearPass->depthAttachment()->setSlice(slice);
+        clearPass->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+        clearPass->depthAttachment()->setStoreAction(MTL::StoreActionStore);
+        clearPass->depthAttachment()->setClearDepth(1.0);
+        auto* clearEncoder = shadowClearBuffer->renderCommandEncoder(clearPass);
+        if (!clearEncoder)
+            return fail(ErrorCode::metal, "Unable to encode local shadow initialization");
+        clearEncoder->setLabel(
+            NS::String::string("Local Shadow Clear", NS::UTF8StringEncoding));
         clearEncoder->endEncoding();
     }
     shadowClearBuffer->commit();

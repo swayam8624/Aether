@@ -193,4 +193,29 @@ Result<PointShadowProjection> buildPointShadowProjection(const Light& light,
     return result;
 }
 
+Result<std::vector<LocalShadowAllocation>> selectLocalShadowLights(
+    const std::vector<Light>& lights) {
+    std::vector<LocalShadowAllocation> result;
+    result.reserve(6);
+    std::uint32_t spots = 0;
+    std::uint32_t points = 0;
+    std::uint32_t nextSlice = 0;
+    for (std::size_t index = 0; index < lights.size(); ++index) {
+        if (auto valid = validateLight(lights[index]); !valid)
+            return std::unexpected(valid.error());
+        std::uint32_t slices = 0;
+        if (lights[index].type == LightType::spot && spots < 4) {
+            slices = 1;
+            ++spots;
+        } else if (lights[index].type == LightType::point && points < 2) {
+            slices = 6;
+            ++points;
+        }
+        if (slices == 0) continue;
+        result.push_back({static_cast<std::uint32_t>(index), nextSlice, slices});
+        nextSlice += slices;
+    }
+    return result;
+}
+
 } // namespace aether::scene

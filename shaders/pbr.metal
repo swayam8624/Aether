@@ -119,7 +119,9 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  sampler environmentSampler [[sampler(5)]],
                                  constant AetherShadowUniforms& shadows [[buffer(8)]],
                                  depth2d_array<float> shadowMap [[texture(8)]],
-                                 sampler shadowSampler [[sampler(6)]]) {
+                                 sampler shadowSampler [[sampler(6)]],
+                                 constant AetherLocalShadowUniforms& localShadows [[buffer(9)]],
+                                 depth2d_array<float> localShadowMap [[texture(9)]]) {
     const uint textureMask = material.textureFlags.x;
     float4 sampledBaseColor = material.baseColor;
     if ((textureMask & 1u) != 0)
@@ -242,6 +244,41 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         }
         const float nDotL = max(dot(normal, lightDirection), 0.0f);
         if (nDotL <= 0.0f || attenuation <= 0.0f) continue;
+        float localVisibility = 1.0f;
+        for (uint localIndex = 0u; localIndex < uint(localShadows.countBias.x); ++localIndex) {
+            const float4 metadata = localShadows.lightMetadata[localIndex];
+            if (sourceLightIndex != uint(metadata.x + 0.5f)) continue;
+            uint slice = uint(metadata.z + 0.5f);
+            if (type == 1u) {
+                const float3 fromLight = input.worldPosition - gpuLight.positionRange.xyz;
+                const float3 magnitude = abs(fromLight);
+                if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z)
+                    slice += fromLight.x >= 0.0f ? 0u : 1u;
+                else if (magnitude.y >= magnitude.z)
+                    slice += fromLight.y >= 0.0f ? 2u : 3u;
+                else
+                    slice += fromLight.z >= 0.0f ? 4u : 5u;
+            }
+            const float4 localClip = localShadows.worldToShadow[slice] *
+                                     float4(input.worldPosition + normal *
+                                            localShadows.countBias.z, 1.0f);
+            const float3 localNdc = localClip.xyz / localClip.w;
+            const float2 localUv = float2(localNdc.x * 0.5f + 0.5f,
+                                          0.5f - localNdc.y * 0.5f);
+            if (all(localUv >= 0.0f) && all(localUv <= 1.0f) && localNdc.z >= 0.0f &&
+                localNdc.z <= 1.0f) {
+                localVisibility = 0.0f;
+                const float2 texel = 1.0f /
+                                     float2(localShadowMap.get_width(), localShadowMap.get_height());
+                for (int y = -1; y <= 1; ++y)
+                    for (int x = -1; x <= 1; ++x)
+                        localVisibility += localShadowMap.sample_compare(
+                            shadowSampler, localUv + float2(x, y) * texel, slice,
+                            localNdc.z - localShadows.countBias.y);
+                localVisibility /= 9.0f;
+            }
+            break;
+        }
         const float3 halfway = normalize(view + lightDirection);
         const float distribution = distributionGgx(normal, halfway, roughness);
         const float geometry = geometrySchlickGgx(nDotV, roughness) *
@@ -253,7 +290,7 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         const float visibility = type == 0u &&
                                          sourceLightIndex == uint(shadows.biasNormalCascadeCount.w)
                                      ? shadowVisibility
-                                     : 1.0f;
+                                     : localVisibility;
         direct += (diffuse + specular) * gpuLight.colorIntensity.rgb *
                   gpuLight.colorIntensity.w * attenuation * nDotL * visibility;
     }

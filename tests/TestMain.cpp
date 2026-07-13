@@ -614,6 +614,25 @@ void testLocalShadowProjections() {
     expect(!aether::scene::buildSpotShadowProjection(point).has_value() &&
                !aether::scene::buildPointShadowProjection(spot).has_value(),
            "Local shadow builders reject the wrong light type");
+
+    std::vector<aether::scene::Light> lights;
+    for (std::uint32_t index = 0; index < 7; ++index) {
+        auto light = index % 2 == 0 ? spot : point;
+        lights.push_back(light);
+    }
+    const auto allocations = aether::scene::selectLocalShadowLights(lights);
+    expect(allocations.has_value() && allocations->size() == 6,
+           "Local shadow admission enforces four spot and two point budgets");
+    if (allocations) {
+        expect(allocations->front().sourceLightIndex == 0 &&
+                   allocations->front().baseSlice == 0 &&
+                   allocations->back().sourceLightIndex == 6 &&
+                   allocations->back().baseSlice + allocations->back().sliceCount == 16,
+               "Local shadow admission is stable and remains within sixteen slices");
+    }
+    lights[0].range = -1.0F;
+    expect(!aether::scene::selectLocalShadowLights(lights).has_value(),
+           "Local shadow admission rejects invalid source lights");
 }
 
 void testSha256() {

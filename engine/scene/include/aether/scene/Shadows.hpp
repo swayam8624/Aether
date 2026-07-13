@@ -43,6 +43,12 @@ struct PointShadowProjection final {
     float farPlane{};
 };
 
+struct LocalShadowAllocation final {
+    std::uint32_t sourceLightIndex{};
+    std::uint32_t baseSlice{};
+    std::uint32_t sliceCount{};
+};
+
 /// Computes stable orthographic cascade matrices in Metal's [0,1] depth convention.
 [[nodiscard]] Result<DirectionalShadowCascades> buildDirectionalShadowCascades(
     const Camera& camera, const Transform& cameraWorldTransform, float aspectRatio,
@@ -54,5 +60,9 @@ struct PointShadowProjection final {
 /// Face order matches Metal cube textures: +X, -X, +Y, -Y, +Z, -Z.
 [[nodiscard]] Result<PointShadowProjection> buildPointShadowProjection(
     const Light& light, const LocalShadowConfig& config = {});
+
+/// Admits at most four spot and two point lights in stable source order into sixteen slices.
+[[nodiscard]] Result<std::vector<LocalShadowAllocation>> selectLocalShadowLights(
+    const std::vector<Light>& lights);
 
 } // namespace aether::scene
