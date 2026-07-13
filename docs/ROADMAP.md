@@ -69,9 +69,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   application upgrades.
 - [x] Depth-tested R32Uint mesh entity picking through C++, Objective-C++, and SwiftUI, with visible
   entity and background integration assertions.
+- [x] Immutable engine-owned mesh entity-name snapshots and a SwiftUI outliner keyed to renderer
+  selection IDs.
 - [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
-- [ ] Outliner, inspectors, gizmos, and scene persistence.
+- [ ] Inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer
 

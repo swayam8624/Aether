@@ -213,7 +213,9 @@ int main() {
     }
     const auto pickedMesh = (*renderer)->pickMesh(160, 90);
     const auto pickedBackground = (*renderer)->pickMesh(4, 4);
-    if (!pickedMesh || *pickedMesh != 1 || !pickedBackground || *pickedBackground != 0) {
+    const auto entityNames = (*renderer)->meshEntityNames();
+    if (!pickedMesh || *pickedMesh != 1 || !pickedBackground || *pickedBackground != 0 ||
+        entityNames.size() != 1 || entityNames.front().empty()) {
         std::cerr << "Depth-tested mesh entity-ID picking disagrees with the golden fixture\n";
         pool->release();
         return 1;

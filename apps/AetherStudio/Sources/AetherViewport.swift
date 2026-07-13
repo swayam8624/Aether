@@ -5,6 +5,7 @@ struct AetherViewport: NSViewRepresentable {
     let scenePath: String?
     @Binding var selectedGaussianId: Int?
     @Binding var selectedMeshId: Int?
+    @Binding var meshEntityNames: [String]
     let gaussianDebugMode: Int
     let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
@@ -17,6 +18,7 @@ struct AetherViewport: NSViewRepresentable {
             selectedGaussianId = gaussian && entityId != 0 ? Int(entityId) : nil
             selectedMeshId = !gaussian && entityId != 0 ? Int(entityId) : nil
         }
+        view.onMeshEntitiesChanged = { names in meshEntityNames = names }
         view.gaussianDebugMode = gaussianDebugMode
         view.exposureStops = exposureStops
         return view
@@ -29,6 +31,7 @@ struct AetherViewport: NSViewRepresentable {
             selectedGaussianId = gaussian && entityId != 0 ? Int(entityId) : nil
             selectedMeshId = !gaussian && entityId != 0 ? Int(entityId) : nil
         }
+        nsView.onMeshEntitiesChanged = { names in meshEntityNames = names }
         nsView.gaussianDebugMode = gaussianDebugMode
         nsView.exposureStops = exposureStops
         _ = nsView.rendererStatus

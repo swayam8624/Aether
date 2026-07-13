@@ -1332,6 +1332,20 @@ Result<std::uint32_t> Renderer::pickMesh(std::uint32_t x, std::uint32_t y) {
     return entityId;
 }
 
+std::vector<std::string> Renderer::meshEntityNames() const {
+    std::vector<std::string> names;
+    names.reserve(meshInstances_.size());
+    for (std::size_t index = 0; index < meshInstances_.size(); ++index) {
+        const auto nodeIndex = meshInstances_[index].nodeIndex;
+        std::string name;
+        if (meshAnimationAsset_ && nodeIndex < meshAnimationAsset_->nodes.size())
+            name = meshAnimationAsset_->nodes[nodeIndex].name;
+        if (name.empty()) name = "Entity " + std::to_string(index + 1U);
+        names.push_back(std::move(name));
+    }
+    return names;
+}
+
 Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Scene render target dimensions are zero");

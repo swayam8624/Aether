@@ -14,7 +14,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 
 @interface AetherViewportDelegate : NSObject <MTKViewDelegate>
 - (instancetype)initWithDevice:(id<MTLDevice>)device;
-- (void)loadSceneAtPath:(NSString*)path;
+- (NSArray<NSString*>*)loadSceneAtPath:(NSString*)path;
 - (void)setCameraKey:(unichar)key active:(BOOL)active;
 - (void)addCameraLookX:(CGFloat)x y:(CGFloat)y;
 - (void)addCameraDolly:(CGFloat)amount;
@@ -70,9 +70,9 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     }
 }
 
-- (void)loadSceneAtPath:(NSString*)path {
+- (NSArray<NSString*>*)loadSceneAtPath:(NSString*)path {
     if (!_renderer) {
-        return;
+        return @[];
     }
     const NSString* extension = path.pathExtension.lowercaseString;
     aether::Result<void> result;
@@ -85,9 +85,14 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     }
     if (!result) {
         NSLog(@"AETHER scene load failed: %s", result.error().describe().c_str());
+        return @[];
     } else {
         NSLog(@"AETHER scene load succeeded: %@", path.lastPathComponent);
     }
+    NSMutableArray<NSString*>* names = [NSMutableArray array];
+    for (const auto& name : _renderer->meshEntityNames())
+        [names addObject:[NSString stringWithUTF8String:name.c_str()]];
+    return names;
 }
 
 - (void)setCameraKey:(unichar)key active:(BOOL)active {
@@ -337,6 +342,8 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     if (_scenePath.length == 0) {
         return;
     }
-    [_rendererDelegate loadSceneAtPath:_scenePath];
+    NSArray<NSString*>* names = [_rendererDelegate loadSceneAtPath:_scenePath];
+    if (self.onMeshEntitiesChanged)
+        self.onMeshEntitiesChanged(names);
 }
 @end

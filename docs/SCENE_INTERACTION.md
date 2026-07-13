@@ -12,6 +12,12 @@ zero for background. Gaussian scenes retain their existing source-ID target. The
 bridge routes clicks by loaded scene type without exposing Metal objects to Swift, and Studio keeps
 mesh and Gaussian selections distinct.
 
-The offscreen Metal fixture verifies that the visible center selects mesh entity 1 and a background
-corner selects zero under API and shader validation. Outliner snapshots, transform gizmos, and
-editable inspectors remain separate work; selection IDs now provide their renderer-facing anchor.
+After a successful mesh load, the engine publishes an immutable name array ordered by those same
+1-based IDs. Names come from the retained glTF scene nodes with deterministic `Entity N` fallbacks.
+The Objective-C++ bridge converts that snapshot to native strings, Gaussian loads clear it, and the
+SwiftUI outliner can select an entity without owning or mutating the engine scene graph.
+
+The offscreen Metal fixture verifies that the visible center selects mesh entity 1, a background
+corner selects zero, and the entity snapshot is non-empty under API and shader validation.
+Transform gizmos and editable inspectors remain separate work; selection IDs now provide their
+renderer-facing anchor.

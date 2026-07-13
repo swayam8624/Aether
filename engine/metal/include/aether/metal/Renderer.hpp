@@ -76,6 +76,8 @@ class Renderer final {
     [[nodiscard]] Result<std::uint32_t> pickGaussian(std::uint32_t x, std::uint32_t y);
     /// Returns a 1-based visible mesh-instance ID, or zero for background.
     [[nodiscard]] Result<std::uint32_t> pickMesh(std::uint32_t x, std::uint32_t y);
+    /// Immutable names ordered by their 1-based mesh entity IDs.
+    [[nodiscard]] std::vector<std::string> meshEntityNames() const;
     void setCameraMovement(scene::CameraMove movement, bool active) noexcept;
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;

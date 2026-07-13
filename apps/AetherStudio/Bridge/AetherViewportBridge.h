@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) NSInteger preferredFramesPerSecond;
 @property(nonatomic, nullable, copy) NSString* scenePath;
 @property(nonatomic, nullable, copy) void (^onEntityPicked)(NSInteger entityId, BOOL gaussian);
+@property(nonatomic, nullable, copy) void (^onMeshEntitiesChanged)(NSArray<NSString*>* names);
 @property(nonatomic) NSInteger gaussianDebugMode;
 @property(nonatomic) float exposureStops;
 @end

@@ -44,12 +44,48 @@ private enum GaussianDebugMode: Int, CaseIterable, Identifiable {
     }
 }
 
+private struct MeshOutliner: View {
+    let names: [String]
+    @Binding var selectedId: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("OUTLINER").font(.caption.bold())
+            ForEach(names.indices, id: \.self) { index in
+                let entityId = index + 1
+                Button {
+                    selectedId = entityId
+                } label: {
+                    HStack {
+                        Image(systemName: "cube")
+                        Text(names[index]).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text("#" + String(entityId))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(selectedId == entityId ? Color.accentColor.opacity(0.2) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 4))
+            }
+        }
+        .frame(width: 220)
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(12)
+    }
+}
+
 struct ContentView: View {
     @Binding var document: AetherProjectDocument
     let projectURL: URL?
     @State private var selection: Workspace? = .scene
     @State private var selectedGaussianId: Int?
     @State private var selectedMeshId: Int?
+    @State private var meshEntityNames: [String] = []
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
@@ -103,6 +139,7 @@ struct ContentView: View {
                     AetherViewport(scenePath: resolvedScenePath,
                                    selectedGaussianId: $selectedGaussianId,
                                    selectedMeshId: $selectedMeshId,
+                                   meshEntityNames: $meshEntityNames,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
@@ -127,6 +164,14 @@ struct ContentView: View {
                             .padding(12)
                         }
                         }
+                        .overlay(alignment: .topTrailing) {
+                            if !meshEntityNames.isEmpty {
+                                MeshOutliner(names: meshEntityNames, selectedId: $selectedMeshId)
+                                    .onChange(of: selectedMeshId) { _, _ in
+                                        selectedGaussianId = nil
+                                    }
+                            }
+                        }
                 }
             }
         }
@@ -137,6 +182,7 @@ struct ContentView: View {
         .onChange(of: document.state.scenePath) { _, _ in
             selectedGaussianId = nil
             selectedMeshId = nil
+            meshEntityNames = []
         }
         .onAppear {
             selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene
