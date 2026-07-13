@@ -32,6 +32,7 @@ add_subdirectory(engine/mesh)
 add_subdirectory(engine/gaussian)
 aether_resolve_zstd()
 add_subdirectory(engine/package)
+add_subdirectory(engine/reconstruction)
 
 if(AETHER_BUILD_TOOLS)
     add_subdirectory(tools/aether-inspect)

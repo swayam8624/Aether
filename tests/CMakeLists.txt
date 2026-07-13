@@ -1,7 +1,7 @@
 add_executable(AetherTests
     TestMain.cpp
 )
-target_link_libraries(AetherTests PRIVATE Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian Aether::Package)
+target_link_libraries(AetherTests PRIVATE Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian Aether::Package Aether::Reconstruction)
 target_compile_definitions(AetherTests PRIVATE
     AETHER_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 aether_configure_target(AetherTests)
@@ -79,4 +79,11 @@ if(TARGET aether-reconstruct)
             --colmap "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
             --brush "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
             --seed 42 --steps 10 --json)
+    add_test(NAME AetherReconstructionCoverageGate
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-coverage-gate.zsh"
+            $<TARGET_FILE:aether-reconstruct>
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-reconstruction"
+            "${CMAKE_CURRENT_BINARY_DIR}/reconstruction-weak-job"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap-weak.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh")
 endif()

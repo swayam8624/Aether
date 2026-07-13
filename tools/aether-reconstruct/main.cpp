@@ -1,5 +1,6 @@
 #include <aether/core/Error.hpp>
 #include <aether/package/Sha256.hpp>
+#include <aether/reconstruction/SparseModelValidator.hpp>
 
 #include <fcntl.h>
 #include <spawn.h>
@@ -121,6 +122,9 @@ std::optional<std::uint32_t> parsePositive(std::string_view value) {
 
 std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
     Options options;
+    for (int index = 1; index < argc; ++index)
+        if (std::string_view(argv[index]) == "--json")
+            options.json = true;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--help" || argument == "-h") {
@@ -229,13 +233,58 @@ aether::Result<InputImage> hashInputImage(const std::filesystem::path& path,
     return InputImage{relative, bytes, aether::package::Sha256::hex(hash.finalize())};
 }
 
+void writeCoverageJson(std::ostream& stream,
+                       const aether::reconstruction::SparseCoverageReport& coverage) {
+    stream << "{\"passed\":" << (coverage.passed() ? "true" : "false")
+           << ",\"inputImages\":" << coverage.inputImages
+           << ",\"registeredImages\":" << coverage.registeredImages
+           << ",\"registrationRatio\":" << coverage.registrationRatio
+           << ",\"trackedPoints\":" << coverage.trackedPoints
+           << ",\"meanTrackLength\":" << coverage.meanTrackLength
+           << ",\"connectedImages\":" << coverage.connectedImages
+           << ",\"connectedImageRatio\":" << coverage.connectedImageRatio
+           << ",\"baselineDiagonal\":" << coverage.baselineDiagonal
+           << ",\"maximumViewAngleDegrees\":" << coverage.maximumViewAngleDegrees
+           << ",\"issues\":[";
+    for (std::size_t index = 0; index < coverage.issues.size(); ++index) {
+        if (index > 0)
+            stream << ',';
+        stream << '"' << escapeJson(coverage.issues[index]) << '"';
+    }
+    stream << "]}";
+}
+
+aether::Result<void>
+writeCoverageReport(const std::filesystem::path& path,
+                    const aether::reconstruction::SparseCoverageReport& coverage) {
+    const auto temporary = path.string() + ".tmp";
+    std::ofstream stream(temporary, std::ios::trunc);
+    writeCoverageJson(stream, coverage);
+    stream << '\n';
+    stream.close();
+    if (!stream) {
+        std::filesystem::remove(temporary);
+        return aether::fail(aether::ErrorCode::io, "Unable to write sparse coverage report",
+                            path.string());
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        std::filesystem::remove(temporary);
+        return aether::fail(aether::ErrorCode::io, "Unable to finalize sparse coverage report",
+                            error.message());
+    }
+    return {};
+}
+
 aether::Result<void> writeManifest(const Options& options, const std::filesystem::path& images,
                                    const std::vector<InputImage>& inputImages,
-                                   const std::vector<Stage>& stages, std::string_view status) {
+                                   const std::vector<Stage>& stages, std::string_view status,
+                                   const aether::reconstruction::SparseCoverageReport* coverage) {
     const auto path = options.output / "job.json";
     const auto temporary = path.string() + ".tmp";
     std::ofstream stream(temporary, std::ios::trunc);
-    stream << "{\n  \"schemaVersion\":1,\n  \"status\":\"" << status << "\",\n  \"dataset\":\""
+    stream << "{\n  \"schemaVersion\":2,\n  \"status\":\"" << status << "\",\n  \"dataset\":\""
            << escapeJson(options.dataset.string()) << "\",\n  \"images\":\""
            << escapeJson(images.string()) << "\",\n  \"imageCount\":" << inputImages.size()
            << ",\n  \"seed\":" << options.seed << ",\n  \"steps\":" << options.steps
@@ -257,7 +306,12 @@ aether::Result<void> writeManifest(const Options& options, const std::filesystem
                << escapeJson(stages[index].expectedOutput.string()) << "\"}"
                << (index + 1 == stages.size() ? "\n" : ",\n");
     }
-    stream << "  ]\n}\n";
+    stream << "  ]";
+    if (coverage) {
+        stream << ",\n  \"sparseCoverage\":";
+        writeCoverageJson(stream, *coverage);
+    }
+    stream << "\n}\n";
     stream.close();
     if (!stream) {
         std::filesystem::remove(temporary);
@@ -365,6 +419,7 @@ int main(int argc, char** argv) {
 
     const auto database = options->output / "database.db";
     const auto sparse = options->output / "sparse";
+    const auto sparseText = sparse / "0-text";
     const auto dense = options->output / "dense";
     const auto exports = options->output / "exports";
     const std::string seed = std::to_string(options->seed);
@@ -384,6 +439,10 @@ int main(int argc, char** argv) {
           images.string(), "--output_path", sparse.string(), "--Mapper.random_seed", seed,
           "--Mapper.ba_use_gpu", "0"},
          sparse / "0"},
+        {"sparse-model-export",
+         {options->colmap, "model_converter", "--input_path", (sparse / "0").string(),
+          "--output_path", sparseText.string(), "--output_type", "TXT"},
+         sparseText / "images.txt"},
         {"undistortion",
          {options->colmap, "image_undistorter", "--image_path", images.string(), "--input_path",
           (sparse / "0").string(), "--output_path", dense.string(), "--output_type", "COLMAP"},
@@ -420,7 +479,8 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(exports, filesystemError);
     if (filesystemError)
         return fail("Unable to create reconstruction job directories", options->json, 3);
-    if (auto manifest = writeManifest(*options, images, inputImages, stages, "running"); !manifest)
+    if (auto manifest = writeManifest(*options, images, inputImages, stages, "running", nullptr);
+        !manifest)
         return fail(manifest.error().describe(), options->json, 3);
     if (auto verified =
             verifyTool(options->colmap, "3.13.0", options->output / "logs" / "colmap-version.log");
@@ -432,27 +492,58 @@ int main(int argc, char** argv) {
         return fail(verified.error().describe(), options->json, 3);
     std::signal(SIGINT, interruptChild);
     std::signal(SIGTERM, interruptChild);
+    std::optional<aether::reconstruction::SparseCoverageReport> sparseCoverage;
     for (const Stage& stage : stages) {
         const auto marker = options->output / (stage.name + ".complete");
-        if (std::filesystem::is_regular_file(marker) &&
-            std::filesystem::exists(stage.expectedOutput))
-            continue;
-        if (auto result = runStage(stage, options->output / "logs" / (stage.name + ".log"));
-            !result)
-            return fail(result.error().describe(), options->json, 4);
+        const bool complete = std::filesystem::is_regular_file(marker) &&
+                              std::filesystem::exists(stage.expectedOutput);
+        if (!complete) {
+            if (auto result = runStage(stage, options->output / "logs" / (stage.name + ".log"));
+                !result)
+                return fail(result.error().describe(), options->json, 4);
+        }
         if (!std::filesystem::exists(stage.expectedOutput))
             return fail("Stage exited successfully but expected output is missing: " +
                             stage.expectedOutput.string(),
                         options->json, 4);
-        if (auto markerResult = writeMarker(marker); !markerResult)
-            return fail(markerResult.error().describe(), options->json, 4);
+        if (stage.name == "sparse-model-export") {
+            auto validated =
+                aether::reconstruction::validateSparseTextModel(sparseText, imageCount);
+            if (!validated)
+                return fail(validated.error().describe(), options->json, 4);
+            sparseCoverage = std::move(*validated);
+            const auto coveragePath = options->output / "pose-coverage.json";
+            if (auto report = writeCoverageReport(coveragePath, *sparseCoverage); !report)
+                return fail(report.error().describe(), options->json, 4);
+            const auto coverageMarker = options->output / "pose-coverage-validation.complete";
+            if (!sparseCoverage->passed()) {
+                std::string message = "Sparse pose/overlap coverage failed";
+                for (const auto& issue : sparseCoverage->issues)
+                    message += " · " + issue;
+                (void)writeManifest(*options, images, inputImages, stages, "coverage-failed",
+                                    &*sparseCoverage);
+                std::filesystem::remove(marker);
+                std::filesystem::remove(coverageMarker);
+                return fail(message, options->json, 5);
+            }
+            if (auto markerResult = writeMarker(coverageMarker); !markerResult)
+                return fail(markerResult.error().describe(), options->json, 4);
+        }
+        if (!complete)
+            if (auto markerResult = writeMarker(marker); !markerResult)
+                return fail(markerResult.error().describe(), options->json, 4);
     }
-    if (auto manifest = writeManifest(*options, images, inputImages, stages, "complete"); !manifest)
+    if (auto manifest = writeManifest(*options, images, inputImages, stages, "complete",
+                                      sparseCoverage ? &*sparseCoverage : nullptr);
+        !manifest)
         return fail(manifest.error().describe(), options->json, 4);
     if (options->json)
         std::cout << "{\"ok\":true,\"output\":\""
                   << escapeJson((exports / "base-gaussians.ply").string())
-                  << "\",\"images\":" << imageCount << ",\"seed\":" << options->seed << "}\n";
+                  << "\",\"images\":" << imageCount
+                  << ",\"registeredImages\":" << sparseCoverage->registeredImages
+                  << ",\"trackedPoints\":" << sparseCoverage->trackedPoints
+                  << ",\"seed\":" << options->seed << "}\n";
     else
         std::cout << "Reconstruction complete: " << exports / "base-gaussians.ply" << '\n';
     return 0;

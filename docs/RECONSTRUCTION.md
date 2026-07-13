@@ -13,11 +13,15 @@ The expected private tool directory is `.aether-deps/bin`, ignored by Git. Sourc
 verified after checkout. Public releases must additionally archive dependency notices, the lock
 manifest, build logs, and checksums of redistributed binaries.
 
-`aether-reconstruct` runs five resumable stages: feature extraction, exhaustive matching, seeded
-sparse mapping, undistortion, and Brush training. Every subprocess receives an argument vector
-directly—never a shell command—while stdout/stderr go to separate stage logs. Completion markers are
-written atomically only after the process exits successfully and its expected output exists. SIGINT
-and SIGTERM are forwarded to the active child.
+`aether-reconstruct` runs six external resumable stages: feature extraction, exhaustive matching,
+seeded sparse mapping, text-model export, undistortion, and Brush training. Between export and
+undistortion, an AETHER-owned gate parses the COLMAP text model and requires enough registered
+images, multi-view tracks, overlap-graph connectivity, camera baseline, and angular diversity.
+It writes `pose-coverage.json` atomically; a failed gate records `coverage-failed` in `job.json` and
+does not launch Brush. Every subprocess receives an argument vector directly—never a shell
+command—while stdout/stderr go to separate stage logs. Completion markers are written atomically
+only after the process exits successfully and its expected output exists. SIGINT and SIGTERM are
+forwarded to the active child.
 
 The adapter runs Brush in CLI mode using the pinned v0.3.0 interface:
 
@@ -29,5 +33,6 @@ brush <COLMAP-dataset> --with-viewer=false --seed 42 \
 
 COLMAP 3.13.0 is selected because it provides a deterministic `random_seed` option. AETHER's job
 manifest preserves the seed, full argument vectors, pinned identities, sorted input sizes/SHA-256
-hashes, expected outputs, stage logs, and resume markers. It verifies both executable versions before
-starting. `--dry-run --json` validates inputs and emits every command without launching a tool.
+hashes, expected outputs, sparse-coverage evidence, stage logs, and resume markers. It verifies both
+executable versions before starting. `--dry-run --json` validates inputs and emits every external
+command without launching a tool.

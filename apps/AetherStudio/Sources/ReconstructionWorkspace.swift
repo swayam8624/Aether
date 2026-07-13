@@ -119,7 +119,8 @@ private final class ReconstructionModel: ObservableObject {
 
     private func monitorMarkers(in outputURL: URL, process: Process) async {
         let stages = ["feature-extraction", "feature-matching", "sparse-mapping",
-                      "undistortion", "brush-training"]
+                      "sparse-model-export", "pose-coverage-validation", "undistortion",
+                      "brush-training"]
         while process.isRunning {
             completedStages = stages.filter {
                 FileManager.default.fileExists(atPath: outputURL.appendingPathComponent("\($0).complete").path)
@@ -176,9 +177,9 @@ struct ReconstructionWorkspace: View {
                         .disabled(model.state != .ready || model.outputURL == nil ||
                                   model.colmapURL == nil || model.brushURL == nil)
                     if model.state == .running {
-                        ProgressView(value: Double(model.completedStages), total: 5)
+                        ProgressView(value: Double(model.completedStages), total: 7)
                             .frame(width: 120)
-                        Text("\(model.completedStages)/5 stages").font(.caption.monospacedDigit())
+                        Text("\(model.completedStages)/7 stages").font(.caption.monospacedDigit())
                         Button("Cancel", role: .destructive, action: model.cancel)
                     }
                     Spacer()

@@ -120,9 +120,10 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   source sizing, deterministic ordering, structured issues, and machine-readable output.
 - [x] Studio Reconstruction workspace with native validation reports, explicit dependency selection,
   bundled process helper, atomic-marker progress, cancellation, and resume-safe job output.
+- [x] Strict COLMAP text-model validation for registered-image ratio, multi-view tracks, overlap-graph
+  connectivity, camera baseline, and angular diversity, with an atomic JSON report and hard Brush gate.
 - [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
-- [ ] Feature-correspondence overlap and pose-coverage validation, proxy generation, checkpointing,
-  and comparison views.
+- [ ] Proxy generation, checkpointing, and comparison views.
 
 ## Phase 5 — Hybrid worlds
 

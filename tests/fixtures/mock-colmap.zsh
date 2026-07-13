@@ -31,6 +31,24 @@ case ${command} in
     output=$(value_after --output_path $@)
     mkdir -p ${output}/0
     ;;
+  model_converter)
+    output=$(value_after --output_path $@)
+    mkdir -p ${output}
+    cat > ${output}/images.txt <<'EOF'
+# Image list
+1 0.9987502604 0 0.0499791693 0 1 0 0 1 001.jpg
+0 0 1 1 0 2 2 0 3
+2 1 0 0 0 0 0 0 1 002.jpg
+0 0 1 1 0 2 2 0 3
+3 0.9987502604 0 -0.0499791693 0 -1 0 0 1 003.jpg
+0 0 1 1 0 2 2 0 3
+EOF
+    : > ${output}/cameras.txt
+    : > ${output}/points3D.txt
+    for point in {1..24}; do
+      print "${point} 0 0 $((point + 2)) 128 128 128 0.1 1 ${point} 2 ${point} 3 ${point}" >> ${output}/points3D.txt
+    done
+    ;;
   image_undistorter)
     output=$(value_after --output_path $@)
     mkdir -p ${output}/sparse

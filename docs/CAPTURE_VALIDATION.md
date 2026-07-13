@@ -16,7 +16,7 @@ luminance spreads above 1.5 stops. Working-space estimates use 16 bytes per deco
 they are planning estimates, not measured peak memory.
 
 Sharpness and luminance are relative capture checks, not photographic-quality scores. HDR brackets
-can intentionally trigger exposure warnings. The current validator does not claim image overlap or
-pose coverage: those require feature correspondences and sparse reconstruction evidence and remain
-an explicit Phase 4 gate. Reconstruction should not be described as capture-validated until that
-gate and a real-image integration run are complete.
+can intentionally trigger exposure warnings. After COLMAP sparse mapping, `aether-reconstruct`
+performs a separate evidence-based pose/overlap gate and writes `pose-coverage.json`; that downstream
+check does not make the preflight validator capable of predicting feature matches. Reconstruction
+should not be described as fully capture-validated until a real-image integration run is complete.

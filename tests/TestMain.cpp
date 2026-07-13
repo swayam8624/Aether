@@ -7,18 +7,19 @@
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
-#include <aether/mesh/GltfLoader.hpp>
 #include <aether/mesh/Animation.hpp>
+#include <aether/mesh/GltfLoader.hpp>
 #include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/package/Sha256.hpp>
+#include <aether/reconstruction/SparseModelValidator.hpp>
 #include <aether/rendergraph/RenderGraph.hpp>
 #include <aether/scene/Camera.hpp>
 #include <aether/scene/CameraController.hpp>
 #include <aether/scene/CameraPath.hpp>
-#include <aether/scene/Scene.hpp>
-#include <aether/scene/Lighting.hpp>
 #include <aether/scene/ImageBasedLighting.hpp>
+#include <aether/scene/Lighting.hpp>
+#include <aether/scene/Scene.hpp>
 #include <aether/scene/Shadows.hpp>
 
 #include <array>
@@ -81,6 +82,48 @@ void testDiagnostics() {
     expect(contents.find("Serial") == std::string::npos,
            "Diagnostics report excludes machine serial identifiers");
     std::filesystem::remove(path);
+}
+
+void testSparseCoverageValidation() {
+    const auto root = std::filesystem::temp_directory_path() / "aether-sparse-coverage-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    {
+        std::ofstream images(root / "images.txt");
+        images << "1 0.9987502604 0 0.0499791693 0 1 0 0 1 a.jpg\n\n"
+                  "2 1 0 0 0 0 0 0 1 b.jpg\n\n"
+                  "3 0.9987502604 0 -0.0499791693 0 -1 0 0 1 c.jpg\n\n";
+        std::ofstream points(root / "points3D.txt");
+        points << "1 0 0 3 128 128 128 0.1 1 0 2 0 3 0\n";
+    }
+    aether::reconstruction::SparseCoverageThresholds thresholds;
+    thresholds.minimumTrackedPoints = 1;
+    auto valid = aether::reconstruction::validateSparseTextModel(root, 3, thresholds);
+    expect(valid.has_value() && valid->passed(),
+           "Connected COLMAP poses with baseline and tracks pass coverage validation");
+    if (valid) {
+        expect(valid->registeredImages == 3 && valid->connectedImages == 3,
+               "Sparse coverage report retains registration and graph evidence");
+        expect(valid->maximumViewAngleDegrees > 10.0,
+               "Sparse coverage report measures camera angular diversity");
+    }
+    thresholds.minimumTrackedPoints = 2;
+    auto weak = aether::reconstruction::validateSparseTextModel(root, 3, thresholds);
+    expect(weak.has_value() && !weak->passed() && !weak->issues.empty(),
+           "A structurally valid but weak sparse model returns actionable coverage issues");
+    {
+        std::ofstream points(root / "points3D.txt", std::ios::trunc);
+        points << "1 0 0 3 128 128 128 0.1 99 0\n";
+    }
+    expect(!aether::reconstruction::validateSparseTextModel(root, 3, thresholds).has_value(),
+           "Sparse point tracks referencing unknown images are rejected as corrupt data");
+    {
+        std::ofstream images(root / "images.txt", std::ios::trunc);
+        images << "1 1 0 0 0 0 0 0 1 a.jpg\n0 0\n";
+    }
+    expect(!aether::reconstruction::validateSparseTextModel(root, 3, thresholds).has_value(),
+           "Incomplete COLMAP observation triples are rejected as corrupt data");
+    std::filesystem::remove_all(root);
 }
 
 void testProfiler() {
@@ -193,10 +236,9 @@ void testSceneTransforms() {
         float maximumDifference = 0.0F;
         for (std::size_t column = 0; column < 4; ++column)
             for (std::size_t row = 0; row < 4; ++row)
-                maximumDifference = std::max(
-                    maximumDifference,
-                    std::abs(rebuilt.columns[column][row] -
-                             mirrored.matrix().columns[column][row]));
+                maximumDifference =
+                    std::max(maximumDifference, std::abs(rebuilt.columns[column][row] -
+                                                         mirrored.matrix().columns[column][row]));
         expect(maximumDifference < 1.0e-4F,
                "Decomposed mirrored transform round-trips without matrix drift");
     }
@@ -302,10 +344,10 @@ void testGltfLoader() {
     if (instanced) {
         expect(instanced->primitives.size() == 1 && instanced->instances.size() == 3,
                "glTF instances share one geometry primitive");
-        const auto firstOrigin = simd_mul(instanced->instances[0].worldTransform,
-                                          simd_float4{0.0F, 0.0F, 0.0F, 1.0F});
-        const auto secondOrigin = simd_mul(instanced->instances[1].worldTransform,
-                                           simd_float4{0.0F, 0.0F, 0.0F, 1.0F});
+        const auto firstOrigin =
+            simd_mul(instanced->instances[0].worldTransform, simd_float4{0.0F, 0.0F, 0.0F, 1.0F});
+        const auto secondOrigin =
+            simd_mul(instanced->instances[1].worldTransform, simd_float4{0.0F, 0.0F, 0.0F, 1.0F});
         expect(std::abs(firstOrigin.x - 2.0F) < 1.0e-6F &&
                    std::abs(secondOrigin.x + 1.0F) < 1.0e-6F &&
                    std::abs(secondOrigin.y - 3.0F) < 1.0e-6F,
@@ -317,11 +359,11 @@ void testGltfLoader() {
            "glTF scene instance limit is enforced");
 
     const std::array<std::size_t, 3> candidates{0, 1, 2};
-    const std::array<simd_float3, 3> centers{
-        simd_float3{0.0F, 0.0F, -2.0F}, simd_float3{0.0F, 0.0F, -5.0F},
-        simd_float3{0.0F, 0.0F, 2.0F}};
-    const auto transparentOrder = aether::mesh::stableBackToFront(
-        candidates, centers, simd_float3{0.0F, 0.0F, 0.0F});
+    const std::array<simd_float3, 3> centers{simd_float3{0.0F, 0.0F, -2.0F},
+                                             simd_float3{0.0F, 0.0F, -5.0F},
+                                             simd_float3{0.0F, 0.0F, 2.0F}};
+    const auto transparentOrder =
+        aether::mesh::stableBackToFront(candidates, centers, simd_float3{0.0F, 0.0F, 0.0F});
     expect(transparentOrder == std::vector<std::size_t>({1, 0, 2}),
            "Transparent instances sort far-to-near with stable equal-distance ties");
 
@@ -330,32 +372,29 @@ void testGltfLoader() {
     auto animated = aether::mesh::GltfLoader::load(animatedPath);
     expect(animated.has_value(), "glTF animation accessors and channels load");
     if (animated) {
-        expect(animated->animations.size() == 1 &&
-                   animated->animations[0].channels.size() == 1 &&
+        expect(animated->animations.size() == 1 && animated->animations[0].channels.size() == 1 &&
                    std::abs(animated->animations[0].durationSeconds - 1.0F) < 1.0e-6F,
                "glTF animation clip retains channel and duration");
         const auto pose = aether::mesh::sampleAnimation(*animated, 0, 0.5F, false);
         expect(pose.has_value() && std::abs((*pose)[0].translation.x - 2.0F) < 1.0e-6F,
                "Loaded glTF animation evaluates at runtime");
     }
-    const auto skinnedPath =
-        std::filesystem::path(AETHER_TEST_FIXTURES) / "skinned-triangle.gltf";
+    const auto skinnedPath = std::filesystem::path(AETHER_TEST_FIXTURES) / "skinned-triangle.gltf";
     auto skinned = aether::mesh::GltfLoader::load(skinnedPath);
     expect(skinned.has_value(), "glTF skin, joints, weights, and inverse binds load");
     if (skinned) {
         expect(skinned->skins.size() == 1 && skinned->skins[0].jointNodeIndices.size() == 1 &&
-                   skinned->instances[0].skinIndex == 0 &&
-                   skinned->primitives[0].hasSkinAttributes,
+                   skinned->instances[0].skinIndex == 0 && skinned->primitives[0].hasSkinAttributes,
                "glTF skin remains associated with its mesh-node instance");
         expect(skinned->primitives[0].vertices[0].joints.x == 0 &&
                    std::abs(skinned->primitives[0].vertices[0].weights.x - 1.0F) < 1.0e-6F,
                "glTF joint indices and normalized weights reach the mesh vertex ABI");
     }
-    const auto morphedPath =
-        std::filesystem::path(AETHER_TEST_FIXTURES) / "morphed-triangle.gltf";
+    const auto morphedPath = std::filesystem::path(AETHER_TEST_FIXTURES) / "morphed-triangle.gltf";
     auto morphed = aether::mesh::GltfLoader::load(morphedPath);
     expect(morphed.has_value(), "glTF morph targets and node weights load");
-    if (!morphed) std::cerr << morphed.error().describe() << '\n';
+    if (!morphed)
+        std::cerr << morphed.error().describe() << '\n';
     if (morphed) {
         expect(morphed->primitives[0].morphTargets.size() == 1 &&
                    std::abs(morphed->primitives[0].morphTargets[0].positionDeltas[2].y - 1.0F) <
@@ -410,16 +449,14 @@ void testMeshAnimation() {
     translation.path = aether::mesh::AnimationPath::translation;
     translation.interpolation = aether::mesh::AnimationInterpolation::linear;
     translation.keyTimes = {0.0F, 1.0F};
-    translation.values = {simd_float4{0.0F, 0.0F, 0.0F, 0.0F},
-                          simd_float4{4.0F, 0.0F, 0.0F, 0.0F}};
+    translation.values = {simd_float4{0.0F, 0.0F, 0.0F, 0.0F}, simd_float4{4.0F, 0.0F, 0.0F, 0.0F}};
     aether::mesh::AnimationChannel scale;
     scale.nodeIndex = 1;
     scale.path = aether::mesh::AnimationPath::scale;
     scale.interpolation = aether::mesh::AnimationInterpolation::cubicSpline;
     scale.keyTimes = {0.0F, 1.0F};
-    scale.values = {
-        simd_float4{}, simd_float4{1.0F, 1.0F, 1.0F, 0.0F}, simd_float4{},
-        simd_float4{}, simd_float4{3.0F, 3.0F, 3.0F, 0.0F}, simd_float4{}};
+    scale.values = {simd_float4{}, simd_float4{1.0F, 1.0F, 1.0F, 0.0F}, simd_float4{},
+                    simd_float4{}, simd_float4{3.0F, 3.0F, 3.0F, 0.0F}, simd_float4{}};
     clip.channels = {translation, scale};
     asset.animations.push_back(clip);
 
@@ -447,9 +484,10 @@ void testMeshAnimation() {
 
     asset.nodes[0].parentIndex = 1;
     std::vector<aether::scene::Transform> cyclicLocals;
-    for (const auto& node : asset.nodes) cyclicLocals.push_back(node.localTransform);
+    for (const auto& node : asset.nodes)
+        cyclicLocals.push_back(node.localTransform);
     expect(!aether::mesh::resolveWorldTransforms(asset, cyclicLocals).has_value(),
-        "Animation world resolution rejects hierarchy cycles");
+           "Animation world resolution rejects hierarchy cycles");
 }
 
 void testClusteredLighting() {
@@ -459,7 +497,8 @@ void testClusteredLighting() {
     camera.farPlane = 100.0F;
     const auto projection = camera.projectionMatrix(16.0F / 9.0F);
     expect(projection.has_value(), "Clustered-light test camera projection is valid");
-    if (!projection) return;
+    if (!projection)
+        return;
     aether::scene::Light sun;
     sun.type = aether::scene::LightType::directional;
     sun.direction = {-0.4F, -1.0F, -0.2F};
@@ -480,8 +519,7 @@ void testClusteredLighting() {
     if (lists) {
         expect(lists->clusters.size() == 32,
                "Cluster list dimensions produce the exact configured cell count");
-        expect(lists->lightIndices.size() >= 32,
-               "Directional light is assigned to every cluster");
+        expect(lists->lightIndices.size() >= 32, "Directional light is assigned to every cluster");
         expect(std::ranges::count(lists->lightIndices, 0U) == 32,
                "Directional cluster assignment is complete and non-duplicated");
         expect(std::ranges::count(lists->lightIndices, 1U) > 0 &&
@@ -489,8 +527,9 @@ void testClusteredLighting() {
                "Finite point light is culled to a cluster subset");
     }
     config.maximumLightReferences = 1;
-    expect(!aether::scene::buildClusteredLightLists(
-                {sun}, matrix_identity_float4x4, *projection, config).has_value(),
+    expect(!aether::scene::buildClusteredLightLists({sun}, matrix_identity_float4x4, *projection,
+                                                    config)
+                .has_value(),
            "Cluster light-reference overflow fails explicitly");
     point.range = 0.0F;
     expect(!aether::scene::validateLight(point).has_value(),
@@ -516,20 +555,19 @@ void testImageBasedLighting() {
     const auto ibl = aether::scene::preprocessImageBasedLighting(environment, config);
     expect(ibl.has_value(), "Bounded deterministic IBL preprocessing succeeds");
     if (ibl) {
-        expect(ibl->irradiance.linearRgb.size() == 24 &&
-                   ibl->prefilteredSpecular.size() == 3 &&
-                   ibl->prefilteredSpecular[0].linearRgb.size() == 96 &&
-                   ibl->brdfLut.size() == 16,
+        expect(ibl->irradiance.linearRgb.size() == 24 && ibl->prefilteredSpecular.size() == 3 &&
+                   ibl->prefilteredSpecular[0].linearRgb.size() == 96 && ibl->brdfLut.size() == 16,
                "IBL outputs have exact configured cube/mip/LUT dimensions");
         expect(std::abs(ibl->irradiance.linearRgb[0].x - 2.0F * 3.14159265F) < 1.0e-3F,
                "Cosine irradiance convolution integrates constant radiance to pi");
         expect(simd_length(ibl->prefilteredSpecular.back().linearRgb[0] -
                            simd_float3{2.0F, 1.0F, 0.5F}) < 1.0e-4F,
                "GGX prefilter preserves a constant environment at every roughness");
-        expect(std::ranges::all_of(ibl->brdfLut, [](simd_float2 value) {
-                   return std::isfinite(value.x) && std::isfinite(value.y) &&
-                          value.x >= 0.0F && value.y >= 0.0F;
-               }),
+        expect(std::ranges::all_of(ibl->brdfLut,
+                                   [](simd_float2 value) {
+                                       return std::isfinite(value.x) && std::isfinite(value.y) &&
+                                              value.x >= 0.0F && value.y >= 0.0F;
+                                   }),
                "Split-sum BRDF LUT contains finite non-negative coefficients");
     }
     config.maximumOutputTexels = 1;
@@ -554,30 +592,32 @@ void testDirectionalShadows() {
         simd_float3{-0.4F, -1.0F, -0.6F}, config);
     expect(cascades.has_value(), "Directional shadow cascades build for perspective camera");
     if (cascades) {
-        expect(cascades->splitDepths.size() == 4 &&
-                   cascades->worldToShadowClip.size() == 4,
+        expect(cascades->splitDepths.size() == 4 && cascades->worldToShadowClip.size() == 4,
                "Directional shadow output count matches configured cascades");
         expect(std::ranges::is_sorted(cascades->splitDepths) &&
                    cascades->splitDepths.front() > camera.nearPlane &&
                    std::abs(cascades->splitDepths.back() - 100.0F) < 1.0e-4F,
                "Practical cascade splits are increasing and reach shadow distance");
-        expect(std::ranges::all_of(cascades->worldToShadowClip, [](const auto& matrix) {
-                   return std::isfinite(simd_determinant(matrix)) &&
-                          std::abs(simd_determinant(matrix)) > 1.0e-12F;
-               }),
+        expect(std::ranges::all_of(cascades->worldToShadowClip,
+                                   [](const auto& matrix) {
+                                       return std::isfinite(simd_determinant(matrix)) &&
+                                              std::abs(simd_determinant(matrix)) > 1.0e-12F;
+                                   }),
                "Directional shadow matrices are finite and invertible");
     }
     config.splitLambda = -0.1F;
-    expect(!aether::scene::buildDirectionalShadowCascades(
-                camera, aether::scene::Transform::identity(), 1.0F,
-                simd_float3{0.0F, -1.0F, 0.0F}, config).has_value(),
-           "Directional shadows reject invalid split distribution");
+    expect(
+        !aether::scene::buildDirectionalShadowCascades(camera, aether::scene::Transform::identity(),
+                                                       1.0F, simd_float3{0.0F, -1.0F, 0.0F}, config)
+             .has_value(),
+        "Directional shadows reject invalid split distribution");
     config.splitLambda = 0.5F;
     config.cascadeCount = 9;
-    expect(!aether::scene::buildDirectionalShadowCascades(
-                camera, aether::scene::Transform::identity(), 1.0F,
-                simd_float3{0.0F, -1.0F, 0.0F}, config).has_value(),
-           "Directional shadows enforce bounded cascade count");
+    expect(
+        !aether::scene::buildDirectionalShadowCascades(camera, aether::scene::Transform::identity(),
+                                                       1.0F, simd_float3{0.0F, -1.0F, 0.0F}, config)
+             .has_value(),
+        "Directional shadows enforce bounded cascade count");
 }
 
 void testLocalShadowProjections() {
@@ -593,8 +633,8 @@ void testLocalShadowProjections() {
         const auto clip = simd_mul(spotProjection->worldToShadowClip,
                                    simd_float4{world.x, world.y, world.z, 1.0F});
         const auto ndc = clip.xyz / clip.w;
-        expect(std::abs(ndc.x) < 1.0e-4F && std::abs(ndc.y) < 1.0e-4F &&
-                   ndc.z >= 0.0F && ndc.z <= 1.0F,
+        expect(std::abs(ndc.x) < 1.0e-4F && std::abs(ndc.y) < 1.0e-4F && ndc.z >= 0.0F &&
+                   ndc.z <= 1.0F,
                "Spot shadow axis maps to the Metal viewport center and depth range");
         expect(std::isfinite(simd_determinant(spotProjection->worldToShadowClip)) &&
                    std::abs(simd_determinant(spotProjection->worldToShadowClip)) > 1.0e-12F,
@@ -608,9 +648,9 @@ void testLocalShadowProjections() {
     const auto pointProjection = aether::scene::buildPointShadowProjection(point);
     expect(pointProjection.has_value(), "Point shadow projection builds for a valid point light");
     if (pointProjection) {
-        constexpr std::array directions{
-            simd_float3{1, 0, 0}, simd_float3{-1, 0, 0}, simd_float3{0, 1, 0},
-            simd_float3{0, -1, 0}, simd_float3{0, 0, 1}, simd_float3{0, 0, -1}};
+        constexpr std::array directions{simd_float3{1, 0, 0}, simd_float3{-1, 0, 0},
+                                        simd_float3{0, 1, 0}, simd_float3{0, -1, 0},
+                                        simd_float3{0, 0, 1}, simd_float3{0, 0, -1}};
         bool validFaces = true;
         for (std::size_t face = 0; face < directions.size(); ++face) {
             const auto& matrix = pointProjection->worldToShadowClip[face];
@@ -619,8 +659,8 @@ void testLocalShadowProjections() {
             const auto ndc = clip.xyz / clip.w;
             validFaces = validFaces && std::isfinite(simd_determinant(matrix)) &&
                          std::abs(simd_determinant(matrix)) > 1.0e-12F &&
-                         std::abs(ndc.x) < 1.0e-4F && std::abs(ndc.y) < 1.0e-4F &&
-                         ndc.z >= 0.0F && ndc.z <= 1.0F;
+                         std::abs(ndc.x) < 1.0e-4F && std::abs(ndc.y) < 1.0e-4F && ndc.z >= 0.0F &&
+                         ndc.z <= 1.0F;
         }
         expect(validFaces,
                "All point shadow faces are finite, invertible, centered, and Metal-depth valid");
@@ -647,8 +687,7 @@ void testLocalShadowProjections() {
     expect(allocations.has_value() && allocations->size() == 6,
            "Local shadow admission enforces four spot and two point budgets");
     if (allocations) {
-        expect(allocations->front().sourceLightIndex == 0 &&
-                   allocations->front().baseSlice == 0 &&
+        expect(allocations->front().sourceLightIndex == 0 && allocations->front().baseSlice == 0 &&
                    allocations->back().sourceLightIndex == 6 &&
                    allocations->back().baseSlice + allocations->back().sliceCount == 16,
                "Local shadow admission is stable and remains within sixteen slices");
@@ -830,6 +869,7 @@ int main() {
     testErrors();
     testResourceLocator();
     testDiagnostics();
+    testSparseCoverageValidation();
     testProfiler();
     testJobSystem();
     testRenderGraph();
