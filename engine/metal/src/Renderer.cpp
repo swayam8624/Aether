@@ -812,11 +812,14 @@ void Renderer::draw(MTK::View* view) noexcept {
         gizmo.originScale = {origin.x, origin.y, origin.z,
                              std::clamp(distance * 0.15F, 0.1F, 2.0F)};
         gizmo.viewport = {meshWidth, meshHeight, 1.0F / meshWidth, 1.0F / meshHeight};
+        gizmo.options = {gizmoMode_, 0U, 0U, 0U};
         encoder->setRenderPipelineState(gizmoPipeline_.get());
         encoder->setDepthStencilState(reverseZReadOnlyDepthState_.get());
         encoder->setCullMode(MTL::CullModeNone);
         encoder->setVertexBytes(&gizmo, sizeof(gizmo), 0);
-        encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(18));
+        const NS::UInteger vertexCount = gizmoMode_ == 1U ? NS::UInteger(1'152)
+                                                          : NS::UInteger(18);
+        encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), vertexCount);
     }
     encoder->endEncoding();
 
@@ -1610,6 +1613,40 @@ Result<MeshEntitySnapshot> Renderer::translateSelectedMeshPixels(std::uint32_t a
         2.0F * cameraDistance * std::tan(camera.verticalFieldOfViewRadians * 0.5F) /
         static_cast<float>(sceneTargetHeight_);
     return translateSelectedMesh(axis, pixelDistance * worldPerPixel);
+}
+
+Result<MeshEntitySnapshot> Renderer::rotateSelectedMeshPixels(std::uint32_t axis,
+                                                              float pixelDistance) {
+    if (selectedMeshEntity_ == 0 || selectedMeshEntity_ > meshInstances_.size() || axis < 1U ||
+        axis > 3U || !std::isfinite(pixelDistance))
+        return fail(ErrorCode::invalidArgument, "Rotation gizmo delta is invalid");
+    auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
+    if (!snapshot) return std::unexpected(snapshot.error());
+    simd_float3 axisVector{};
+    axisVector[axis - 1U] = 1.0F;
+    const simd_quatf delta = simd_quaternion(pixelDistance * 0.01F, axisVector);
+    snapshot->worldTransform.rotation = simd_normalize(simd_mul(snapshot->worldTransform.rotation,
+                                                               delta));
+    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform); !updated)
+        return std::unexpected(updated.error());
+    return meshEntitySnapshot(selectedMeshEntity_);
+}
+
+Result<MeshEntitySnapshot> Renderer::scaleSelectedMeshPixels(std::uint32_t axis,
+                                                             float pixelDistance) {
+    if (selectedMeshEntity_ == 0 || selectedMeshEntity_ > meshInstances_.size() || axis < 1U ||
+        axis > 3U || !std::isfinite(pixelDistance))
+        return fail(ErrorCode::invalidArgument, "Scale gizmo delta is invalid");
+    auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
+    if (!snapshot) return std::unexpected(snapshot.error());
+    const float factor = std::exp(std::clamp(pixelDistance * 0.01F, -4.0F, 4.0F));
+    const float component = snapshot->worldTransform.scale[axis - 1U];
+    const float sign = component < 0.0F ? -1.0F : 1.0F;
+    snapshot->worldTransform.scale[axis - 1U] =
+        sign * std::clamp(std::abs(component) * factor, 1.0e-4F, 1.0e4F);
+    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform); !updated)
+        return std::unexpected(updated.error());
+    return meshEntitySnapshot(selectedMeshEntity_);
 }
 
 std::vector<MaterialSnapshot> Renderer::materialSnapshots() const {

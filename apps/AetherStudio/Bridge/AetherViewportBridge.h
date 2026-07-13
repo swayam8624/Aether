@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, nullable, copy) void (^onMeshTransformEdited)(NSInteger entityId,
                                                                    NSArray<NSNumber*>* values);
 @property(nonatomic) NSInteger selectedMeshEntity;
+@property(nonatomic) NSInteger gizmoMode;
 @property(nonatomic) NSInteger gaussianDebugMode;
 @property(nonatomic) NSInteger shadowDebugMode;
 @property(nonatomic) NSInteger shadowDebugSlice;

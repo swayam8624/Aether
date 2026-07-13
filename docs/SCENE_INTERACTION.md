@@ -61,11 +61,13 @@ controls in the Lighting workspace. Legacy documents receive the same default su
 renderer, and every accepted mutation invalidates temporal history and rebuilds clustered lists on
 the next frame.
 
-Selecting a mesh entity enables a Metal-rendered translation gizmo. Three HDR-colored axis quads
-are generated procedurally, maintain a six-pixel screen thickness, carry a small reverse-Z bias to
+Selecting a mesh entity enables a Metal-rendered transform gizmo with Move, Rotate, and Scale
+modes. Translation and scale use three HDR-colored axis quads; rotation uses 64-segment projected
+world-axis rings. Handles maintain a six-pixel screen thickness, carry a small reverse-Z bias to
 avoid self-occlusion while remaining depth tested, and write reserved high-bit axis IDs into the
 same integer interaction target. Left-clicking an axis begins a drag; pixel motion is converted to
-world distance from camera range, vertical FOV, and viewport height, then applied through the normal
-validated transform override API. Updated TRS values return through the bridge callback and are
+world distance from camera range, vertical FOV, and viewport height. Rotation applies normalized
+axis-angle quaternion deltas; scaling is multiplicative, sign-preserving, and bounded away from
+degeneracy and overflow. Every edit uses the normal validated transform override API. Updated TRS values return through the bridge callback and are
 persisted immediately in the project. The GPU integration fixture renders the gizmo, reads the X
 axis ID, applies and resets a drag, and rejects invalid axes under API and shader validation.

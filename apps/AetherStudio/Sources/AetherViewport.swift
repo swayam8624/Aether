@@ -16,6 +16,7 @@ struct AetherViewport: NSViewRepresentable {
     let gaussianDebugMode: Int
     let shadowDebugMode: Int
     let shadowDebugSlice: Int
+    let gizmoMode: Int
     let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
 
@@ -57,6 +58,7 @@ struct AetherViewport: NSViewRepresentable {
         view.gaussianDebugMode = gaussianDebugMode
         view.shadowDebugMode = shadowDebugMode
         view.shadowDebugSlice = shadowDebugSlice
+        view.gizmoMode = gizmoMode
         view.exposureStops = exposureStops
         return view
     }
@@ -117,6 +119,7 @@ struct AetherViewport: NSViewRepresentable {
         nsView.gaussianDebugMode = gaussianDebugMode
         nsView.shadowDebugMode = shadowDebugMode
         nsView.shadowDebugSlice = shadowDebugSlice
+        nsView.gizmoMode = gizmoMode
         nsView.exposureStops = exposureStops
         _ = nsView.rendererStatus
     }

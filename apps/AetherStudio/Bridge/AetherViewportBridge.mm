@@ -35,6 +35,9 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (BOOL)setSelectedMeshEntity:(NSInteger)entityId;
 - (NSInteger)pickGizmoAxisX:(NSUInteger)x y:(NSUInteger)y;
 - (NSArray<NSNumber*>*)translateSelectedAxis:(NSInteger)axis distance:(float)distance;
+- (void)setGizmoMode:(NSInteger)mode;
+- (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis distance:(float)distance
+                                          mode:(NSInteger)mode;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -322,6 +325,27 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
              @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z),
              @(rotation.w), @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)];
 }
+
+- (void)setGizmoMode:(NSInteger)mode {
+    if (_renderer) _renderer->setGizmoMode(static_cast<std::uint32_t>(std::clamp(mode, 0L, 2L)));
+}
+
+- (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis distance:(float)distance
+                                          mode:(NSInteger)mode {
+    if (!_renderer || axis < 1 || axis > 3) return nil;
+    aether::Result<aether::metal::MeshEntitySnapshot> result =
+        mode == 1 ? _renderer->rotateSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance)
+                  : mode == 2
+                        ? _renderer->scaleSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance)
+                        : _renderer->translateSelectedMeshPixels(static_cast<std::uint32_t>(axis),
+                                                                 distance);
+    if (!result) return nil;
+    const auto& transform = result->worldTransform;
+    const simd_float4 rotation = transform.rotation.vector;
+    return @[@(result->id), @(transform.translation.x), @(transform.translation.y),
+             @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z),
+             @(rotation.w), @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)];
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -362,6 +386,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     float _exposureStops;
     NSInteger _selectedMeshEntity;
     NSInteger _activeGizmoAxis;
+    NSInteger _gizmoMode;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -464,7 +489,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     else
         distance = static_cast<float>(event.deltaX - event.deltaY) * 0.7F;
     NSArray<NSNumber*>* values =
-        [_rendererDelegate translateSelectedAxis:_activeGizmoAxis distance:distance];
+        [_rendererDelegate manipulateSelectedAxis:_activeGizmoAxis distance:distance mode:_gizmoMode];
     if (values.count == 11 && self.onMeshTransformEdited)
         self.onMeshTransformEdited(values[0].integerValue,
                                    [values subarrayWithRange:NSMakeRange(1, 10)]);
@@ -573,6 +598,12 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (NSInteger)selectedMeshEntity {
     return _selectedMeshEntity;
+}
+
+- (NSInteger)gizmoMode { return _gizmoMode; }
+- (void)setGizmoMode:(NSInteger)value {
+    _gizmoMode = std::clamp(value, 0L, 2L);
+    [_rendererDelegate setGizmoMode:_gizmoMode];
 }
 
 - (void)setSelectedMeshEntity:(NSInteger)entityId {

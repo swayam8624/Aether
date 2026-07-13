@@ -60,6 +60,8 @@ struct AetherGizmoUniforms {
     AetherFloat4 originScale;
     // viewport width, height, inverse width, inverse height
     AetherFloat4 viewport;
+    // 0 translate, 1 rotate, 2 scale, reserved
+    AetherUInt4 options;
 };
 
 struct AetherMeshVertex {
@@ -200,7 +202,7 @@ static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherPresentationUniforms) == 16);
 static_assert(sizeof(AetherBloomUniforms) == 16);
 static_assert(sizeof(AetherTemporalUniforms) == 144);
-static_assert(sizeof(AetherGizmoUniforms) == 96);
+static_assert(sizeof(AetherGizmoUniforms) == 112);
 static_assert(sizeof(AetherMeshVertex) == 96);
 static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);

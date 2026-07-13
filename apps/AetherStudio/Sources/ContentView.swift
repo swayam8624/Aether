@@ -58,6 +58,20 @@ private enum ShadowDebugMode: Int, CaseIterable, Identifiable {
     }
 }
 
+private enum GizmoMode: Int, CaseIterable, Identifiable {
+    case translate
+    case rotate
+    case scale
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .translate: "Move"
+        case .rotate: "Rotate"
+        case .scale: "Scale"
+        }
+    }
+}
+
 private struct MeshOutliner: View {
     let names: [String]
     @Binding var selectedId: Int?
@@ -253,6 +267,7 @@ struct ContentView: View {
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @State private var shadowDebugMode: ShadowDebugMode = .disabled
     @State private var shadowDebugSlice = 0
+    @State private var gizmoMode: GizmoMode = .translate
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
     @AppStorage("showRendererDiagnostics") private var showRendererDiagnostics = true
@@ -316,6 +331,7 @@ struct ContentView: View {
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
                                    shadowDebugMode: shadowDebugMode.rawValue,
                                    shadowDebugSlice: shadowDebugSlice,
+                                   gizmoMode: gizmoMode.rawValue,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
@@ -410,6 +426,12 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                Picker("Transform Tool", selection: $gizmoMode) {
+                    ForEach(GizmoMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
                 Picker("Shadow View", selection: $shadowDebugMode) {
                     ForEach(ShadowDebugMode.allCases) { mode in
                         Text(mode.label).tag(mode)

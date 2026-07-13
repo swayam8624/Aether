@@ -114,6 +114,11 @@ class Renderer final {
                                                                   float worldDistance);
     [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMeshPixels(std::uint32_t axis,
                                                                         float pixelDistance);
+    [[nodiscard]] Result<MeshEntitySnapshot> rotateSelectedMeshPixels(std::uint32_t axis,
+                                                                     float pixelDistance);
+    [[nodiscard]] Result<MeshEntitySnapshot> scaleSelectedMeshPixels(std::uint32_t axis,
+                                                                    float pixelDistance);
+    void setGizmoMode(std::uint32_t mode) noexcept { gizmoMode_ = std::min(mode, 2U); }
     [[nodiscard]] std::vector<MaterialSnapshot> materialSnapshots() const;
     [[nodiscard]] Result<void> setMaterialOverride(const MaterialSnapshot& material);
     [[nodiscard]] Result<void> clearMaterialOverride(std::uint32_t materialId);
@@ -262,6 +267,7 @@ class Renderer final {
     std::uint32_t shadowDebugMode_{};
     std::uint32_t shadowDebugSlice_{};
     std::uint32_t selectedMeshEntity_{};
+    std::uint32_t gizmoMode_{};
     Clock::TimePoint previousFrameTime_ = Clock::now();
 };
 

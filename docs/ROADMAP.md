@@ -86,7 +86,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Selectable directional-cascade and local-light shadow-map diagnostics in Studio.
 - [x] Gaussian reverse-Z scene depth and camera-motion reprojection for temporal history.
 - [ ] Isolated PBR/shadow/Gaussian golden fixtures.
-- [ ] Rotation/scale gizmo modes and generalized scene serialization.
+- [x] Rotation and scale gizmo modes with validated persistent TRS updates.
+- [ ] Generalized scene serialization.
 
 ## Phase 3 — Standard Gaussian renderer
 

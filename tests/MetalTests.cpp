@@ -272,6 +272,16 @@ int main() {
         pool->release();
         return 1;
     }
+    const auto rotated = (*renderer)->rotateSelectedMeshPixels(2U, 10.0F);
+    const auto scaled = (*renderer)->scaleSelectedMeshPixels(1U, 10.0F);
+    if (!rotated || std::abs(rotated->worldTransform.rotation.vector.y) < 0.01F || !scaled ||
+        scaled->worldTransform.scale.x <= 1.0F ||
+        (*renderer)->rotateSelectedMeshPixels(0U, 1.0F) ||
+        (*renderer)->scaleSelectedMeshPixels(4U, 1.0F)) {
+        std::cerr << "Rotation/scale gizmo mutation contract failed\n";
+        pool->release();
+        return 1;
+    }
     if (!(*renderer)->clearMeshEntityTransform(1)) {
         std::cerr << "Renderer could not reset the gizmo fixture transform\n";
         pool->release();
@@ -342,6 +352,7 @@ int main() {
     }
     for (const auto [mode, slice] :
          {std::pair<std::uint32_t, std::uint32_t>{1U, 3U}, {2U, 11U}}) {
+        (*renderer)->setGizmoMode(mode);
         (*renderer)->setShadowDebugMode(mode, slice);
         const auto completedBeforeDiagnostic = (*renderer)->statistics().completedFrames;
         (*renderer)->draw(testView.get());
@@ -356,6 +367,7 @@ int main() {
             return 1;
         }
     }
+    (*renderer)->setGizmoMode(0U);
     (*renderer)->setShadowDebugMode(0U, 0U);
 
     NS::Error* libraryError = nullptr;
