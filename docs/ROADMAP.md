@@ -85,7 +85,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   deforming motion vectors.
 - [x] Selectable directional-cascade and local-light shadow-map diagnostics in Studio.
 - [x] Gaussian reverse-Z scene depth and camera-motion reprojection for temporal history.
-- [ ] Isolated PBR/shadow/Gaussian golden fixtures.
+- [x] Isolated PBR, directional/local shadow, and Gaussian capture goldens with bounded metrics,
+  portable review artifacts, and exact per-run SHA-256 provenance.
 - [x] Rotation and scale gizmo modes with validated persistent TRS updates.
 - [x] Schema-v3 generalized Studio serialization for viewport, selection, camera, playback,
   transforms, materials, and lights with v1/v2 migration.

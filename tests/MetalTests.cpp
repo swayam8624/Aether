@@ -15,7 +15,9 @@
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <thread>
@@ -33,6 +35,67 @@ aether::metal::MetalPtr<MTL::Texture> makeTexture(MTL::Device* device, MTL::Pixe
     descriptor->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite);
     return aether::metal::adopt(device->newTexture(descriptor.get()));
 }
+
+bool writeCaptureArtifact(const aether::metal::FrameCapture& capture, std::string_view name) {
+    const std::filesystem::path root = AETHER_TEST_ARTIFACT_DIR;
+    std::error_code error;
+    std::filesystem::create_directories(root, error);
+    if (error) return false;
+    const auto imagePath = root / (std::string(name) + ".ppm");
+    std::ofstream image(imagePath, std::ios::binary | std::ios::trunc);
+    if (!image) return false;
+    image << "P6\n" << capture.width << ' ' << capture.height << "\n255\n";
+    for (std::size_t pixel = 0; pixel < capture.bgra8.size(); pixel += 4) {
+        const char rgb[] = {
+            static_cast<char>(capture.bgra8[pixel + 2]),
+            static_cast<char>(capture.bgra8[pixel + 1]),
+            static_cast<char>(capture.bgra8[pixel])};
+        image.write(rgb, sizeof(rgb));
+    }
+    image.close();
+    if (!image) return false;
+    const auto digest = aether::package::Sha256::hash(capture.bgra8);
+    std::ofstream sidecar(root / (std::string(name) + ".sha256"), std::ios::trunc);
+    if (!sidecar) return false;
+    sidecar << aether::package::Sha256::hex(digest) << "  " << imagePath.filename().string()
+            << '\n';
+    return static_cast<bool>(sidecar);
+}
+
+bool resetCaptureArtifacts() {
+    const std::filesystem::path root = AETHER_TEST_ARTIFACT_DIR;
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    if (error) return false;
+    std::filesystem::create_directories(root, error);
+    return !error;
+}
+
+struct CaptureMetrics {
+    double meanLuminance{};
+    std::size_t brightPixels{};
+    std::size_t darkPixels{};
+    std::size_t opaquePixels{};
+};
+
+CaptureMetrics measureCapture(const aether::metal::FrameCapture& capture) {
+    CaptureMetrics metrics;
+    double luminanceSum = 0.0;
+    for (std::size_t pixel = 0; pixel < capture.bgra8.size(); pixel += 4) {
+        const double blue = static_cast<std::uint8_t>(capture.bgra8[pixel]) / 255.0;
+        const double green = static_cast<std::uint8_t>(capture.bgra8[pixel + 1]) / 255.0;
+        const double red = static_cast<std::uint8_t>(capture.bgra8[pixel + 2]) / 255.0;
+        const auto alpha = static_cast<std::uint8_t>(capture.bgra8[pixel + 3]);
+        const double luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        luminanceSum += luminance;
+        metrics.brightPixels += luminance > 0.25 ? 1U : 0U;
+        metrics.darkPixels += luminance < 0.995 ? 1U : 0U;
+        metrics.opaquePixels += alpha == 255U ? 1U : 0U;
+    }
+    metrics.meanLuminance = luminanceSum /
+                            static_cast<double>(capture.width * capture.height);
+    return metrics;
+}
 } // namespace
 
 int main() {
@@ -40,6 +103,11 @@ int main() {
     auto device = aether::metal::adopt(MTL::CreateSystemDefaultDevice());
     if (!device) {
         std::cerr << "No Metal device available\n";
+        pool->release();
+        return 1;
+    }
+    if (!resetCaptureArtifacts()) {
+        std::cerr << "Unable to reset the Metal golden artifact directory\n";
         pool->release();
         return 1;
     }
@@ -248,24 +316,13 @@ int main() {
         pool->release();
         return 1;
     }
-    double luminanceSum = 0.0;
-    std::size_t brightPixels = 0;
-    std::size_t opaquePixels = 0;
-    for (std::size_t pixel = 0; pixel < frameCapture->bgra8.size(); pixel += 4) {
-        const double blue = static_cast<std::uint8_t>(frameCapture->bgra8[pixel]) / 255.0;
-        const double green = static_cast<std::uint8_t>(frameCapture->bgra8[pixel + 1]) / 255.0;
-        const double red = static_cast<std::uint8_t>(frameCapture->bgra8[pixel + 2]) / 255.0;
-        const auto alpha = static_cast<std::uint8_t>(frameCapture->bgra8[pixel + 3]);
-        const double luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-        luminanceSum += luminance;
-        brightPixels += luminance > 0.25 ? 1U : 0U;
-        opaquePixels += alpha == 255U ? 1U : 0U;
-    }
-    const double meanLuminance = luminanceSum / (320.0 * 180.0);
-    if (meanLuminance < 0.17 || meanLuminance > 0.20 || brightPixels < 2'500 ||
-        brightPixels > 4'500 || opaquePixels != 320U * 180U) {
-        std::cerr << "Renderer golden thresholds failed: mean=" << meanLuminance
-                  << " bright=" << brightPixels << " opaque=" << opaquePixels << '\n';
+    const auto pbrMetrics = measureCapture(*frameCapture);
+    if (!writeCaptureArtifact(*frameCapture, "pbr-final") || pbrMetrics.meanLuminance < 0.17 ||
+        pbrMetrics.meanLuminance > 0.20 || pbrMetrics.brightPixels < 2'500 ||
+        pbrMetrics.brightPixels > 4'500 || pbrMetrics.opaquePixels != 320U * 180U) {
+        std::cerr << "PBR golden thresholds failed: mean=" << pbrMetrics.meanLuminance
+                  << " bright=" << pbrMetrics.brightPixels
+                  << " opaque=" << pbrMetrics.opaquePixels << '\n';
         pool->release();
         return 1;
     }
@@ -380,6 +437,22 @@ int main() {
         pool->release();
         return 1;
     }
+    aether::scene::Light goldenSun;
+    goldenSun.type = aether::scene::LightType::directional;
+    goldenSun.direction = {-0.4F, -1.0F, -0.6F};
+    goldenSun.intensity = 4.0F;
+    aether::scene::Light goldenSpot;
+    goldenSpot.type = aether::scene::LightType::spot;
+    goldenSpot.position = {0.0F, 0.0F, 2.0F};
+    goldenSpot.direction = {0.0F, 0.0F, -1.0F};
+    goldenSpot.range = 8.0F;
+    goldenSpot.innerConeRadians = 0.4F;
+    goldenSpot.outerConeRadians = 0.7F;
+    if (!(*renderer)->setLights({goldenSun, goldenSpot, pointLight})) {
+        std::cerr << "Renderer rejected the isolated shadow-golden lights\n";
+        pool->release();
+        return 1;
+    }
     const auto completedBeforeSkin = (*renderer)->statistics().completedFrames;
     (*renderer)->draw(testView.get());
     for (std::uint32_t attempt = 0; attempt < 100 &&
@@ -391,22 +464,63 @@ int main() {
         pool->release();
         return 1;
     }
-    for (const auto [mode, slice] :
-         {std::pair<std::uint32_t, std::uint32_t>{1U, 3U}, {2U, 11U}}) {
-        (*renderer)->setGizmoMode(mode);
+    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_SHADOW_GLTF); !loaded) {
+        std::cerr << "Renderer could not load the isolated shadow caster fixture\n";
+        pool->release();
+        return 1;
+    }
+    const auto captureShadowDiagnostic = [&](std::uint32_t mode, std::uint32_t slice)
+        -> std::optional<aether::metal::FrameCapture> {
         (*renderer)->setShadowDebugMode(mode, slice);
         const auto completedBeforeDiagnostic = (*renderer)->statistics().completedFrames;
+        (*renderer)->requestFrameCapture();
         (*renderer)->draw(testView.get());
         for (std::uint32_t attempt = 0;
              attempt < 100 &&
              (*renderer)->statistics().completedFrames <= completedBeforeDiagnostic;
              ++attempt)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        if ((*renderer)->statistics().completedFrames <= completedBeforeDiagnostic) {
-            std::cerr << "Shadow diagnostic frame did not complete\n";
-            pool->release();
-            return 1;
+        if ((*renderer)->statistics().completedFrames <= completedBeforeDiagnostic) return std::nullopt;
+        auto capture = (*renderer)->consumeFrameCapture();
+        if (!capture) return std::nullopt;
+        return std::move(*capture);
+    };
+    (*renderer)->setGizmoMode(1U);
+    auto directionalCapture = captureShadowDiagnostic(1U, 0U);
+    if (!directionalCapture ||
+        measureCapture(*directionalCapture).darkPixels < 8U ||
+        !writeCaptureArtifact(*directionalCapture, "shadow-directional-cascade-0")) {
+        std::cerr << "Directional shadow golden lacks finite caster coverage\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->setGizmoMode(2U);
+    std::optional<aether::metal::FrameCapture> localCapture;
+    std::uint32_t populatedLocalSlice = 0;
+    std::size_t maximumLocalCoverage = 0;
+    for (std::uint32_t slice = 0; slice < 7U; ++slice) {
+        auto candidate = captureShadowDiagnostic(2U, slice);
+        if (!candidate) continue;
+        const auto coverage = measureCapture(*candidate).darkPixels;
+        if (coverage > maximumLocalCoverage) {
+            maximumLocalCoverage = coverage;
+            populatedLocalSlice = slice;
+            localCapture = std::move(*candidate);
         }
+    }
+    if (!localCapture || maximumLocalCoverage < 8U ||
+        !writeCaptureArtifact(*localCapture, "shadow-local-populated-face")) {
+        std::cerr << "Local point-shadow golden lacks finite caster coverage\n";
+        pool->release();
+        return 1;
+    }
+    std::ofstream localFace(std::filesystem::path(AETHER_TEST_ARTIFACT_DIR) /
+                            "shadow-local-populated-face.txt", std::ios::trunc);
+    localFace << populatedLocalSlice << '\n';
+    if (!localFace) {
+        std::cerr << "Unable to record populated local shadow face\n";
+        pool->release();
+        return 1;
     }
     (*renderer)->setGizmoMode(0U);
     (*renderer)->setShadowDebugMode(0U, 0U);
@@ -454,6 +568,7 @@ int main() {
     std::filesystem::remove(packagePath);
     for (std::uint32_t frameIndex = 0; frameIndex < 2; ++frameIndex) {
         const auto completedBeforeGaussian = (*renderer)->statistics().completedFrames;
+        if (frameIndex == 1U) (*renderer)->requestFrameCapture();
         (*renderer)->draw(testView.get());
         for (std::uint32_t attempt = 0;
              attempt < 100 &&
@@ -465,6 +580,23 @@ int main() {
             pool->release();
             return 1;
         }
+    }
+    auto gaussianCapture = (*renderer)->consumeFrameCapture();
+    if (!gaussianCapture || !writeCaptureArtifact(*gaussianCapture, "gaussian-composition")) {
+        std::cerr << "Gaussian composition golden capture was not produced\n";
+        pool->release();
+        return 1;
+    }
+    const std::size_t gaussianCenter =
+        (static_cast<std::size_t>(gaussianCapture->height / 2U) * gaussianCapture->width +
+         gaussianCapture->width / 2U) * 4U;
+    const auto centerRed = static_cast<std::uint8_t>(gaussianCapture->bgra8[gaussianCenter + 2U]);
+    const auto centerAlpha = static_cast<std::uint8_t>(gaussianCapture->bgra8[gaussianCenter + 3U]);
+    if (centerRed < 32U || centerAlpha != 255U) {
+        std::cerr << "Gaussian composition golden lacks an opaque center contribution: red="
+                  << static_cast<unsigned>(centerRed) << '\n';
+        pool->release();
+        return 1;
     }
     const auto gaussianMotion = (*renderer)->sampleMotionVector(160, 90);
     if (!gaussianMotion || gaussianMotion->w < 0.5F || gaussianMotion->z <= 0.0F ||

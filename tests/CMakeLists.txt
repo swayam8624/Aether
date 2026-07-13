@@ -27,7 +27,9 @@ if(TARGET AetherMetal AND TARGET AetherShaders)
         AETHER_TEST_ANIMATED_GLTF="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/animated-triangle.gltf"
         AETHER_TEST_SKINNED_GLTF="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/skinned-triangle.gltf"
         AETHER_TEST_MORPHED_GLTF="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/morphed-triangle.gltf"
-        AETHER_TEST_PLY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gaussian-minimal.ply")
+        AETHER_TEST_SHADOW_GLTF="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/shadow-casters.gltf"
+        AETHER_TEST_PLY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gaussian-minimal.ply"
+        AETHER_TEST_ARTIFACT_DIR="${PROJECT_BINARY_DIR}/test-artifacts/metal")
     if(TARGET AetherShaders)
         add_dependencies(AetherMetalTests AetherShaders)
     endif()
