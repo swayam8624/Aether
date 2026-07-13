@@ -98,6 +98,7 @@ class Renderer final {
     MetalPtr<MTL::RenderPipelineState> shadowPipeline_;
     MetalPtr<MTL::DepthStencilState> reverseZDepthState_;
     MetalPtr<MTL::DepthStencilState> reverseZReadOnlyDepthState_;
+    MetalPtr<MTL::DepthStencilState> shadowDepthState_;
     MetalPtr<MTL::Texture> fallbackWhiteTexture_;
     MetalPtr<MTL::Texture> fallbackNormalTexture_;
     MetalPtr<MTL::SamplerState> fallbackSampler_;

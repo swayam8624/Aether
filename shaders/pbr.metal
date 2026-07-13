@@ -218,7 +218,8 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         shadowVisibility /= 9.0f;
     }
     for (uint reference = 0u; reference < cluster.count; ++reference) {
-        const AetherGpuLight gpuLight = lights[lightIndices[cluster.offset + reference]];
+        const uint sourceLightIndex = lightIndices[cluster.offset + reference];
+        const AetherGpuLight gpuLight = lights[sourceLightIndex];
         const uint type = uint(gpuLight.directionType.w + 0.5f);
         float3 lightDirection;
         float attenuation = 1.0f;
@@ -249,7 +250,10 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         const float3 specular = (distribution * geometry * fresnel) /
                                 max(4.0f * nDotV * nDotL, 1.0e-4f);
         const float3 diffuse = (1.0f - fresnel) * (1.0f - metallic) * baseColor / M_PI_F;
-        const float visibility = type == 0u ? shadowVisibility : 1.0f;
+        const float visibility = type == 0u &&
+                                         sourceLightIndex == uint(shadows.biasNormalCascadeCount.w)
+                                     ? shadowVisibility
+                                     : 1.0f;
         direct += (diffuse + specular) * gpuLight.colorIntensity.rgb *
                   gpuLight.colorIntensity.w * attenuation * nDotL * visibility;
     }

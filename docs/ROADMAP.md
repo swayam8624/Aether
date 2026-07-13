@@ -54,7 +54,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   prefilter mips, split-sum BRDF LUT, cube/LUT Metal uploads, neutral fallbacks, and PBR IBL.
 - [x] Practical directional cascade splits, bounded world-frustum slicing, stable texel-snapped
   orthographic light matrices, Metal depth convention, and degeneracy validation.
-- [ ] Cascaded shadow depth rendering/PCF, local shadows, TAA, bloom, and debug views.
+- [x] Four-slice directional shadow rendering with shared morph/skin bindings, alpha-mask cutouts,
+  per-frame palette reuse, live cascade receivers, bias controls, and 3x3 comparison PCF.
+- [ ] Local shadows, cascade transition blending, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

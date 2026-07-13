@@ -12,15 +12,25 @@ Invalid cameras, zero light directions, singular transforms, invalid split param
 extents, and non-finite matrices return structured failures.
 
 Tests verify cascade counts, increasing practical splits, exact final distance, finite invertible
-matrices, invalid lambda rejection, and the hard cascade-count bound. The Metal depth-array pass,
-deformation-aware caster vertex shader, receiver bias, cascade blending, and PCF sampling are the
-next implementation slice; this document does not claim those are complete yet.
+matrices, invalid lambda rejection, and the hard cascade-count bound.
 
 The renderer now owns a labeled four-slice Depth32 shadow array, comparison sampler, depth-only
 pipeline, receiver ABI, cascade selection, normal/depth bias fields, and 3x3 PCF implementation.
-Resources are initialized to fully lit depth and all bindings pass Metal API validation. Actual
-per-frame caster submission is still pending, so the roadmap does not yet claim rendered shadows.
+Resources are initialized to fully lit depth and all bindings pass Metal API validation.
 
 The offline library also contains a dedicated depth-only caster vertex entry point. It consumes the
 same vertex, joint-palette, morph-delta, morph-weight, and draw-uniform bindings as PBR and applies
-morphing before skinning in the same order. Cascade submission remains the active renderer task.
+morphing before skinning in the same order.
+
+Directional cascade submission is now active before the HDR scene pass. Joint palettes are built
+once per skinned instance per frame and reused across every cascade and the PBR pass, preventing a
+fourfold upload-budget multiplier. Each cascade clears and stores its own depth-array slice and
+draws opaque and alpha-masked mesh instances; blended materials do not cast opaque shadows.
+Mirrored winding, double-sided materials, transformed base-color UVs, and alpha cutoffs match the
+visible material path.
+
+The receiver uses the same live cascade matrices and split depths, selects by camera-space depth,
+and shadows only the directional light that owns the cascade set. Static, skinned, and morphed
+fixtures have each run under `MTL_DEBUG_LAYER=1` without binding or draw validation errors. Cascade
+transition blending, slope-scaled raster bias tuning, local-light shadows, and golden-image quality
+thresholds remain open.

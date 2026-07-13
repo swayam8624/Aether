@@ -310,6 +310,132 @@ void Renderer::draw(MTK::View* view) noexcept {
             }
         }
     }
+    scene::Camera meshCamera;
+    const scene::Transform meshCameraTransform = cameraController_.transform();
+    const float meshWidth = static_cast<float>(targetWidth);
+    const float meshHeight = static_cast<float>(targetHeight);
+    const float meshAspect = meshHeight > 0.0F ? meshWidth / meshHeight : 16.0F / 9.0F;
+    const auto meshProjection = meshCamera.projectionMatrix(meshAspect);
+    const auto meshView = meshCamera.viewMatrix(meshCameraTransform);
+    std::optional<scene::DirectionalShadowCascades> shadowCascades;
+    std::optional<std::uint32_t> shadowLightIndex;
+    if (!meshPrimitives_.empty() && meshProjection && meshView) {
+        for (std::size_t lightIndex = 0; lightIndex < lights_.size(); ++lightIndex) {
+            const auto& light = lights_[lightIndex];
+            if (light.type != scene::LightType::directional) continue;
+            auto built = scene::buildDirectionalShadowCascades(
+                meshCamera, meshCameraTransform, meshAspect, light.direction, shadowConfig_);
+            if (built) {
+                shadowCascades = std::move(*built);
+                shadowLightIndex = static_cast<std::uint32_t>(lightIndex);
+            }
+            else Log::instance().write(LogLevel::error, built.error().describe());
+            break;
+        }
+    }
+    std::vector<std::optional<BufferSlice>> frameSkinPalettes(meshInstances_.size());
+    for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
+        const auto& instance = meshInstances_[instanceIndex];
+        if (!instance.skinIndex || !meshAnimationAsset_ ||
+            *instance.skinIndex >= meshAnimationAsset_->skins.size())
+            continue;
+        const auto& skin = meshAnimationAsset_->skins[*instance.skinIndex];
+        std::vector<AetherJointMatrix> palette;
+        palette.reserve(skin.jointNodeIndices.size());
+        const auto inverseMesh = simd_inverse(instance.worldTransform);
+        for (std::size_t joint = 0; joint < skin.jointNodeIndices.size(); ++joint) {
+            const auto nodeIndex = skin.jointNodeIndices[joint];
+            if (nodeIndex >= meshWorldTransforms_.size()) break;
+            const auto position = simd_mul(
+                simd_mul(inverseMesh, meshWorldTransforms_[nodeIndex]),
+                skin.inverseBindMatrices[joint]);
+            palette.push_back(
+                AetherJointMatrix{position, simd_transpose(simd_inverse(position))});
+        }
+        if (palette.size() != skin.jointNodeIndices.size()) {
+            Log::instance().write(LogLevel::error, "Skin joint world transform is unavailable");
+            continue;
+        }
+        auto slice = frame.allocateUpload(palette.size() * sizeof(AetherJointMatrix), 256);
+        if (!slice) {
+            Log::instance().write(LogLevel::error, slice.error().describe());
+            continue;
+        }
+        std::memcpy(slice->cpuAddress, palette.data(), palette.size() * sizeof(AetherJointMatrix));
+        frameSkinPalettes[instanceIndex] = *slice;
+    }
+    auto bindDeformation = [&](MTL::RenderCommandEncoder* targetEncoder,
+                               std::size_t instanceIndex) -> bool {
+        const auto& instance = meshInstances_[instanceIndex];
+        const auto& primitive = meshPrimitives_[instance.primitiveIndex];
+        AetherSkinDraw skinDraw{};
+        AetherJointMatrix identityJoint{matrix_identity_float4x4, matrix_identity_float4x4};
+        if (instance.skinIndex) {
+            if (!frameSkinPalettes[instanceIndex]) return false;
+            const auto& slice = *frameSkinPalettes[instanceIndex];
+            targetEncoder->setVertexBuffer(slice.buffer, slice.offset, 2);
+            skinDraw.jointCount = static_cast<std::uint32_t>(slice.size / sizeof(AetherJointMatrix));
+            skinDraw.enabled = 1;
+        } else {
+            targetEncoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 2);
+        }
+        targetEncoder->setVertexBytes(&skinDraw, sizeof(skinDraw), 3);
+        AetherMorphDraw morphDraw{};
+        AetherMorphDelta zeroMorph{};
+        float zeroMorphWeight = 0.0F;
+        if (primitive.morphTargetCount > 0) {
+            if (instance.morphWeights.size() != primitive.morphTargetCount) return false;
+            targetEncoder->setVertexBuffer(primitive.morphDeltas.get(), 0, 4);
+            targetEncoder->setVertexBytes(instance.morphWeights.data(),
+                                          instance.morphWeights.size() * sizeof(float), 5);
+            morphDraw = {primitive.morphTargetCount, primitive.vertexCount, 1U, 0U};
+        } else {
+            targetEncoder->setVertexBytes(&zeroMorph, sizeof(zeroMorph), 4);
+            targetEncoder->setVertexBytes(&zeroMorphWeight, sizeof(zeroMorphWeight), 5);
+        }
+        targetEncoder->setVertexBytes(&morphDraw, sizeof(morphDraw), 6);
+        targetEncoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
+        return true;
+    };
+
+    if (shadowCascades && shadowPipeline_ && shadowDepthState_) {
+        for (std::size_t cascade = 0; cascade < shadowCascades->worldToShadowClip.size(); ++cascade) {
+            MTL::RenderPassDescriptor* shadowPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+            shadowPass->depthAttachment()->setTexture(directionalShadowMap_.get());
+            shadowPass->depthAttachment()->setSlice(cascade);
+            shadowPass->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+            shadowPass->depthAttachment()->setStoreAction(MTL::StoreActionStore);
+            shadowPass->depthAttachment()->setClearDepth(1.0);
+            auto* shadowEncoder = commandBuffer->renderCommandEncoder(shadowPass);
+            if (!shadowEncoder) continue;
+            shadowEncoder->setLabel(
+                NS::String::string("Directional Shadow Cascade", NS::UTF8StringEncoding));
+            shadowEncoder->setRenderPipelineState(shadowPipeline_.get());
+            shadowEncoder->setDepthStencilState(shadowDepthState_.get());
+            shadowEncoder->setViewport(
+                MTL::Viewport{0, 0, static_cast<double>(shadowConfig_.resolution),
+                              static_cast<double>(shadowConfig_.resolution), 0.0, 1.0});
+            for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
+                const auto& instance = meshInstances_[instanceIndex];
+                const auto& primitive = meshPrimitives_[instance.primitiveIndex];
+                const auto& material = meshMaterials_[primitive.materialIndex];
+                if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex)) continue;
+                AetherFrameUniforms shadowFrame{};
+                shadowFrame.viewProjection = shadowCascades->worldToShadowClip[cascade];
+                shadowFrame.model = instance.worldTransform;
+                shadowEncoder->setVertexBytes(&shadowFrame, sizeof(shadowFrame), 1);
+                shadowEncoder->setFrontFacingWinding(instance.mirrored ? MTL::WindingClockwise
+                                                                       : MTL::WindingCounterClockwise);
+                shadowEncoder->setCullMode(material.doubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+                shadowEncoder->setFragmentBytes(&material.material, sizeof(material.material), 2);
+                shadowEncoder->setFragmentTexture(material.textures[0], 0);
+                shadowEncoder->setFragmentSamplerState(material.samplers[0], 0);
+                shadowEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, primitive.indexCount,
+                                                     MTL::IndexTypeUInt32, primitive.indices.get(), 0);
+            }
+            shadowEncoder->endEncoding();
+        }
+    }
     MTL::RenderPassDescriptor* scenePass = MTL::RenderPassDescriptor::renderPassDescriptor();
     auto* sceneColorAttachment = scenePass->colorAttachments()->object(0);
     sceneColorAttachment->setTexture(sceneHdrColor_.get());
@@ -337,13 +463,11 @@ void Renderer::draw(MTK::View* view) noexcept {
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
     if (!meshPrimitives_.empty() && pbrPipeline_ && reverseZDepthState_) {
-        scene::Camera camera;
-        const scene::Transform cameraTransform = cameraController_.transform();
-        const float width = static_cast<float>(drawableSize_.width);
-        const float height = static_cast<float>(drawableSize_.height);
-        const float aspect = height > 0.0F ? width / height : 16.0F / 9.0F;
-        const auto projection = camera.projectionMatrix(aspect);
-        const auto viewMatrix = camera.viewMatrix(cameraTransform);
+        const auto& camera = meshCamera;
+        const float width = meshWidth;
+        const float height = meshHeight;
+        const auto& projection = meshProjection;
+        const auto& viewMatrix = meshView;
         if (projection && viewMatrix) {
             AetherFrameUniforms uniforms{};
             uniforms.viewProjection = simd_mul(*projection, *viewMatrix);
@@ -354,15 +478,6 @@ void Renderer::draw(MTK::View* view) noexcept {
             uniforms.lightDirectionIntensity = {-0.4F, -1.0F, -0.6F, 4.0F};
             uniforms.lightColorExposure = {1.0F, 0.95F, 0.85F, 0.0F};
             {
-                std::optional<scene::DirectionalShadowCascades> shadowCascades;
-                for (const auto& light : lights_) {
-                    if (light.type != scene::LightType::directional) continue;
-                    auto built = scene::buildDirectionalShadowCascades(
-                        camera, cameraTransform, aspect, light.direction, shadowConfig_);
-                    if (built) shadowCascades = std::move(*built);
-                    else Log::instance().write(LogLevel::error, built.error().describe());
-                    break;
-                }
                 scene::ClusterGridConfig clusterConfig;
                 clusterConfig.nearDepth = camera.nearPlane;
                 clusterConfig.farDepth = camera.infiniteFarPlane ? 10'000.0F : camera.farPlane;
@@ -452,7 +567,8 @@ void Renderer::draw(MTK::View* view) noexcept {
                     }
                 }
                 shadowUniforms.biasNormalCascadeCount = {0.001F, 0.01F,
-                                                         static_cast<float>(activeCascades), 0.0F};
+                                                         static_cast<float>(activeCascades),
+                                                         static_cast<float>(shadowLightIndex.value_or(0))};
                 encoder->setFragmentBytes(&shadowUniforms, sizeof(shadowUniforms), 8);
                 encoder->setFragmentTexture(directionalShadowMap_.get(), 8);
                 encoder->setFragmentSamplerState(shadowComparisonSampler_.get(), 6);
@@ -485,71 +601,12 @@ void Renderer::draw(MTK::View* view) noexcept {
                         uniforms.normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
                         encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
                         encoder->setFragmentBytes(&uniforms, sizeof(uniforms), 1);
-                        AetherSkinDraw skinDraw{};
-                        AetherJointMatrix identityJoint{matrix_identity_float4x4,
-                                                        matrix_identity_float4x4};
-                        if (instance.skinIndex && meshAnimationAsset_ &&
-                            *instance.skinIndex < meshAnimationAsset_->skins.size()) {
-                            const auto& skin = meshAnimationAsset_->skins[*instance.skinIndex];
-                            std::vector<AetherJointMatrix> palette;
-                            palette.reserve(skin.jointNodeIndices.size());
-                            const auto inverseMesh = simd_inverse(instance.worldTransform);
-                            for (std::size_t joint = 0; joint < skin.jointNodeIndices.size(); ++joint) {
-                                const auto nodeIndex = skin.jointNodeIndices[joint];
-                                if (nodeIndex >= meshWorldTransforms_.size()) break;
-                                const auto position = simd_mul(
-                                    simd_mul(inverseMesh, meshWorldTransforms_[nodeIndex]),
-                                    skin.inverseBindMatrices[joint]);
-                                palette.push_back(AetherJointMatrix{
-                                    position, simd_transpose(simd_inverse(position))});
-                            }
-                            if (palette.size() != skin.jointNodeIndices.size()) {
-                                Log::instance().write(LogLevel::error,
-                                                      "Skin joint world transform is unavailable");
-                                continue;
-                            }
-                            auto paletteSlice = frame.allocateUpload(
-                                palette.size() * sizeof(AetherJointMatrix), 256);
-                            if (!paletteSlice) {
-                                Log::instance().write(LogLevel::error,
-                                                      paletteSlice.error().describe());
-                                continue;
-                            }
-                            std::memcpy(paletteSlice->cpuAddress, palette.data(),
-                                        palette.size() * sizeof(AetherJointMatrix));
-                            encoder->setVertexBuffer(paletteSlice->buffer, paletteSlice->offset, 2);
-                            skinDraw.jointCount = static_cast<std::uint32_t>(palette.size());
-                            skinDraw.enabled = 1;
-                        } else {
-                            encoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 2);
-                        }
-                        encoder->setVertexBytes(&skinDraw, sizeof(skinDraw), 3);
-                        AetherMorphDraw morphDraw{};
-                        AetherMorphDelta zeroMorph{};
-                        float zeroMorphWeight = 0.0F;
-                        if (primitive.morphTargetCount > 0) {
-                            if (instance.morphWeights.size() != primitive.morphTargetCount) {
-                                Log::instance().write(LogLevel::error,
-                                                      "Morph weight count does not match GPU targets");
-                                continue;
-                            }
-                            encoder->setVertexBuffer(primitive.morphDeltas.get(), 0, 4);
-                            encoder->setVertexBytes(instance.morphWeights.data(),
-                                                    instance.morphWeights.size() * sizeof(float), 5);
-                            morphDraw.targetCount = primitive.morphTargetCount;
-                            morphDraw.vertexCount = primitive.vertexCount;
-                            morphDraw.enabled = 1;
-                        } else {
-                            encoder->setVertexBytes(&zeroMorph, sizeof(zeroMorph), 4);
-                            encoder->setVertexBytes(&zeroMorphWeight, sizeof(zeroMorphWeight), 5);
-                        }
-                        encoder->setVertexBytes(&morphDraw, sizeof(morphDraw), 6);
+                        if (!bindDeformation(encoder, instanceIndex)) continue;
                         encoder->setFrontFacingWinding(instance.mirrored
                                                            ? MTL::WindingClockwise
                                                            : MTL::WindingCounterClockwise);
                         encoder->setCullMode(material.doubleSided ? MTL::CullModeNone
                                                                   : MTL::CullModeBack);
-                        encoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
                         encoder->setFragmentBytes(&material.material, sizeof(material.material), 2);
                         for (std::size_t texture = 0; texture < material.textures.size();
                              ++texture) {
@@ -1219,12 +1276,15 @@ Result<void> Renderer::buildViewportPipeline() {
     }
     auto shadowVertex = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherShadowVertex", NS::UTF8StringEncoding)));
-    if (!shadowVertex)
-        return fail(ErrorCode::metal, "Offline shader library is missing shadow caster entry point");
+    auto shadowFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherShadowFragment", NS::UTF8StringEncoding)));
+    if (!shadowVertex || !shadowFragment)
+        return fail(ErrorCode::metal, "Offline shader library is missing shadow caster entry points");
     auto shadowDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
     shadowDescriptor->setLabel(
         NS::String::string("AETHER Cascaded Shadow Pipeline", NS::UTF8StringEncoding));
     shadowDescriptor->setVertexFunction(shadowVertex.get());
+    shadowDescriptor->setFragmentFunction(shadowFragment.get());
     shadowDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
     error = nullptr;
     shadowPipeline_ = adopt(device_->newRenderPipelineState(shadowDescriptor.get(), &error));
@@ -1269,6 +1329,15 @@ Result<void> Renderer::buildViewportPipeline() {
     }
     shadowClearBuffer->commit();
     shadowClearBuffer->waitUntilCompleted();
+
+    auto shadowDepthDescriptor = adopt(MTL::DepthStencilDescriptor::alloc()->init());
+    shadowDepthDescriptor->setLabel(
+        NS::String::string("AETHER Shadow Depth Less", NS::UTF8StringEncoding));
+    shadowDepthDescriptor->setDepthCompareFunction(MTL::CompareFunctionLess);
+    shadowDepthDescriptor->setDepthWriteEnabled(true);
+    shadowDepthState_ = adopt(device_->newDepthStencilState(shadowDepthDescriptor.get()));
+    if (!shadowDepthState_)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate shadow depth state");
     auto pbrDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
     pbrDescriptor->setLabel(NS::String::string("AETHER PBR Pipeline", NS::UTF8StringEncoding));
     pbrDescriptor->setVertexFunction(pbrVertex.get());
