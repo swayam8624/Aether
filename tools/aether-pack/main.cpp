@@ -1,5 +1,7 @@
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
+#include <aether/hybrid/ProxyMeshCodec.hpp>
+#include <aether/hybrid/ProxyPlyLoader.hpp>
 #include <aether/package/Package.hpp>
 
 #include <algorithm>
@@ -74,7 +76,8 @@ int usage() {
     std::cout << "Usage: aether-pack <scene-directory> [--output scene.aether] "
                  "[--preset balanced] [--dry-run] [--json]\n\n"
                  "The directory schema uses metadata.json and either base-gaussians.ply or "
-                 "canonical base-gaussians.bin as required inputs.\n"
+                 "canonical base-gaussians.bin as required inputs. Optional proxy geometry uses "
+                 "proxy.ply or canonical proxy-mesh.bin.\n"
                  "Presets: full, balanced, memory-constrained, performance, cinematic.\n";
     return 0;
 }
@@ -174,9 +177,13 @@ int main(int argc, char** argv) {
     for (const ChunkSource& source : sources) {
         auto path = options->input / source.filename;
         const bool isBaseGaussians = source.type == aether::package::ChunkType::baseGaussians;
+        const bool isProxyMesh = source.type == aether::package::ChunkType::proxyMesh;
         const auto plyPath = options->input / "base-gaussians.ply";
+        const auto proxyPlyPath = options->input / "proxy.ply";
         if (isBaseGaussians && std::filesystem::is_regular_file(plyPath, error))
             path = plyPath;
+        if (isProxyMesh && std::filesystem::is_regular_file(proxyPlyPath, error))
+            path = proxyPlyPath;
         const bool exists = std::filesystem::is_regular_file(path, error);
         if (!exists) {
             if (source.required)
@@ -190,10 +197,20 @@ int main(int argc, char** argv) {
             if (!asset)
                 return fail(asset.error().describe(), options->json, 3);
             bytes = aether::gaussian::GaussianCodec::encode(*asset);
+        } else if (isProxyMesh && path.extension() == ".ply") {
+            auto mesh = aether::hybrid::ProxyPlyLoader::load(path);
+            if (!mesh)
+                return fail(mesh.error().describe(), options->json, 3);
+            bytes = aether::hybrid::ProxyMeshCodec::encode(*mesh);
         } else {
             bytes = readFile(path);
             if (isBaseGaussians && bytes) {
                 auto decoded = aether::gaussian::GaussianCodec::decode(*bytes);
+                if (!decoded)
+                    return fail(decoded.error().describe(), options->json, 3);
+            }
+            if (isProxyMesh && bytes) {
+                auto decoded = aether::hybrid::ProxyMeshCodec::decode(*bytes);
                 if (!decoded)
                     return fail(decoded.error().describe(), options->json, 3);
             }

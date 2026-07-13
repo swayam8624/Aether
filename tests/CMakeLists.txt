@@ -1,7 +1,7 @@
 add_executable(AetherTests
     TestMain.cpp
 )
-target_link_libraries(AetherTests PRIVATE Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian Aether::Package Aether::Reconstruction)
+target_link_libraries(AetherTests PRIVATE Aether::Core Aether::RenderGraph Aether::Scene Aether::Mesh Aether::Gaussian Aether::Hybrid Aether::Package Aether::Reconstruction)
 target_compile_definitions(AetherTests PRIVATE
     AETHER_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 aether_configure_target(AetherTests)

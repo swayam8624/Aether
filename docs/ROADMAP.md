@@ -132,7 +132,10 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 ## Phase 5 — Hybrid worlds
 
-- [ ] Proxy G-buffer, splat occlusion, dynamic PBR meshes, shadows, collision, and navigation.
+- [x] Strict Open3D ASCII/binary triangle-PLY import, canonical proxy-mesh chunk v1, pack-time
+  conversion, hostile-input checks, and real generated-proxy package verification.
+- [ ] Proxy G-buffer, confidence-aware splat occlusion, dynamic PBR meshes, shadows, collision, and
+  navigation.
 
 ## Phase 6 — Material-aware relighting
 

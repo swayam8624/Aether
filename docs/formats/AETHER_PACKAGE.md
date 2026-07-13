@@ -45,6 +45,12 @@ registered filenames are optional: `cameras.bin`, `material-gaussians.bin`, `res
 `cluster-hierarchy.bin`, `proxy-mesh.bin`, `textures.bin`, `collision.bin`, `thumbnail.bin`, and
 `benchmark-path.json`.
 
+An optional `proxy.ply` is treated like a source representation for `proxy-mesh.bin`. The packer
+strictly accepts ASCII or binary-little-endian triangulated PLY with finite positions, nondegenerate
+normals, bounded scalar/property counts, optional byte colors, and uint32-addressable indices. It
+rejects polygons, duplicate fields, extra elements/payloads, degenerate faces, and hostile sizes.
+Existing canonical proxy chunks are decoded and subjected to the same semantic validation.
+
 The current writer is deterministic for identical source bytes and chunk order. It uses Zstandard
 level 3 when compression is smaller and remains inside the reader's expansion-ratio limit; otherwise
 the payload is stored verbatim. Output is written to a sibling temporary file and atomically renamed.
@@ -58,3 +64,12 @@ rotation, opacity logit, three DC coefficients, 45 reserved/active higher-order 
 the active higher-order coefficient count. Remaining record bytes are zero padding. Readers validate
 the exact payload size, SH degree/count agreement, finite values, safe scale range, and quaternion
 normalization.
+
+## Proxy-mesh chunk v1
+
+The 32-byte header stores eight-byte `AETHPX` magic, major/minor `uint16` version, a `uint32`
+32-byte vertex stride, `uint64` vertex count, and `uint64` index count. Each vertex stores float32
+position, normalized float32 normal, float32 confidence in `[0,1]`, and packed RGBA8. The remaining
+payload is a tightly packed little-endian uint32 triangle-index array. Readers enforce exact size,
+allocation budgets, finite coordinate bounds, normalized normals, triangulation, in-range indices,
+and nondegenerate index triples.

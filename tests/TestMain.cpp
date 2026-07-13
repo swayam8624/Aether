@@ -7,6 +7,8 @@
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
+#include <aether/hybrid/ProxyMeshCodec.hpp>
+#include <aether/hybrid/ProxyPlyLoader.hpp>
 #include <aether/mesh/Animation.hpp>
 #include <aether/mesh/GltfLoader.hpp>
 #include <aether/mesh/TransparentSort.hpp>
@@ -123,6 +125,79 @@ void testSparseCoverageValidation() {
     }
     expect(!aether::reconstruction::validateSparseTextModel(root, 3, thresholds).has_value(),
            "Incomplete COLMAP observation triples are rejected as corrupt data");
+    std::filesystem::remove_all(root);
+}
+
+void testProxyMeshContract() {
+    const auto root = std::filesystem::temp_directory_path() / "aether-proxy-mesh-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const auto asciiPath = root / "proxy-ascii.ply";
+    {
+        std::ofstream stream(asciiPath);
+        stream << "ply\nformat ascii 1.0\n"
+                  "element vertex 3\n"
+                  "property float x\nproperty float y\nproperty float z\n"
+                  "property float nx\nproperty float ny\nproperty float nz\n"
+                  "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+                  "element face 1\nproperty list uchar uint vertex_indices\nend_header\n"
+                  "0 0 0 0 0 2 255 0 0\n"
+                  "1 0 0 0 0 2 0 255 0\n"
+                  "0 1 0 0 0 2 0 0 255\n"
+                  "3 0 1 2\n";
+    }
+    auto ascii = aether::hybrid::ProxyPlyLoader::load(asciiPath);
+    expect(ascii.has_value() && ascii->vertices.size() == 3 && ascii->indices.size() == 3,
+           "ASCII triangle proxy PLY loads into bounded canonical geometry");
+    if (ascii) {
+        expect(std::abs(ascii->vertices[0].normal[2] - 1.0F) < 1.0e-6F,
+               "Proxy PLY normals are normalized during import");
+        auto encoded = aether::hybrid::ProxyMeshCodec::encode(*ascii);
+        auto decoded =
+            encoded ? aether::hybrid::ProxyMeshCodec::decode(*encoded)
+                    : aether::Result<aether::hybrid::ProxyMesh>(std::unexpected(encoded.error()));
+        expect(decoded.has_value() && decoded->indices == ascii->indices &&
+                   decoded->vertices[0].colorRgba == ascii->vertices[0].colorRgba,
+               "Canonical proxy chunk round-trips without ABI-dependent layouts");
+        if (encoded) {
+            (*encoded)[0] = std::byte{0};
+            expect(!aether::hybrid::ProxyMeshCodec::decode(*encoded).has_value(),
+                   "Canonical proxy decoder rejects invalid magic");
+        }
+    }
+    const auto binaryPath = root / "proxy-binary.ply";
+    {
+        std::ofstream stream(binaryPath, std::ios::binary);
+        stream << "ply\nformat binary_little_endian 1.0\n"
+                  "comment Open3D fixture\n"
+                  "element vertex 3\n"
+                  "property double x\nproperty double y\nproperty double z\n"
+                  "property double nx\nproperty double ny\nproperty double nz\n"
+                  "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+                  "element face 1\nproperty list uchar uint vertex_indices\nend_header\n";
+        const std::array<std::array<double, 6>, 3> vertices{
+            {{{0, 0, 0, 0, 0, 1}}, {{1, 0, 0, 0, 0, 1}}, {{0, 1, 0, 0, 0, 1}}}};
+        for (const auto& vertex : vertices) {
+            for (const double value : vertex)
+                stream.write(reinterpret_cast<const char*>(&value), sizeof(value));
+            constexpr std::array<std::uint8_t, 3> color{128, 192, 255};
+            stream.write(reinterpret_cast<const char*>(color.data()), color.size());
+        }
+        constexpr std::uint8_t count = 3;
+        constexpr std::array<std::uint32_t, 3> indices{0, 1, 2};
+        stream.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        stream.write(reinterpret_cast<const char*>(indices.data()),
+                     static_cast<std::streamsize>(indices.size() * sizeof(indices[0])));
+    }
+    auto binary = aether::hybrid::ProxyPlyLoader::load(binaryPath);
+    expect(binary.has_value() && binary->vertices.size() == 3 && binary->indices[2] == 2,
+           "Open3D-style binary little-endian proxy PLY loads strictly");
+    {
+        std::ofstream stream(asciiPath, std::ios::app);
+        stream << "trailing";
+    }
+    expect(!aether::hybrid::ProxyPlyLoader::load(asciiPath).has_value(),
+           "Proxy PLY importer rejects trailing payload data");
     std::filesystem::remove_all(root);
 }
 
@@ -870,6 +945,7 @@ int main() {
     testResourceLocator();
     testDiagnostics();
     testSparseCoverageValidation();
+    testProxyMeshContract();
     testProfiler();
     testJobSystem();
     testRenderGraph();
