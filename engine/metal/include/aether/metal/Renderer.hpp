@@ -8,6 +8,7 @@
 #include <aether/mesh/MeshAsset.hpp>
 #include <aether/scene/CameraController.hpp>
 #include <aether/scene/Lighting.hpp>
+#include <aether/scene/ImageBasedLighting.hpp>
 #include <shared/AetherShaderTypes.h>
 
 #include <Metal/Metal.hpp>
@@ -58,6 +59,8 @@ class Renderer final {
     [[nodiscard]] std::size_t animationClipCount() const noexcept;
     void setExposureStops(float stops) noexcept;
     [[nodiscard]] Result<void> setLights(std::vector<scene::Light> lights);
+    [[nodiscard]] Result<void> setImageBasedLighting(
+        const scene::ImageBasedLightingData& data, float intensity = 1.0F);
     [[nodiscard]] float exposureStops() const noexcept { return exposureStops_; }
     /// Input: top-left-origin drawable pixel coordinate.
     /// Output: 1-based Gaussian source ID, or zero for background.
@@ -96,6 +99,12 @@ class Renderer final {
     MetalPtr<MTL::Texture> fallbackWhiteTexture_;
     MetalPtr<MTL::Texture> fallbackNormalTexture_;
     MetalPtr<MTL::SamplerState> fallbackSampler_;
+    MetalPtr<MTL::Texture> irradianceTexture_;
+    MetalPtr<MTL::Texture> specularEnvironmentTexture_;
+    MetalPtr<MTL::Texture> brdfLutTexture_;
+    MetalPtr<MTL::SamplerState> environmentSampler_;
+    float iblMaximumMip_{};
+    float iblIntensity_{1.0F};
     dispatch_semaphore_t frameSemaphore_{};
     DeviceCapabilities capabilities_;
     CGSize drawableSize_{};

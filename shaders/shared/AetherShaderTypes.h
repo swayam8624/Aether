@@ -96,6 +96,13 @@ struct AetherClusterUniforms {
     AetherFloat4 viewportDepth;
 };
 
+struct AetherIblUniforms {
+    float specularMaximumMip;
+    float intensity;
+    AetherUInt enabled;
+    AetherUInt padding;
+};
+
 struct AetherMaterialUniforms {
     AetherFloat4 baseColor;
     AetherFloat4 emissiveMetallic;
@@ -149,6 +156,7 @@ static_assert(sizeof(AetherFrameUniforms) == 304);
 static_assert(sizeof(AetherGpuLight) == 64);
 static_assert(sizeof(AetherLightCluster) == 8);
 static_assert(sizeof(AetherClusterUniforms) == 32);
+static_assert(sizeof(AetherIblUniforms) == 16);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);

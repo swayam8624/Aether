@@ -50,7 +50,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Validated directional/point/spot light model, deterministic 16x9x24 logarithmic clusters,
   conservative screen/depth bounds, hard reference budgets, per-frame GPU lists, inverse-square
   range windows, spot cones, and multi-light GGX accumulation.
-- [ ] IBL, shadows, TAA, bloom, and debug views.
+- [x] Bounded deterministic HDR equirectangular sampling, cosine irradiance convolution, GGX
+  prefilter mips, split-sum BRDF LUT, cube/LUT Metal uploads, neutral fallbacks, and PBR IBL.
+- [ ] Shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

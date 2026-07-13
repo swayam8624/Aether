@@ -103,6 +103,18 @@ int main() {
         pool->release();
         return 1;
     }
+    aether::scene::ImageBasedLightingData tinyIbl;
+    tinyIbl.irradiance.size = 1;
+    tinyIbl.irradiance.linearRgb.assign(6, simd_float3{0.1F, 0.1F, 0.1F});
+    tinyIbl.prefilteredSpecular.push_back(tinyIbl.irradiance);
+    tinyIbl.brdfLutSize = 1;
+    tinyIbl.brdfLut.push_back(simd_float2{1.0F, 0.0F});
+    if (!(*renderer)->setImageBasedLighting(tinyIbl, 1.0F) ||
+        (*renderer)->setImageBasedLighting(tinyIbl, -1.0F)) {
+        std::cerr << "Renderer IBL upload validation failed\n";
+        pool->release();
+        return 1;
+    }
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_GLTF); !loaded) {
         std::cerr << loaded.error().describe() << '\n';
         pool->release();

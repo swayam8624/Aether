@@ -419,6 +419,18 @@ void Renderer::draw(MTK::View* view) noexcept {
                 clusterUniforms.viewportDepth = {width, height, clusterConfig.nearDepth,
                                                  clusterConfig.farDepth};
                 encoder->setFragmentBytes(&clusterUniforms, sizeof(clusterUniforms), 6);
+                AetherIblUniforms iblUniforms{};
+                iblUniforms.specularMaximumMip = iblMaximumMip_;
+                iblUniforms.intensity = iblIntensity_;
+                iblUniforms.enabled = irradianceTexture_ && specularEnvironmentTexture_ &&
+                                              brdfLutTexture_ && environmentSampler_
+                                          ? 1U
+                                          : 0U;
+                encoder->setFragmentBytes(&iblUniforms, sizeof(iblUniforms), 7);
+                encoder->setFragmentTexture(irradianceTexture_.get(), 5);
+                encoder->setFragmentTexture(specularEnvironmentTexture_.get(), 6);
+                encoder->setFragmentTexture(brdfLutTexture_.get(), 7);
+                encoder->setFragmentSamplerState(environmentSampler_.get(), 5);
                 encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
                 auto renderMaterialClass = [&](bool alphaBlend) {
                     encoder->setRenderPipelineState(alphaBlend ? pbrBlendPipeline_.get()
@@ -801,6 +813,87 @@ Result<void> Renderer::setLights(std::vector<scene::Light> lights) {
     return {};
 }
 
+Result<void> Renderer::setImageBasedLighting(const scene::ImageBasedLightingData& data,
+                                              float intensity) {
+    if (!std::isfinite(intensity) || intensity < 0.0F || data.irradiance.size == 0 ||
+        data.prefilteredSpecular.empty() || data.brdfLutSize == 0)
+        return fail(ErrorCode::invalidArgument, "IBL data or intensity is invalid");
+    const auto cubeTexelCount = [](std::uint32_t size) {
+        return static_cast<std::uint64_t>(size) * size * 6;
+    };
+    if (cubeTexelCount(data.irradiance.size) != data.irradiance.linearRgb.size() ||
+        static_cast<std::uint64_t>(data.brdfLutSize) * data.brdfLutSize != data.brdfLut.size())
+        return fail(ErrorCode::invalidArgument, "IBL texture dimensions do not match payloads");
+    std::uint32_t expectedSize = data.prefilteredSpecular.front().size;
+    if (expectedSize == 0)
+        return fail(ErrorCode::invalidArgument, "IBL specular cube size is zero");
+    for (const auto& level : data.prefilteredSpecular) {
+        if (level.size != expectedSize || cubeTexelCount(level.size) != level.linearRgb.size())
+            return fail(ErrorCode::invalidArgument, "IBL specular mip chain is inconsistent");
+        expectedSize = std::max(1U, expectedSize / 2U);
+    }
+    auto cubeDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    cubeDescriptor->setTextureType(MTL::TextureTypeCube);
+    cubeDescriptor->setPixelFormat(MTL::PixelFormatRGBA32Float);
+    cubeDescriptor->setWidth(data.irradiance.size);
+    cubeDescriptor->setHeight(data.irradiance.size);
+    cubeDescriptor->setMipmapLevelCount(1);
+    cubeDescriptor->setStorageMode(MTL::StorageModeShared);
+    cubeDescriptor->setUsage(MTL::TextureUsageShaderRead);
+    auto irradiance = adopt(device_->newTexture(cubeDescriptor.get()));
+    cubeDescriptor->setWidth(data.prefilteredSpecular.front().size);
+    cubeDescriptor->setHeight(data.prefilteredSpecular.front().size);
+    cubeDescriptor->setMipmapLevelCount(data.prefilteredSpecular.size());
+    auto specular = adopt(device_->newTexture(cubeDescriptor.get()));
+    auto lutDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    lutDescriptor->setTextureType(MTL::TextureType2D);
+    lutDescriptor->setPixelFormat(MTL::PixelFormatRG32Float);
+    lutDescriptor->setWidth(data.brdfLutSize);
+    lutDescriptor->setHeight(data.brdfLutSize);
+    lutDescriptor->setStorageMode(MTL::StorageModeShared);
+    lutDescriptor->setUsage(MTL::TextureUsageShaderRead);
+    auto lut = adopt(device_->newTexture(lutDescriptor.get()));
+    if (!irradiance || !specular || !lut)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate IBL textures");
+    auto uploadCubeLevel = [](MTL::Texture* texture, const scene::CubeMapLevel& level,
+                              std::uint32_t mip) {
+        std::vector<simd_float4> rgba(level.linearRgb.size());
+        for (std::size_t index = 0; index < level.linearRgb.size(); ++index)
+            rgba[index] = {level.linearRgb[index].x, level.linearRgb[index].y,
+                           level.linearRgb[index].z, 1.0F};
+        const std::size_t faceTexels = static_cast<std::size_t>(level.size) * level.size;
+        for (std::uint32_t face = 0; face < 6; ++face)
+            texture->replaceRegion(MTL::Region::Make2D(0, 0, level.size, level.size), mip, face,
+                                   rgba.data() + faceTexels * face, level.size * sizeof(simd_float4),
+                                   faceTexels * sizeof(simd_float4));
+    };
+    uploadCubeLevel(irradiance.get(), data.irradiance, 0);
+    for (std::uint32_t mip = 0; mip < data.prefilteredSpecular.size(); ++mip)
+        uploadCubeLevel(specular.get(), data.prefilteredSpecular[mip], mip);
+    lut->replaceRegion(MTL::Region::Make2D(0, 0, data.brdfLutSize, data.brdfLutSize), 0,
+                       data.brdfLut.data(), data.brdfLutSize * sizeof(simd_float2));
+    auto samplerDescriptor = adopt(MTL::SamplerDescriptor::alloc()->init());
+    samplerDescriptor->setLabel(
+        NS::String::string("IBL Trilinear Sampler", NS::UTF8StringEncoding));
+    samplerDescriptor->setMinFilter(MTL::SamplerMinMagFilterLinear);
+    samplerDescriptor->setMagFilter(MTL::SamplerMinMagFilterLinear);
+    samplerDescriptor->setMipFilter(MTL::SamplerMipFilterLinear);
+    samplerDescriptor->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+    samplerDescriptor->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+    auto sampler = adopt(device_->newSamplerState(samplerDescriptor.get()));
+    if (!sampler) return fail(ErrorCode::resourceExhausted, "Unable to allocate IBL sampler");
+    irradiance->setLabel(NS::String::string("IBL Diffuse Irradiance", NS::UTF8StringEncoding));
+    specular->setLabel(NS::String::string("IBL Prefiltered Specular", NS::UTF8StringEncoding));
+    lut->setLabel(NS::String::string("IBL Split Sum BRDF", NS::UTF8StringEncoding));
+    irradianceTexture_ = std::move(irradiance);
+    specularEnvironmentTexture_ = std::move(specular);
+    brdfLutTexture_ = std::move(lut);
+    environmentSampler_ = std::move(sampler);
+    iblMaximumMip_ = static_cast<float>(data.prefilteredSpecular.size() - 1);
+    iblIntensity_ = intensity;
+    return {};
+}
+
 Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     auto asset = gaussian::PlyLoader::load(path);
     if (!asset)
@@ -1009,6 +1102,17 @@ Result<void> Renderer::buildViewportPipeline() {
     fallbackWhiteTexture_ = std::move(*white);
     fallbackNormalTexture_ = std::move(*normal);
     fallbackSampler_ = std::move(fallbackSampler);
+    scene::ImageBasedLightingData neutralIbl;
+    neutralIbl.irradiance.size = 1;
+    neutralIbl.irradiance.linearRgb.assign(6, simd_float3{0.025F, 0.025F, 0.025F});
+    scene::CubeMapLevel neutralSpecular;
+    neutralSpecular.size = 1;
+    neutralSpecular.linearRgb.assign(6, simd_float3{0.02F, 0.02F, 0.02F});
+    neutralIbl.prefilteredSpecular.push_back(std::move(neutralSpecular));
+    neutralIbl.brdfLutSize = 1;
+    neutralIbl.brdfLut.push_back(simd_float2{1.0F, 0.0F});
+    if (auto configured = setImageBasedLighting(neutralIbl); !configured)
+        return std::unexpected(configured.error());
 
     auto vertex = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherViewportVertex", NS::UTF8StringEncoding)));

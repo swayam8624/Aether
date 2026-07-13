@@ -18,6 +18,7 @@
 #include <aether/scene/CameraPath.hpp>
 #include <aether/scene/Scene.hpp>
 #include <aether/scene/Lighting.hpp>
+#include <aether/scene/ImageBasedLighting.hpp>
 
 #include <array>
 #include <bit>
@@ -472,6 +473,49 @@ void testClusteredLighting() {
            "Local lights reject non-positive range");
 }
 
+void testImageBasedLighting() {
+    aether::scene::EquirectangularEnvironment environment;
+    environment.width = 8;
+    environment.height = 4;
+    environment.linearRgb.assign(32, simd_float3{2.0F, 1.0F, 0.5F});
+    const auto sampled = aether::scene::sampleEnvironment(environment, {1.0F, 0.0F, 0.0F});
+    expect(sampled.has_value() && simd_length(*sampled - simd_float3{2.0F, 1.0F, 0.5F}) < 1.0e-6F,
+           "Equirectangular HDR sampling preserves constant radiance");
+    aether::scene::IblPreprocessConfig config;
+    config.irradianceSize = 2;
+    config.specularSize = 4;
+    config.specularMipCount = 3;
+    config.brdfLutSize = 4;
+    config.diffuseSamples = 64;
+    config.specularSamples = 64;
+    config.brdfSamples = 64;
+    const auto ibl = aether::scene::preprocessImageBasedLighting(environment, config);
+    expect(ibl.has_value(), "Bounded deterministic IBL preprocessing succeeds");
+    if (ibl) {
+        expect(ibl->irradiance.linearRgb.size() == 24 &&
+                   ibl->prefilteredSpecular.size() == 3 &&
+                   ibl->prefilteredSpecular[0].linearRgb.size() == 96 &&
+                   ibl->brdfLut.size() == 16,
+               "IBL outputs have exact configured cube/mip/LUT dimensions");
+        expect(std::abs(ibl->irradiance.linearRgb[0].x - 2.0F * 3.14159265F) < 1.0e-3F,
+               "Cosine irradiance convolution integrates constant radiance to pi");
+        expect(simd_length(ibl->prefilteredSpecular.back().linearRgb[0] -
+                           simd_float3{2.0F, 1.0F, 0.5F}) < 1.0e-4F,
+               "GGX prefilter preserves a constant environment at every roughness");
+        expect(std::ranges::all_of(ibl->brdfLut, [](simd_float2 value) {
+                   return std::isfinite(value.x) && std::isfinite(value.y) &&
+                          value.x >= 0.0F && value.y >= 0.0F;
+               }),
+               "Split-sum BRDF LUT contains finite non-negative coefficients");
+    }
+    config.maximumOutputTexels = 1;
+    expect(!aether::scene::preprocessImageBasedLighting(environment, config).has_value(),
+           "IBL output texel budget is enforced before allocation");
+    environment.linearRgb[0].x = std::numeric_limits<float>::infinity();
+    expect(!aether::scene::preprocessImageBasedLighting(environment, {}).has_value(),
+           "IBL preprocessing rejects non-finite HDR pixels");
+}
+
 void testSha256() {
     constexpr std::string_view value = "abc";
     const auto bytes = std::as_bytes(std::span(value.data(), value.size()));
@@ -654,6 +698,7 @@ int main() {
     testGltfLoader();
     testMeshAnimation();
     testClusteredLighting();
+    testImageBasedLighting();
     testSha256();
     testAetherPackage();
     testGaussianPly();

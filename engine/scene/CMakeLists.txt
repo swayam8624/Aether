@@ -3,6 +3,7 @@ add_library(AetherScene STATIC
     src/CameraPath.cpp
     src/CameraController.cpp
     src/Lighting.cpp
+    src/ImageBasedLighting.cpp
     src/Scene.cpp
     src/Transform.cpp
 )

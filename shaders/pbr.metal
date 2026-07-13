@@ -68,6 +68,11 @@ float3 fresnelSchlick(float cosine, float3 f0) {
     return f0 + (1.0f - f0) * pow(clamp(1.0f - cosine, 0.0f, 1.0f), 5.0f);
 }
 
+float3 fresnelSchlickRoughness(float cosine, float3 f0, float roughness) {
+    return f0 + (max(float3(1.0f - roughness), f0) - f0) *
+                    pow(clamp(1.0f - cosine, 0.0f, 1.0f), 5.0f);
+}
+
 float distributionGgx(float3 normal, float3 halfway, float roughness) {
     const float alpha = roughness * roughness;
     const float alpha2 = alpha * alpha;
@@ -106,7 +111,12 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  device const AetherGpuLight* lights [[buffer(3)]],
                                  device const AetherLightCluster* clusters [[buffer(4)]],
                                  device const uint* lightIndices [[buffer(5)]],
-                                 constant AetherClusterUniforms& clusterUniforms [[buffer(6)]]) {
+                                 constant AetherClusterUniforms& clusterUniforms [[buffer(6)]],
+                                 constant AetherIblUniforms& ibl [[buffer(7)]],
+                                 texturecube<float> irradianceMap [[texture(5)]],
+                                 texturecube<float> specularEnvironment [[texture(6)]],
+                                 texture2d<float> brdfLut [[texture(7)]],
+                                 sampler environmentSampler [[sampler(5)]]) {
     const uint textureMask = material.textureFlags.x;
     float4 sampledBaseColor = material.baseColor;
     if ((textureMask & 1u) != 0)
@@ -151,7 +161,19 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
     if ((textureMask & 16u) != 0)
         emissive *= emissiveTexture.sample(emissiveSampler,
                                            transformedUv(input.uv, material, 4u)).rgb;
-    const float3 ambient = baseColor * (1.0f - metallic) * 0.025f * ambientOcclusion;
+    float3 ambient = baseColor * (1.0f - metallic) * 0.025f * ambientOcclusion;
+    if (ibl.enabled != 0u) {
+        const float3 iblFresnel = fresnelSchlickRoughness(nDotV, f0, roughness);
+        const float3 diffuseWeight = (1.0f - iblFresnel) * (1.0f - metallic);
+        const float3 diffuseIbl = irradianceMap.sample(environmentSampler, normal).rgb * baseColor;
+        const float3 reflection = reflect(-view, normal);
+        const float3 prefiltered = specularEnvironment.sample(
+            environmentSampler, reflection, level(roughness * ibl.specularMaximumMip)).rgb;
+        const float2 splitSum = brdfLut.sample(environmentSampler,
+                                               float2(nDotV, roughness)).rg;
+        const float3 specularIbl = prefiltered * (iblFresnel * splitSum.x + splitSum.y);
+        ambient = (diffuseWeight * diffuseIbl + specularIbl) * ambientOcclusion * ibl.intensity;
+    }
     const uint columns = clusterUniforms.dimensionsLightCount.x;
     const uint rows = clusterUniforms.dimensionsLightCount.y;
     const uint slices = clusterUniforms.dimensionsLightCount.z;
