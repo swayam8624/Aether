@@ -71,3 +71,10 @@ axis-angle quaternion deltas; scaling is multiplicative, sign-preserving, and bo
 degeneracy and overflow. Every edit uses the normal validated transform override API. Updated TRS values return through the bridge callback and are
 persisted immediately in the project. The GPU integration fixture renders the gizmo, reads the X
 axis ID, applies and resets a drag, and rejects invalid axes under API and shader validation.
+
+Schema-v3 project documents generalize scene persistence beyond asset edits. They retain viewport
+exposure and diagnostic modes, transform-tool mode, stable editor selections, animation playback
+state, and camera position/yaw/pitch/vertical FOV alongside transforms, materials, and lights.
+Camera restore validates finite values and the supported perspective range, clears active movement,
+and invalidates temporal history. Studio publishes snapshots after look, dolly, and keyboard
+movement completion; v1 and v2 documents migrate to deterministic production defaults.

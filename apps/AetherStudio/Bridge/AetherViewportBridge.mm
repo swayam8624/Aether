@@ -36,6 +36,9 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (NSInteger)pickGizmoAxisX:(NSUInteger)x y:(NSUInteger)y;
 - (NSArray<NSNumber*>*)translateSelectedAxis:(NSInteger)axis distance:(float)distance;
 - (void)setGizmoMode:(NSInteger)mode;
+- (NSArray<NSNumber*>*)cameraState;
+- (BOOL)setCameraState:(NSArray<NSNumber*>*)values;
+- (BOOL)setPlaybackState:(NSArray<NSNumber*>*)values;
 - (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis distance:(float)distance
                                           mode:(NSInteger)mode;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
@@ -44,6 +47,34 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 @implementation AetherViewportDelegate {
     std::unique_ptr<aether::metal::Renderer> _renderer;
     NSString* _rendererStatus;
+}
+
+- (NSArray<NSNumber*>*)cameraState {
+    if (!_renderer) return @[];
+    const auto camera = _renderer->cameraSnapshot();
+    return @[@(camera.position.x), @(camera.position.y), @(camera.position.z), @(camera.yaw),
+             @(camera.pitch), @(camera.verticalFieldOfViewRadians)];
+}
+
+- (BOOL)setCameraState:(NSArray<NSNumber*>*)values {
+    if (!_renderer || values.count != 6) return NO;
+    aether::metal::CameraSnapshot camera;
+    camera.position = {values[0].floatValue, values[1].floatValue, values[2].floatValue};
+    camera.yaw = values[3].floatValue;
+    camera.pitch = values[4].floatValue;
+    camera.verticalFieldOfViewRadians = values[5].floatValue;
+    return _renderer->setCameraSnapshot(camera).has_value();
+}
+
+- (BOOL)setPlaybackState:(NSArray<NSNumber*>*)values {
+    if (!_renderer || values.count != 4) return NO;
+    const NSInteger clip = values[0].integerValue;
+    const std::optional<std::size_t> clipIndex =
+        clip < 0 ? std::nullopt : std::optional<std::size_t>{static_cast<std::size_t>(clip)};
+    return _renderer
+        ->setAnimationPlayback(clipIndex, values[1].floatValue, values[2].boolValue,
+                               values[3].boolValue)
+        .has_value();
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)device {
@@ -439,6 +470,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     NSString* characters = event.charactersIgnoringModifiers.lowercaseString;
     if (characters.length > 0) {
         [_rendererDelegate setCameraKey:[characters characterAtIndex:0] active:NO];
+        if (self.onCameraChanged) self.onCameraChanged([_rendererDelegate cameraState]);
     } else {
         [super keyUp:event];
     }
@@ -502,10 +534,12 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (void)rightMouseDragged:(NSEvent*)event {
     [_rendererDelegate addCameraLookX:event.deltaX y:event.deltaY];
+    if (self.onCameraChanged) self.onCameraChanged([_rendererDelegate cameraState]);
 }
 
 - (void)scrollWheel:(NSEvent*)event {
     [_rendererDelegate addCameraDolly:event.scrollingDeltaY];
+    if (self.onCameraChanged) self.onCameraChanged([_rendererDelegate cameraState]);
 }
 
 - (NSString*)rendererStatus {
@@ -604,6 +638,15 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 - (void)setGizmoMode:(NSInteger)value {
     _gizmoMode = std::clamp(value, 0L, 2L);
     [_rendererDelegate setGizmoMode:_gizmoMode];
+}
+
+- (NSArray<NSNumber*>*)cameraState { return [_rendererDelegate cameraState]; }
+- (void)setCameraState:(NSArray<NSNumber*>*)values {
+    [_rendererDelegate setCameraState:values];
+}
+- (NSArray<NSNumber*>*)playbackState { return @[]; }
+- (void)setPlaybackState:(NSArray<NSNumber*>*)values {
+    [_rendererDelegate setPlaybackState:values];
 }
 
 - (void)setSelectedMeshEntity:(NSInteger)entityId {

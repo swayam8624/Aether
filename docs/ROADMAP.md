@@ -87,7 +87,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Gaussian reverse-Z scene depth and camera-motion reprojection for temporal history.
 - [ ] Isolated PBR/shadow/Gaussian golden fixtures.
 - [x] Rotation and scale gizmo modes with validated persistent TRS updates.
-- [ ] Generalized scene serialization.
+- [x] Schema-v3 generalized Studio serialization for viewport, selection, camera, playback,
+  transforms, materials, and lights with v1/v2 migration.
 
 ## Phase 3 — Standard Gaussian renderer
 

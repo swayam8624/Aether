@@ -92,6 +92,35 @@ int main() {
         return 1;
     }
     (*renderer)->setExposureStops(0.0F);
+    aether::metal::CameraSnapshot restoredCamera;
+    restoredCamera.position = {1.0F, 2.0F, 3.0F};
+    restoredCamera.yaw = 0.2F;
+    restoredCamera.pitch = -0.1F;
+    restoredCamera.verticalFieldOfViewRadians = 0.9F;
+    auto invalidCamera = restoredCamera;
+    invalidCamera.verticalFieldOfViewRadians = 4.0F;
+    if (!(*renderer)->setCameraSnapshot(restoredCamera) ||
+        (*renderer)->setCameraSnapshot(invalidCamera)) {
+        std::cerr << "Renderer camera snapshot validation failed\n";
+        pool->release();
+        return 1;
+    }
+    const auto cameraSnapshot = (*renderer)->cameraSnapshot();
+    if (simd_distance(cameraSnapshot.position, restoredCamera.position) > 1.0e-5F ||
+        std::abs(cameraSnapshot.yaw - restoredCamera.yaw) > 1.0e-5F ||
+        std::abs(cameraSnapshot.pitch - restoredCamera.pitch) > 1.0e-5F ||
+        std::abs(cameraSnapshot.verticalFieldOfViewRadians -
+                 restoredCamera.verticalFieldOfViewRadians) > 1.0e-5F) {
+        std::cerr << "Renderer camera snapshot did not round-trip\n";
+        pool->release();
+        return 1;
+    }
+    restoredCamera = {};
+    if (!(*renderer)->setCameraSnapshot(restoredCamera)) {
+        std::cerr << "Renderer could not restore the default camera\n";
+        pool->release();
+        return 1;
+    }
     aether::scene::Light pointLight;
     pointLight.type = aether::scene::LightType::point;
     pointLight.position = {0.0F, 2.0F, -3.0F};
@@ -153,6 +182,18 @@ int main() {
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_ANIMATED_GLTF); !loaded ||
         (*renderer)->animationClipCount() != 1 || !(*renderer)->selectAnimation(0, true)) {
         std::cerr << "Renderer could not upload and select glTF animation\n";
+        pool->release();
+        return 1;
+    }
+    if (!(*renderer)->setAnimationPlayback(0U, 0.25F, false, false) ||
+        (*renderer)->setAnimationPlayback(1U, 0.0F, true, true) ||
+        (*renderer)->setAnimationPlayback(std::nullopt, -1.0F, true, true)) {
+        std::cerr << "Serialized animation playback validation failed\n";
+        pool->release();
+        return 1;
+    }
+    if (!(*renderer)->setAnimationPlayback(0U, 0.0F, true, true)) {
+        std::cerr << "Renderer could not restore default animation playback\n";
         pool->release();
         return 1;
     }

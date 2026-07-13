@@ -13,8 +13,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, nullable, copy) void (^onMaterialsChanged)(NSArray<NSString*>* names);
 @property(nonatomic, nullable, copy) void (^onMeshTransformEdited)(NSInteger entityId,
                                                                    NSArray<NSNumber*>* values);
+@property(nonatomic, nullable, copy) void (^onCameraChanged)(NSArray<NSNumber*>* values);
 @property(nonatomic) NSInteger selectedMeshEntity;
 @property(nonatomic) NSInteger gizmoMode;
+@property(nonatomic, copy) NSArray<NSNumber*>* cameraState;
+@property(nonatomic, copy) NSArray<NSNumber*>* playbackState;
 @property(nonatomic) NSInteger gaussianDebugMode;
 @property(nonatomic) NSInteger shadowDebugMode;
 @property(nonatomic) NSInteger shadowDebugSlice;

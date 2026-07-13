@@ -6,7 +6,7 @@ extension UTType {
 }
 
 struct AetherProjectState: Codable, Equatable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var schemaVersion = currentSchemaVersion
     var displayName = "Untitled AETHER Project"
@@ -15,6 +15,10 @@ struct AetherProjectState: Codable, Equatable {
     var entityTransformOverrides: [String: AetherTransformOverride] = [:]
     var materialOverrides: [String: AetherMaterialOverride] = [:]
     var lights: [AetherLightState] = [.defaultSun]
+    var viewport = AetherViewportState()
+    var playback = AetherPlaybackState()
+    var selection = AetherSelectionState()
+    var camera = AetherCameraState()
 
     init(schemaVersion: Int = currentSchemaVersion,
          displayName: String = "Untitled AETHER Project",
@@ -22,7 +26,11 @@ struct AetherProjectState: Codable, Equatable {
          selectedWorkspace: String = "Scene",
          entityTransformOverrides: [String: AetherTransformOverride] = [:],
          materialOverrides: [String: AetherMaterialOverride] = [:],
-         lights: [AetherLightState] = [.defaultSun]) {
+         lights: [AetherLightState] = [.defaultSun],
+         viewport: AetherViewportState = AetherViewportState(),
+         playback: AetherPlaybackState = AetherPlaybackState(),
+         selection: AetherSelectionState = AetherSelectionState(),
+         camera: AetherCameraState = AetherCameraState()) {
         self.schemaVersion = schemaVersion
         self.displayName = displayName
         self.scenePath = scenePath
@@ -30,17 +38,21 @@ struct AetherProjectState: Codable, Equatable {
         self.entityTransformOverrides = entityTransformOverrides
         self.materialOverrides = materialOverrides
         self.lights = lights
+        self.viewport = viewport
+        self.playback = playback
+        self.selection = selection
+        self.camera = camera
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, displayName, scenePath, selectedWorkspace, entityTransformOverrides,
-             materialOverrides, lights
+             materialOverrides, lights, viewport, playback, selection, camera
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let sourceVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        guard sourceVersion == 1 || sourceVersion == Self.currentSchemaVersion else {
+        guard (1...Self.currentSchemaVersion).contains(sourceVersion) else {
             throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: values,
                                                     debugDescription: "Unsupported project schema")
         }
@@ -57,6 +69,69 @@ struct AetherProjectState: Codable, Equatable {
                                                         forKey: .materialOverrides) ?? [:]
         lights = try values.decodeIfPresent([AetherLightState].self, forKey: .lights) ?? [.defaultSun]
         if lights.isEmpty { lights = [.defaultSun] }
+        viewport = try values.decodeIfPresent(AetherViewportState.self, forKey: .viewport) ?? .init()
+        playback = try values.decodeIfPresent(AetherPlaybackState.self, forKey: .playback) ?? .init()
+        selection = try values.decodeIfPresent(AetherSelectionState.self, forKey: .selection) ?? .init()
+        camera = try values.decodeIfPresent(AetherCameraState.self, forKey: .camera) ?? .init()
+        viewport.exposureStops = viewport.exposureStops.isFinite
+            ? min(16, max(-16, viewport.exposureStops)) : 0
+        viewport.gizmoMode = min(2, max(0, viewport.gizmoMode))
+        viewport.gaussianDebugMode = min(4, max(0, viewport.gaussianDebugMode))
+        viewport.shadowDebugMode = min(2, max(0, viewport.shadowDebugMode))
+        viewport.shadowDebugSlice = min(viewport.shadowDebugMode == 1 ? 3 : 11,
+                                        max(0, viewport.shadowDebugSlice))
+        if !playback.seconds.isFinite || playback.seconds < 0 { playback.seconds = 0 }
+        if let clip = playback.animationClip, clip < 0 { playback.animationClip = nil }
+        if let entity = selection.meshEntity, entity <= 0 { selection.meshEntity = nil }
+        if let gaussian = selection.gaussian, gaussian <= 0 { selection.gaussian = nil }
+        if let material = selection.material, material <= 0 { selection.material = nil }
+        selection.light = min(lights.count, max(1, selection.light))
+        let cameraValues = [camera.positionX, camera.positionY, camera.positionZ, camera.yaw,
+                            camera.pitch, camera.verticalFieldOfViewRadians]
+        if cameraValues.contains(where: { !$0.isFinite }) ||
+            camera.pitch < -1.553343 || camera.pitch > 1.553343 ||
+            camera.verticalFieldOfViewRadians < 0.1745329 ||
+            camera.verticalFieldOfViewRadians > 2.9670597 {
+            camera = AetherCameraState()
+        }
+    }
+}
+
+struct AetherViewportState: Codable, Equatable {
+    var exposureStops: Float = 0
+    var gizmoMode = 0
+    var gaussianDebugMode = 0
+    var shadowDebugMode = 0
+    var shadowDebugSlice = 0
+}
+
+struct AetherPlaybackState: Codable, Equatable {
+    var animationClip: Int?
+    var seconds: Float = 0
+    var playing = true
+    var loop = true
+    var values: [NSNumber] {
+        [NSNumber(value: animationClip ?? -1), NSNumber(value: seconds), NSNumber(value: playing),
+         NSNumber(value: loop)]
+    }
+}
+
+struct AetherSelectionState: Codable, Equatable {
+    var meshEntity: Int?
+    var gaussian: Int?
+    var material: Int?
+    var light = 1
+}
+
+struct AetherCameraState: Codable, Equatable {
+    var positionX: Float = 0
+    var positionY: Float = 0
+    var positionZ: Float = 2.5
+    var yaw: Float = 0
+    var pitch: Float = 0
+    var verticalFieldOfViewRadians: Float = 1.0471976
+    var values: [Float] {
+        [positionX, positionY, positionZ, yaw, pitch, verticalFieldOfViewRadians]
     }
 }
 

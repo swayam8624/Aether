@@ -31,6 +31,10 @@ class CameraController final {
     void setPosition(simd_float3 position) noexcept {
         position_ = position;
     }
+    void setOrientation(float yaw, float pitch) noexcept {
+        yaw_ = yaw;
+        pitch_ = pitch;
+    }
     void setMovementSpeed(float metersPerSecond) noexcept;
 
   private:

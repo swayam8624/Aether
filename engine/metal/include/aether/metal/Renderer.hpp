@@ -69,6 +69,13 @@ struct MaterialSnapshot final {
     bool overridden{};
 };
 
+struct CameraSnapshot final {
+    simd_float3 position{0.0F, 0.0F, 2.5F};
+    float yaw{};
+    float pitch{};
+    float verticalFieldOfViewRadians{1.0471976F};
+};
+
 class Renderer final {
   public:
     static Result<std::unique_ptr<Renderer>> create(MTL::Device* device,
@@ -86,6 +93,8 @@ class Renderer final {
     [[nodiscard]] Result<void> selectAnimation(std::size_t clipIndex, bool loop = true);
     void setAnimationPlaying(bool playing) noexcept { animationPlaying_ = playing; }
     void seekAnimation(float seconds) noexcept;
+    [[nodiscard]] Result<void> setAnimationPlayback(std::optional<std::size_t> clipIndex,
+                                                    float seconds, bool playing, bool loop);
     [[nodiscard]] std::size_t animationClipCount() const noexcept;
     void setExposureStops(float stops) noexcept;
     [[nodiscard]] Result<void> setLights(std::vector<scene::Light> lights);
@@ -126,6 +135,8 @@ class Renderer final {
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
     void clearCameraMovement() noexcept;
+    [[nodiscard]] CameraSnapshot cameraSnapshot() const noexcept;
+    [[nodiscard]] Result<void> setCameraSnapshot(const CameraSnapshot& camera);
     void setGaussianDebugMode(std::uint32_t mode) noexcept {
         gaussianDebugMode_ = mode <= 4 ? mode : 0;
     }
@@ -263,6 +274,7 @@ class Renderer final {
     std::uint32_t gaussianTargetHeight_{};
     std::filesystem::path shaderLibraryPath_;
     scene::CameraController cameraController_;
+    float cameraVerticalFieldOfViewRadians_{1.0471976F};
     std::uint32_t gaussianDebugMode_{};
     std::uint32_t shadowDebugMode_{};
     std::uint32_t shadowDebugSlice_{};

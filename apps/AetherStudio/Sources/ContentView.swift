@@ -326,6 +326,8 @@ struct ContentView: View {
                                    selectedMaterial: $selectedMaterial,
                                    materialNames: $materialNames,
                                    transformOverrides: $document.state.entityTransformOverrides,
+                                   camera: $document.state.camera,
+                                   playback: document.state.playback,
                                    materialOverrides: document.state.materialOverrides,
                                    lights: document.state.lights,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
@@ -401,6 +403,21 @@ struct ContentView: View {
             guard let newValue else { return }
             document.state.selectedWorkspace = newValue.rawValue
         }
+        .onChange(of: selectedMeshId) { _, value in document.state.selection.meshEntity = value }
+        .onChange(of: selectedGaussianId) { _, value in document.state.selection.gaussian = value }
+        .onChange(of: selectedMaterialId) { _, value in document.state.selection.material = value }
+        .onChange(of: selectedLightId) { _, value in document.state.selection.light = value }
+        .onChange(of: exposureStops) { _, value in document.state.viewport.exposureStops = value }
+        .onChange(of: gizmoMode) { _, value in document.state.viewport.gizmoMode = value.rawValue }
+        .onChange(of: gaussianDebugMode) { _, value in
+            document.state.viewport.gaussianDebugMode = value.rawValue
+        }
+        .onChange(of: shadowDebugMode) { _, value in
+            document.state.viewport.shadowDebugMode = value.rawValue
+        }
+        .onChange(of: shadowDebugSlice) { _, value in
+            document.state.viewport.shadowDebugSlice = value
+        }
         .onChange(of: document.state.scenePath) { _, _ in
             selectedGaussianId = nil
             selectedMeshId = nil
@@ -412,6 +429,20 @@ struct ContentView: View {
         }
         .onAppear {
             selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene
+            selectedMeshId = document.state.selection.meshEntity
+            selectedGaussianId = document.state.selection.gaussian
+            selectedMaterialId = document.state.selection.material
+            selectedLightId = max(1, min(document.state.selection.light,
+                                         document.state.lights.count))
+            exposureStops = document.state.viewport.exposureStops
+            gizmoMode = GizmoMode(rawValue: document.state.viewport.gizmoMode) ?? .translate
+            gaussianDebugMode = GaussianDebugMode(
+                rawValue: document.state.viewport.gaussianDebugMode) ?? .appearance
+            shadowDebugMode = ShadowDebugMode(
+                rawValue: document.state.viewport.shadowDebugMode) ?? .disabled
+            let maximumShadowSlice = shadowDebugMode == .directional ? 3 : 11
+            shadowDebugSlice = min(max(0, document.state.viewport.shadowDebugSlice),
+                                   maximumShadowSlice)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -459,6 +490,7 @@ struct ContentView: View {
         document.state.displayName = url.deletingPathExtension().lastPathComponent
         document.state.entityTransformOverrides = [:]
         document.state.materialOverrides = [:]
+        document.state.selection = AetherSelectionState()
     }
 
     private var resolvedScenePath: String? {

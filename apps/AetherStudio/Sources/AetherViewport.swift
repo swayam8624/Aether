@@ -11,6 +11,8 @@ struct AetherViewport: NSViewRepresentable {
     @Binding var selectedMaterial: AetherMaterialOverride?
     @Binding var materialNames: [String]
     @Binding var transformOverrides: [String: AetherTransformOverride]
+    @Binding var camera: AetherCameraState
+    let playback: AetherPlaybackState
     let materialOverrides: [String: AetherMaterialOverride]
     let lights: [AetherLightState]
     let gaussianDebugMode: Int
@@ -27,6 +29,8 @@ struct AetherViewport: NSViewRepresentable {
         var selectedMaterialId: Int?
         var appliedMaterials: [String: AetherMaterialOverride] = [:]
         var appliedLights: [AetherLightState] = []
+        var appliedCamera = AetherCameraState()
+        var appliedPlayback = AetherPlaybackState()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -47,6 +51,14 @@ struct AetherViewport: NSViewRepresentable {
             transformOverrides[String(entityId)] = transform
         }
         view.onMaterialsChanged = { names in materialNames = names }
+        view.onCameraChanged = { values in
+            guard values.count == 6 else { return }
+            camera = AetherCameraState(positionX: values[0].floatValue,
+                                       positionY: values[1].floatValue,
+                                       positionZ: values[2].floatValue,
+                                       yaw: values[3].floatValue, pitch: values[4].floatValue,
+                                       verticalFieldOfViewRadians: values[5].floatValue)
+        }
         view.scenePath = scenePath
         applyOverrides(transformOverrides, to: view, previous: [:])
         applyMaterialOverrides(materialOverrides, to: view, previous: [:])
@@ -55,10 +67,14 @@ struct AetherViewport: NSViewRepresentable {
         context.coordinator.appliedOverrides = transformOverrides
         context.coordinator.appliedMaterials = materialOverrides
         context.coordinator.appliedLights = lights
+        context.coordinator.appliedCamera = camera
+        context.coordinator.appliedPlayback = playback
         view.gaussianDebugMode = gaussianDebugMode
         view.shadowDebugMode = shadowDebugMode
         view.shadowDebugSlice = shadowDebugSlice
         view.gizmoMode = gizmoMode
+        view.cameraState = camera.values.map { NSNumber(value: $0) }
+        view.playbackState = playback.values
         view.exposureStops = exposureStops
         return view
     }
@@ -79,10 +95,22 @@ struct AetherViewport: NSViewRepresentable {
         }
         nsView.selectedMeshEntity = selectedMeshId ?? 0
         nsView.onMaterialsChanged = { names in materialNames = names }
+        nsView.onCameraChanged = { values in
+            guard values.count == 6 else { return }
+            camera = AetherCameraState(positionX: values[0].floatValue,
+                                       positionY: values[1].floatValue,
+                                       positionZ: values[2].floatValue,
+                                       yaw: values[3].floatValue, pitch: values[4].floatValue,
+                                       verticalFieldOfViewRadians: values[5].floatValue)
+        }
         if context.coordinator.scenePath != scenePath {
             nsView.scenePath = scenePath
             context.coordinator.scenePath = scenePath
             context.coordinator.appliedOverrides = [:]
+            nsView.cameraState = camera.values.map { NSNumber(value: $0) }
+            context.coordinator.appliedCamera = camera
+            nsView.playbackState = playback.values
+            context.coordinator.appliedPlayback = playback
         }
         if context.coordinator.appliedOverrides != transformOverrides {
             applyOverrides(transformOverrides, to: nsView,
@@ -105,6 +133,14 @@ struct AetherViewport: NSViewRepresentable {
         if context.coordinator.appliedLights != lights {
             applyLights(lights, to: nsView)
             context.coordinator.appliedLights = lights
+        }
+        if context.coordinator.appliedCamera != camera {
+            nsView.cameraState = camera.values.map { NSNumber(value: $0) }
+            context.coordinator.appliedCamera = camera
+        }
+        if context.coordinator.appliedPlayback != playback {
+            nsView.playbackState = playback.values
+            context.coordinator.appliedPlayback = playback
         }
         if context.coordinator.selectedMeshId != selectedMeshId {
             context.coordinator.selectedMeshId = selectedMeshId

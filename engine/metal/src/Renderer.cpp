@@ -304,6 +304,7 @@ void Renderer::draw(MTK::View* view) noexcept {
             const auto height = targetHeight;
             auto targets = ensureGaussianTargets(width, height);
             scene::Camera camera;
+            camera.verticalFieldOfViewRadians = cameraVerticalFieldOfViewRadians_;
             const scene::Transform cameraTransform = cameraController_.transform();
             auto viewMatrix = camera.viewMatrix(cameraTransform);
             if (targets && viewMatrix && height > 0) {
@@ -338,6 +339,7 @@ void Renderer::draw(MTK::View* view) noexcept {
         }
     }
     scene::Camera meshCamera;
+    meshCamera.verticalFieldOfViewRadians = cameraVerticalFieldOfViewRadians_;
     const scene::Transform meshCameraTransform = cameraController_.transform();
     const float meshWidth = static_cast<float>(targetWidth);
     const float meshHeight = static_cast<float>(targetHeight);
@@ -1216,6 +1218,21 @@ void Renderer::seekAnimation(float seconds) noexcept {
     }
 }
 
+Result<void> Renderer::setAnimationPlayback(std::optional<std::size_t> clipIndex, float seconds,
+                                            bool playing, bool loop) {
+    if (!std::isfinite(seconds) || seconds < 0.0F)
+        return fail(ErrorCode::invalidArgument, "Animation playback time is invalid");
+    if (clipIndex) {
+        if (auto selected = selectAnimation(*clipIndex, loop); !selected)
+            return std::unexpected(selected.error());
+    } else {
+        animationLoop_ = loop;
+    }
+    seekAnimation(seconds);
+    animationPlaying_ = playing;
+    return {};
+}
+
 std::size_t Renderer::animationClipCount() const noexcept {
     return meshAnimationAsset_ ? meshAnimationAsset_->animations.size() : 0;
 }
@@ -1609,6 +1626,7 @@ Result<MeshEntitySnapshot> Renderer::translateSelectedMeshPixels(std::uint32_t a
     const float cameraDistance = simd_length(cameraController_.position() -
                                              snapshot->worldTransform.translation);
     scene::Camera camera;
+    camera.verticalFieldOfViewRadians = cameraVerticalFieldOfViewRadians_;
     const float worldPerPixel =
         2.0F * cameraDistance * std::tan(camera.verticalFieldOfViewRadians * 0.5F) /
         static_cast<float>(sceneTargetHeight_);
@@ -1839,6 +1857,28 @@ void Renderer::addCameraDolly(float amount) noexcept {
 
 void Renderer::clearCameraMovement() noexcept {
     cameraController_.clearMovement();
+}
+
+CameraSnapshot Renderer::cameraSnapshot() const noexcept {
+    return CameraSnapshot{cameraController_.position(), cameraController_.yaw(),
+                          cameraController_.pitch(), cameraVerticalFieldOfViewRadians_};
+}
+
+Result<void> Renderer::setCameraSnapshot(const CameraSnapshot& camera) {
+    const bool finite = std::isfinite(camera.position.x) && std::isfinite(camera.position.y) &&
+                        std::isfinite(camera.position.z) && std::isfinite(camera.yaw) &&
+                        std::isfinite(camera.pitch) &&
+                        std::isfinite(camera.verticalFieldOfViewRadians);
+    if (!finite || camera.pitch < -1.553343F || camera.pitch > 1.553343F ||
+        camera.verticalFieldOfViewRadians < 0.1745329F ||
+        camera.verticalFieldOfViewRadians > 2.9670597F)
+        return fail(ErrorCode::invalidArgument, "Camera snapshot is invalid");
+    cameraController_.clearMovement();
+    cameraController_.setPosition(camera.position);
+    cameraController_.setOrientation(camera.yaw, camera.pitch);
+    cameraVerticalFieldOfViewRadians_ = camera.verticalFieldOfViewRadians;
+    temporalHistoryValid_ = false;
+    return {};
 }
 
 RendererStatistics Renderer::statistics() const noexcept {
