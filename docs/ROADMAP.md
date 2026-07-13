@@ -79,7 +79,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   with add/remove and type-specific controls.
 - [x] Depth-tested Metal RGB translation gizmo with reserved axis IDs, zoom-aware drag scaling,
   validated transform mutation, bridge callbacks, and project persistence.
-- [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
+- [x] RGBA16 rigid motion-vector/previous-depth target consumed by TAA, with translated-entity GPU
+  readback validation.
+- [ ] Previous-pose skin/morph motion vectors, Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
 - [ ] Rotation/scale gizmo modes and generalized scene serialization.
 

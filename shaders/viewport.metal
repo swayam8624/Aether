@@ -89,6 +89,7 @@ fragment TemporalOutput aetherTemporalResolveFragment(
     depth2d<float> currentDepth [[texture(1)]],
     texture2d<float> historyColor [[texture(2)]],
     texture2d<float> historyDepth [[texture(3)]],
+    texture2d<float> currentMotion [[texture(4)]],
     sampler historySampler [[sampler(0)]]) {
     const uint2 dimensions(currentColor.get_width(), currentColor.get_height());
     const uint2 pixel = min(uint2(input.position.xy), dimensions - 1u);
@@ -99,19 +100,14 @@ fragment TemporalOutput aetherTemporalResolveFragment(
         return output;
 
     const float2 uv = (float2(pixel) + 0.5f) / float2(dimensions);
-    const float2 ndc = float2(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f);
-    float4 world = temporal.inverseCurrentViewProjection * float4(ndc, depth, 1.0f);
-    world /= world.w;
-    const float4 previousClip = temporal.previousViewProjection * world;
-    if (previousClip.w <= 0.0f)
+    const float4 motion = currentMotion.read(pixel);
+    if (motion.w < 0.5f)
         return output;
-    const float3 previousNdc = previousClip.xyz / previousClip.w;
-    const float2 previousUv = float2(previousNdc.x * 0.5f + 0.5f,
-                                     0.5f - previousNdc.y * 0.5f);
+    const float2 previousUv = uv - motion.xy;
     if (any(previousUv < 0.0f) || any(previousUv > 1.0f))
         return output;
     const float priorDepth = historyDepth.sample(historySampler, previousUv).r;
-    if (abs(priorDepth - previousNdc.z) > temporal.historyParameters.z)
+    if (abs(priorDepth - motion.z) > temporal.historyParameters.z)
         return output;
 
     float3 neighborhoodMinimum = current.rgb;

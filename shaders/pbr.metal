@@ -10,6 +10,7 @@ struct PbrVertexOutput {
     float4 worldTangent;
     float2 uv;
     float viewDepth;
+    float4 previousClip;
 };
 
 vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
@@ -61,6 +62,7 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
                                                                 frame.model[2].xyz))));
     output.uv = meshVertex.textureCoordinate;
     output.viewDepth = max(-(frame.view * worldPosition).z, 1.0e-6f);
+    output.previousClip = frame.previousViewProjection * (frame.previousModel * localPosition);
     return output;
 }
 
@@ -120,6 +122,7 @@ float directionalShadowVisibility(float3 worldPosition, float3 normal, uint casc
 struct PbrFragmentOutput {
     float4 color [[color(0)]];
     uint entityId [[color(1)]];
+    float4 motion [[color(2)]];
 };
 
 fragment PbrFragmentOutput aetherPbrFragment(PbrVertexOutput input [[stage_in]],
@@ -319,5 +322,13 @@ fragment PbrFragmentOutput aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                   gpuLight.colorIntensity.w * attenuation * nDotL * visibility;
     }
     float3 color = ambient + direct + emissive;
-    return PbrFragmentOutput{float4(color, sampledBaseColor.a), frame.drawIds.x};
+    float4 motion = 0.0f;
+    if (input.previousClip.w > 0.0f) {
+        const float2 currentUv = input.position.xy / clusterUniforms.viewportDepth.xy;
+        const float2 previousNdc = input.previousClip.xy / input.previousClip.w;
+        const float2 previousUv = float2(previousNdc.x * 0.5f + 0.5f,
+                                         0.5f - previousNdc.y * 0.5f);
+        motion = float4(currentUv - previousUv, input.previousClip.z / input.previousClip.w, 1.0f);
+    }
+    return PbrFragmentOutput{float4(color, sampledBaseColor.a), frame.drawIds.x, motion};
 }

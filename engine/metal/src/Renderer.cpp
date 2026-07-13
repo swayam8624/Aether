@@ -552,6 +552,11 @@ void Renderer::draw(MTK::View* view) noexcept {
     sceneIdAttachment->setLoadAction(MTL::LoadActionClear);
     sceneIdAttachment->setStoreAction(MTL::StoreActionStore);
     sceneIdAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 0.0));
+    auto* sceneMotionAttachment = scenePass->colorAttachments()->object(2);
+    sceneMotionAttachment->setTexture(sceneMotion_.get());
+    sceneMotionAttachment->setLoadAction(MTL::LoadActionClear);
+    sceneMotionAttachment->setStoreAction(MTL::StoreActionStore);
+    sceneMotionAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 0.0));
     auto* sceneDepthAttachment = scenePass->depthAttachment();
     sceneDepthAttachment->setTexture(sceneDepth_.get());
     sceneDepthAttachment->setLoadAction(MTL::LoadActionClear);
@@ -586,6 +591,8 @@ void Renderer::draw(MTK::View* view) noexcept {
         if (projection && jitteredMeshProjection && viewMatrix) {
             AetherFrameUniforms uniforms{};
             uniforms.viewProjection = simd_mul(*jitteredMeshProjection, *viewMatrix);
+            uniforms.previousViewProjection = temporalHistoryValid_ ? previousViewProjection_
+                                                                    : uniforms.viewProjection;
             uniforms.view = *viewMatrix;
             uniforms.model = matrix_identity_float4x4;
             const simd_float3 cameraPosition = cameraController_.position();
@@ -716,6 +723,7 @@ void Renderer::draw(MTK::View* view) noexcept {
                         const auto& primitive = meshPrimitives_.at(instance.primitiveIndex);
                         const auto& material = meshMaterials_.at(primitive.materialIndex);
                         uniforms.model = instance.worldTransform;
+                        uniforms.previousModel = instance.previousWorldTransform;
                         uniforms.normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
                         uniforms.drawIds = {static_cast<std::uint32_t>(instanceIndex + 1U), 0U, 0U,
                                             0U};
@@ -797,6 +805,7 @@ void Renderer::draw(MTK::View* view) noexcept {
             temporalEncoder->setFragmentTexture(sceneDepth_.get(), 1);
             temporalEncoder->setFragmentTexture(temporalColorHistory_[inputIndex].get(), 2);
             temporalEncoder->setFragmentTexture(temporalDepthHistory_[inputIndex].get(), 3);
+            temporalEncoder->setFragmentTexture(sceneMotion_.get(), 4);
             temporalEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
             temporalEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0),
                                             NS::UInteger(3));
@@ -909,6 +918,7 @@ void Renderer::draw(MTK::View* view) noexcept {
         completedFrames_.fetch_add(1, std::memory_order_relaxed);
         dispatch_semaphore_signal(semaphore);
     });
+    for (auto& instance : meshInstances_) instance.previousWorldTransform = instance.worldTransform;
     commandBuffer->presentDrawable(drawable);
     commandBuffer->commit();
     ++frameNumber_;
@@ -1088,6 +1098,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
             simd_mul(sourceInstance.worldTransform,
                      simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
         instances.push_back(GpuMeshInstance{sourceInstance.primitiveIndex,
+                                            sourceInstance.worldTransform,
                                             sourceInstance.worldTransform,
                                             {transformed.x, transformed.y, transformed.z},
                                             simd_determinant(sourceInstance.worldTransform) < 0.0F,
@@ -1485,6 +1496,30 @@ Result<std::uint32_t> Renderer::pickGizmoAxis(std::uint32_t x, std::uint32_t y) 
     return axis;
 }
 
+Result<simd_float4> Renderer::sampleMotionVector(std::uint32_t x, std::uint32_t y) {
+    if (!sceneMotion_ || x >= sceneTargetWidth_ || y >= sceneTargetHeight_)
+        return fail(ErrorCode::invalidArgument, "Motion sample coordinate is outside the viewport");
+    constexpr std::size_t readbackBytesPerRow = 256;
+    auto readback = adopt(device_->newBuffer(readbackBytesPerRow, MTL::ResourceStorageModeShared));
+    MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
+    MTL::BlitCommandEncoder* blit = commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+    if (!readback || !commandBuffer || !blit)
+        return fail(ErrorCode::metal, "Unable to allocate motion-vector readback");
+    blit->setLabel(NS::String::string("Motion Vector Sample", NS::UTF8StringEncoding));
+    blit->copyFromTexture(sceneMotion_.get(), 0, 0, MTL::Origin::Make(x, y, 0),
+                          MTL::Size::Make(1, 1, 1), readback.get(), 0, readbackBytesPerRow,
+                          readbackBytesPerRow);
+    blit->endEncoding();
+    commandBuffer->commit();
+    commandBuffer->waitUntilCompleted();
+    if (commandBuffer->status() == MTL::CommandBufferStatusError)
+        return fail(ErrorCode::metal, "Motion-vector sample command buffer failed");
+    simd_half4 encoded{};
+    std::memcpy(&encoded, readback->contents(), sizeof(encoded));
+    return simd_float4{static_cast<float>(encoded.x), static_cast<float>(encoded.y),
+                       static_cast<float>(encoded.z), static_cast<float>(encoded.w)};
+}
+
 Result<MeshEntitySnapshot> Renderer::translateSelectedMesh(std::uint32_t axis,
                                                            float worldDistance) {
     if (selectedMeshEntity_ == 0 || selectedMeshEntity_ > meshInstances_.size())
@@ -1575,7 +1610,7 @@ Result<void> Renderer::clearMaterialOverride(std::uint32_t materialId) {
 Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Scene render target dimensions are zero");
-    if (sceneHdrColor_ && sceneDepth_ && sceneIds_ && bloomHalf_ && bloomQuarter_ && temporalColorHistory_[0] &&
+    if (sceneHdrColor_ && sceneDepth_ && sceneIds_ && sceneMotion_ && bloomHalf_ && bloomQuarter_ && temporalColorHistory_[0] &&
         temporalColorHistory_[1] && temporalDepthHistory_[0] && temporalDepthHistory_[1] &&
         sceneTargetWidth_ == width &&
         sceneTargetHeight_ == height)
@@ -1604,6 +1639,8 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     idDescriptor->setStorageMode(MTL::StorageModePrivate);
     idDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
     auto ids = adopt(device_->newTexture(idDescriptor.get()));
+    idDescriptor->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    auto motion = adopt(device_->newTexture(idDescriptor.get()));
     colorDescriptor->setWidth(std::max<std::uint32_t>(1U, width / 2U));
     colorDescriptor->setHeight(std::max<std::uint32_t>(1U, height / 2U));
     auto bloomHalf = adopt(device_->newTexture(colorDescriptor.get()));
@@ -1625,7 +1662,7 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
         historyColor[index] = adopt(device_->newTexture(colorDescriptor.get()));
         historyDepth[index] = adopt(device_->newTexture(historyDepthDescriptor.get()));
     }
-    if (!color || !depth || !ids || !bloomHalf || !bloomQuarter || !historyColor[0] ||
+    if (!color || !depth || !ids || !motion || !bloomHalf || !bloomQuarter || !historyColor[0] ||
         !historyColor[1] || !historyDepth[0] ||
         !historyDepth[1])
         return fail(ErrorCode::resourceExhausted, "Unable to allocate HDR scene targets");
@@ -1635,6 +1672,8 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     sceneDepth_ = std::move(depth);
     ids->setLabel(NS::String::string("Scene Entity IDs", NS::UTF8StringEncoding));
     sceneIds_ = std::move(ids);
+    motion->setLabel(NS::String::string("Scene Motion Vectors", NS::UTF8StringEncoding));
+    sceneMotion_ = std::move(motion);
     bloomHalf->setLabel(NS::String::string("Bloom Half Resolution", NS::UTF8StringEncoding));
     bloomQuarter->setLabel(NS::String::string("Bloom Quarter Resolution", NS::UTF8StringEncoding));
     bloomHalf_ = std::move(bloomHalf);
@@ -1844,6 +1883,7 @@ Result<void> Renderer::buildViewportPipeline() {
         NS::String::string("AETHER HDR Background Pipeline", NS::UTF8StringEncoding));
     descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     descriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
+    descriptor->colorAttachments()->object(2)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     if (binaryArchive_) {
         error = nullptr;
         (void)binaryArchive_->addRenderPipelineFunctions(descriptor.get(), &error);
@@ -1914,6 +1954,7 @@ Result<void> Renderer::buildViewportPipeline() {
     gizmoDescriptor->setFragmentFunction(gizmoFragment.get());
     gizmoDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     gizmoDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
+    gizmoDescriptor->colorAttachments()->object(2)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     gizmoDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
     if (binaryArchive_) gizmoDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
     error = nullptr;
@@ -2021,6 +2062,7 @@ Result<void> Renderer::buildViewportPipeline() {
     pbrDescriptor->setFragmentFunction(pbrFragment.get());
     pbrDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     pbrDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
+    pbrDescriptor->colorAttachments()->object(2)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     pbrDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
     if (binaryArchive_) {
         pbrDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));

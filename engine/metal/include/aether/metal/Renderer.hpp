@@ -108,6 +108,7 @@ class Renderer final {
     [[nodiscard]] Result<void> clearMeshEntityTransform(std::uint32_t entityId);
     [[nodiscard]] Result<void> setSelectedMeshEntity(std::uint32_t entityId);
     [[nodiscard]] Result<std::uint32_t> pickGizmoAxis(std::uint32_t x, std::uint32_t y);
+    [[nodiscard]] Result<simd_float4> sampleMotionVector(std::uint32_t x, std::uint32_t y);
     [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMesh(std::uint32_t axis,
                                                                   float worldDistance);
     [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMeshPixels(std::uint32_t axis,
@@ -194,6 +195,7 @@ class Renderer final {
     struct GpuMeshInstance {
         std::size_t primitiveIndex{};
         simd_float4x4 worldTransform{matrix_identity_float4x4};
+        simd_float4x4 previousWorldTransform{matrix_identity_float4x4};
         simd_float3 worldBoundsCenter{};
         bool mirrored{};
         std::size_t nodeIndex{};
@@ -235,6 +237,7 @@ class Renderer final {
     MetalPtr<MTL::Texture> sceneHdrColor_;
     MetalPtr<MTL::Texture> sceneDepth_;
     MetalPtr<MTL::Texture> sceneIds_;
+    MetalPtr<MTL::Texture> sceneMotion_;
     MetalPtr<MTL::Texture> bloomHalf_;
     MetalPtr<MTL::Texture> bloomQuarter_;
     std::array<MetalPtr<MTL::Texture>, 2> temporalColorHistory_;

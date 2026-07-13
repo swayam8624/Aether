@@ -260,6 +260,18 @@ int main() {
         pool->release();
         return 1;
     }
+    (*renderer)->draw(testView.get());
+    for (std::uint32_t attempt = 0; attempt < 100 &&
+                                    (*renderer)->statistics().completedFrames < 4;
+         ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const auto motion = (*renderer)->sampleMotionVector(166, 90);
+    if ((*renderer)->statistics().completedFrames < 4 || !motion || motion->x <= 0.005F ||
+        motion->x >= 0.05F || std::abs(motion->y) > 0.01F || motion->w < 0.5F) {
+        std::cerr << "Rigid motion-vector fixture did not record the translated entity\n";
+        pool->release();
+        return 1;
+    }
     if (!(*renderer)->clearMeshEntityTransform(1)) {
         std::cerr << "Renderer could not reset the gizmo fixture transform\n";
         pool->release();
