@@ -73,9 +73,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   selection IDs.
 - [x] Validated mesh world-TRS overrides, numeric SwiftUI transform inspector, schema-v2 project
   persistence, reset behavior, and schema-v1 migration.
+- [x] Engine-owned material snapshots, bounded factor overrides/reset, SwiftUI material inspector,
+  and project-persisted material overrides.
 - [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
-- [ ] Material/light inspectors, viewport transform gizmos, and generalized scene serialization.
+- [ ] Light inspector, viewport transform gizmos, and generalized scene serialization.
 
 ## Phase 3 — Standard Gaussian renderer
 

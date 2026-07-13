@@ -113,6 +113,59 @@ private struct MeshTransformInspector: View {
     }
 }
 
+private struct MaterialInspector: View {
+    let names: [String]
+    @Binding var selectedId: Int?
+    @Binding var material: AetherMaterialOverride
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("MATERIALS").font(.caption.bold())
+            Picker("Material", selection: $selectedId) {
+                Text("Select").tag(Int?.none)
+                ForEach(names.indices, id: \.self) { index in
+                    Text(names[index]).tag(Int?.some(index + 1))
+                }
+            }
+            vectorRow("Base RGBA", [binding(\.baseRed), binding(\.baseGreen), binding(\.baseBlue),
+                                     binding(\.baseAlpha)])
+            vectorRow("Emissive", [binding(\.emissiveRed), binding(\.emissiveGreen),
+                                    binding(\.emissiveBlue)])
+            slider("Metallic", binding(\.metallic), 0...1)
+            slider("Roughness", binding(\.roughness), 0...1)
+            slider("Normal", binding(\.normalScale), 0...8)
+            slider("Occlusion", binding(\.occlusionStrength), 0...1)
+            slider("Alpha Cutoff", binding(\.alphaCutoff), 0...1)
+        }
+        .frame(width: 320)
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<AetherMaterialOverride, Float>) -> Binding<Float> {
+        Binding(get: { material[keyPath: keyPath] }, set: { material[keyPath: keyPath] = $0 })
+    }
+
+    private func vectorRow(_ label: String, _ values: [Binding<Float>]) -> some View {
+        HStack(spacing: 4) {
+            Text(label).font(.caption).frame(width: 72, alignment: .leading)
+            ForEach(values.indices, id: \.self) { index in
+                TextField("", value: values[index], format: .number.precision(.fractionLength(3)))
+                    .textFieldStyle(.roundedBorder).frame(width: values.count == 4 ? 48 : 66)
+            }
+        }
+    }
+
+    private func slider(_ label: String, _ value: Binding<Float>, _ range: ClosedRange<Float>) -> some View {
+        HStack {
+            Text(label).font(.caption).frame(width: 72, alignment: .leading)
+            Slider(value: value, in: range)
+            Text(value.wrappedValue.formatted(.number.precision(.fractionLength(2))))
+                .font(.caption2.monospacedDigit()).frame(width: 38)
+        }
+    }
+}
+
 struct ContentView: View {
     @Binding var document: AetherProjectDocument
     let projectURL: URL?
@@ -121,6 +174,9 @@ struct ContentView: View {
     @State private var selectedMeshId: Int?
     @State private var meshEntityNames: [String] = []
     @State private var selectedMeshTransform: AetherTransformOverride?
+    @State private var materialNames: [String] = []
+    @State private var selectedMaterialId: Int?
+    @State private var selectedMaterial: AetherMaterialOverride?
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
@@ -176,7 +232,11 @@ struct ContentView: View {
                                    selectedMeshId: $selectedMeshId,
                                    selectedMeshTransform: $selectedMeshTransform,
                                    meshEntityNames: $meshEntityNames,
+                                   selectedMaterialId: $selectedMaterialId,
+                                   selectedMaterial: $selectedMaterial,
+                                   materialNames: $materialNames,
                                    transformOverrides: document.state.entityTransformOverrides,
+                                   materialOverrides: document.state.materialOverrides,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
@@ -202,7 +262,22 @@ struct ContentView: View {
                         }
                         }
                         .overlay(alignment: .topTrailing) {
-                            if !meshEntityNames.isEmpty {
+                            if selection == .materials && !materialNames.isEmpty {
+                                VStack(alignment: .trailing, spacing: 8) {
+                                    MaterialInspector(names: materialNames,
+                                                      selectedId: $selectedMaterialId,
+                                                      material: selectedMaterialBinding)
+                                    if selectedMaterialId != nil {
+                                        Button("Reset Material", systemImage: "arrow.counterclockwise") {
+                                            guard let selectedMaterialId else { return }
+                                            document.state.materialOverrides.removeValue(
+                                                forKey: String(selectedMaterialId))
+                                            undoManager?.setActionName("Reset Material")
+                                        }
+                                    }
+                                }
+                                .padding(12)
+                            } else if !meshEntityNames.isEmpty {
                                 VStack(alignment: .trailing, spacing: 8) {
                                     MeshOutliner(names: meshEntityNames, selectedId: $selectedMeshId)
                                     if selectedMeshId != nil && selectedMeshTransform != nil {
@@ -230,6 +305,9 @@ struct ContentView: View {
             selectedMeshId = nil
             meshEntityNames = []
             selectedMeshTransform = nil
+            selectedMaterialId = nil
+            selectedMaterial = nil
+            materialNames = []
         }
         .onAppear {
             selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene
@@ -262,6 +340,7 @@ struct ContentView: View {
         document.state.scenePath = url.path
         document.state.displayName = url.deletingPathExtension().lastPathComponent
         document.state.entityTransformOverrides = [:]
+        document.state.materialOverrides = [:]
     }
 
     private var resolvedScenePath: String? {
@@ -289,6 +368,17 @@ struct ContentView: View {
                 guard let selectedMeshId else { return }
                 document.state.entityTransformOverrides[String(selectedMeshId)] = value
                 undoManager?.setActionName("Edit Entity Transform")
+            })
+    }
+
+    private var selectedMaterialBinding: Binding<AetherMaterialOverride> {
+        Binding(
+            get: { selectedMaterial ?? AetherMaterialOverride() },
+            set: { value in
+                selectedMaterial = value
+                guard let selectedMaterialId else { return }
+                document.state.materialOverrides[String(selectedMaterialId)] = value
+                undoManager?.setActionName("Edit Material")
             })
     }
 }

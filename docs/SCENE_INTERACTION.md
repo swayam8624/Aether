@@ -46,3 +46,9 @@ occlusion strength, alpha cutoff, and override state. Factor edits preserve impo
 bindings, enforce finite physically bounded inputs, invalidate temporal history, and reset exactly
 to the imported GPU material. The Metal integration test covers snapshot, apply, readback, reset,
 and invalid-ID rejection.
+
+Studio's Materials workspace consumes those immutable snapshots through fixed numeric bridge
+payloads, presents base RGBA, emissive, metallic, roughness, normal-scale, occlusion, and alpha
+cutoff controls, and stores only changed factors in the schema-v2 project. Persisted overrides are
+reapplied after load, reset restores the imported factors, and importing a new scene clears stale
+material IDs. Legacy projects migrate with an empty material override map.

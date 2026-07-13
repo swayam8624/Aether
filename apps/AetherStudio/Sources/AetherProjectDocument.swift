@@ -13,21 +13,25 @@ struct AetherProjectState: Codable, Equatable {
     var scenePath: String?
     var selectedWorkspace = "Scene"
     var entityTransformOverrides: [String: AetherTransformOverride] = [:]
+    var materialOverrides: [String: AetherMaterialOverride] = [:]
 
     init(schemaVersion: Int = currentSchemaVersion,
          displayName: String = "Untitled AETHER Project",
          scenePath: String? = nil,
          selectedWorkspace: String = "Scene",
-         entityTransformOverrides: [String: AetherTransformOverride] = [:]) {
+         entityTransformOverrides: [String: AetherTransformOverride] = [:],
+         materialOverrides: [String: AetherMaterialOverride] = [:]) {
         self.schemaVersion = schemaVersion
         self.displayName = displayName
         self.scenePath = scenePath
         self.selectedWorkspace = selectedWorkspace
         self.entityTransformOverrides = entityTransformOverrides
+        self.materialOverrides = materialOverrides
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, displayName, scenePath, selectedWorkspace, entityTransformOverrides
+        case schemaVersion, displayName, scenePath, selectedWorkspace, entityTransformOverrides,
+             materialOverrides
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +50,36 @@ struct AetherProjectState: Codable, Equatable {
         entityTransformOverrides =
             try values.decodeIfPresent([String: AetherTransformOverride].self,
                                        forKey: .entityTransformOverrides) ?? [:]
+        materialOverrides = try values.decodeIfPresent([String: AetherMaterialOverride].self,
+                                                        forKey: .materialOverrides) ?? [:]
+    }
+}
+
+struct AetherMaterialOverride: Codable, Equatable {
+    var baseRed: Float = 1
+    var baseGreen: Float = 1
+    var baseBlue: Float = 1
+    var baseAlpha: Float = 1
+    var emissiveRed: Float = 0
+    var emissiveGreen: Float = 0
+    var emissiveBlue: Float = 0
+    var metallic: Float = 1
+    var roughness: Float = 1
+    var normalScale: Float = 1
+    var occlusionStrength: Float = 1
+    var alphaCutoff: Float = 0.5
+
+    init(values: [Float] = [1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0.5]) {
+        guard values.count == 12 else { return }
+        baseRed = values[0]; baseGreen = values[1]; baseBlue = values[2]; baseAlpha = values[3]
+        emissiveRed = values[4]; emissiveGreen = values[5]; emissiveBlue = values[6]
+        metallic = values[7]; roughness = values[8]; normalScale = values[9]
+        occlusionStrength = values[10]; alphaCutoff = values[11]
+    }
+
+    var values: [Float] {
+        [baseRed, baseGreen, baseBlue, baseAlpha, emissiveRed, emissiveGreen, emissiveBlue,
+         metallic, roughness, normalScale, occlusionStrength, alphaCutoff]
     }
 }
 

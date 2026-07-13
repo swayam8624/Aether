@@ -10,11 +10,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, nullable, copy) NSString* scenePath;
 @property(nonatomic, nullable, copy) void (^onEntityPicked)(NSInteger entityId, BOOL gaussian);
 @property(nonatomic, nullable, copy) void (^onMeshEntitiesChanged)(NSArray<NSString*>* names);
+@property(nonatomic, nullable, copy) void (^onMaterialsChanged)(NSArray<NSString*>* names);
 @property(nonatomic) NSInteger gaussianDebugMode;
 @property(nonatomic) float exposureStops;
 - (nullable NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;
 - (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values;
 - (BOOL)clearMeshTransformForEntity:(NSInteger)entityId;
+- (nullable NSArray<NSNumber*>*)materialForId:(NSInteger)materialId;
+- (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values;
+- (BOOL)clearMaterialForId:(NSInteger)materialId;
 @end
 
 /// Writes a privacy-minimized diagnostics JSON file. Returns NO and populates `error` on failure.

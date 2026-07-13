@@ -8,7 +8,9 @@ enum SwiftDocumentTests {
             scenePath: "Scenes/fixture.aether",
             selectedWorkspace: "Lighting",
             entityTransformOverrides: ["1": AetherTransformOverride(values: [1, 2, 3, 0, 0, 0, 1,
-                                                                              -1, 2, 3])]
+                                                                              -1, 2, 3])],
+            materialOverrides: ["1": AetherMaterialOverride(values: [0.8, 0.2, 0.1, 1, 0, 0, 0,
+                                                                       0.4, 0.7, 1, 1, 0.5])]
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -25,6 +27,9 @@ enum SwiftDocumentTests {
         guard migrated.schemaVersion == AetherProjectState.currentSchemaVersion &&
               migrated.entityTransformOverrides.isEmpty else {
             throw TestFailure("Schema-1 project did not migrate to empty transform overrides")
+        }
+        guard migrated.materialOverrides.isEmpty else {
+            throw TestFailure("Schema-1 project unexpectedly produced material overrides")
         }
         guard AetherProjectDocument.readableContentTypes == [.aetherProject] else {
             throw TestFailure("AETHER project content type is not registered")

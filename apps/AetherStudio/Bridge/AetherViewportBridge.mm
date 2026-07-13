@@ -26,6 +26,10 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;
 - (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values;
 - (BOOL)clearMeshTransformForEntity:(NSInteger)entityId;
+- (NSArray<NSString*>*)materialNames;
+- (NSArray<NSNumber*>*)materialForId:(NSInteger)materialId;
+- (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values;
+- (BOOL)clearMaterialForId:(NSInteger)materialId;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -215,6 +219,50 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
         NSLog(@"AETHER entity transform reset failed: %s", result.error().describe().c_str());
     return result.has_value();
 }
+
+- (NSArray<NSString*>*)materialNames {
+    NSMutableArray<NSString*>* names = [NSMutableArray array];
+    if (!_renderer) return names;
+    for (const auto& material : _renderer->materialSnapshots())
+        [names addObject:[NSString stringWithUTF8String:material.name.c_str()]];
+    return names;
+}
+
+- (NSArray<NSNumber*>*)materialForId:(NSInteger)materialId {
+    if (!_renderer || materialId <= 0) return nil;
+    const auto materials = _renderer->materialSnapshots();
+    if (static_cast<std::size_t>(materialId) > materials.size()) return nil;
+    const auto& material = materials[static_cast<std::size_t>(materialId - 1)];
+    return @[@(material.baseColor.x), @(material.baseColor.y), @(material.baseColor.z),
+             @(material.baseColor.w), @(material.emissive.x), @(material.emissive.y),
+             @(material.emissive.z), @(material.metallic), @(material.roughness),
+             @(material.normalScale), @(material.occlusionStrength), @(material.alphaCutoff),
+             @(material.overridden)];
+}
+
+- (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values {
+    if (!_renderer || materialId <= 0 || values.count != 12) return NO;
+    aether::metal::MaterialSnapshot material;
+    material.id = static_cast<std::uint32_t>(materialId);
+    material.baseColor = {values[0].floatValue, values[1].floatValue, values[2].floatValue,
+                          values[3].floatValue};
+    material.emissive = {values[4].floatValue, values[5].floatValue, values[6].floatValue};
+    material.metallic = values[7].floatValue;
+    material.roughness = values[8].floatValue;
+    material.normalScale = values[9].floatValue;
+    material.occlusionStrength = values[10].floatValue;
+    material.alphaCutoff = values[11].floatValue;
+    const auto result = _renderer->setMaterialOverride(material);
+    if (!result) NSLog(@"AETHER material override failed: %s", result.error().describe().c_str());
+    return result.has_value();
+}
+
+- (BOOL)clearMaterialForId:(NSInteger)materialId {
+    if (!_renderer || materialId <= 0) return NO;
+    const auto result = _renderer->clearMaterialOverride(static_cast<std::uint32_t>(materialId));
+    if (!result) NSLog(@"AETHER material reset failed: %s", result.error().describe().c_str());
+    return result.has_value();
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -388,6 +436,8 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     NSArray<NSString*>* names = [_rendererDelegate loadSceneAtPath:_scenePath];
     if (self.onMeshEntitiesChanged)
         self.onMeshEntitiesChanged(names);
+    if (self.onMaterialsChanged)
+        self.onMaterialsChanged([_rendererDelegate materialNames]);
 }
 
 - (NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId {
@@ -400,5 +450,17 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (BOOL)clearMeshTransformForEntity:(NSInteger)entityId {
     return [_rendererDelegate clearMeshTransformForEntity:entityId];
+}
+
+- (NSArray<NSNumber*>*)materialForId:(NSInteger)materialId {
+    return [_rendererDelegate materialForId:materialId];
+}
+
+- (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values {
+    return [_rendererDelegate setMaterialForId:materialId values:values];
+}
+
+- (BOOL)clearMaterialForId:(NSInteger)materialId {
+    return [_rendererDelegate clearMaterialForId:materialId];
 }
 @end

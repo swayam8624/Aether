@@ -7,7 +7,11 @@ struct AetherViewport: NSViewRepresentable {
     @Binding var selectedMeshId: Int?
     @Binding var selectedMeshTransform: AetherTransformOverride?
     @Binding var meshEntityNames: [String]
+    @Binding var selectedMaterialId: Int?
+    @Binding var selectedMaterial: AetherMaterialOverride?
+    @Binding var materialNames: [String]
     let transformOverrides: [String: AetherTransformOverride]
+    let materialOverrides: [String: AetherMaterialOverride]
     let gaussianDebugMode: Int
     let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
@@ -16,6 +20,8 @@ struct AetherViewport: NSViewRepresentable {
         var scenePath: String?
         var selectedMeshId: Int?
         var appliedOverrides: [String: AetherTransformOverride] = [:]
+        var selectedMaterialId: Int?
+        var appliedMaterials: [String: AetherMaterialOverride] = [:]
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -29,10 +35,13 @@ struct AetherViewport: NSViewRepresentable {
             selectedMeshTransform = !gaussian ? readTransform(view, entityId: Int(entityId)) : nil
         }
         view.onMeshEntitiesChanged = { names in meshEntityNames = names }
+        view.onMaterialsChanged = { names in materialNames = names }
         view.scenePath = scenePath
         applyOverrides(transformOverrides, to: view, previous: [:])
+        applyMaterialOverrides(materialOverrides, to: view, previous: [:])
         context.coordinator.scenePath = scenePath
         context.coordinator.appliedOverrides = transformOverrides
+        context.coordinator.appliedMaterials = materialOverrides
         view.gaussianDebugMode = gaussianDebugMode
         view.exposureStops = exposureStops
         return view
@@ -46,6 +55,7 @@ struct AetherViewport: NSViewRepresentable {
             selectedMeshTransform = !gaussian ? readTransform(nsView, entityId: Int(entityId)) : nil
         }
         nsView.onMeshEntitiesChanged = { names in meshEntityNames = names }
+        nsView.onMaterialsChanged = { names in materialNames = names }
         if context.coordinator.scenePath != scenePath {
             nsView.scenePath = scenePath
             context.coordinator.scenePath = scenePath
@@ -60,10 +70,24 @@ struct AetherViewport: NSViewRepresentable {
                 DispatchQueue.main.async { selectedMeshTransform = snapshot }
             }
         }
+        if context.coordinator.appliedMaterials != materialOverrides {
+            applyMaterialOverrides(materialOverrides, to: nsView,
+                                   previous: context.coordinator.appliedMaterials)
+            context.coordinator.appliedMaterials = materialOverrides
+            if let selectedMaterialId {
+                let snapshot = readMaterial(nsView, materialId: selectedMaterialId)
+                DispatchQueue.main.async { selectedMaterial = snapshot }
+            }
+        }
         if context.coordinator.selectedMeshId != selectedMeshId {
             context.coordinator.selectedMeshId = selectedMeshId
             let snapshot = selectedMeshId.flatMap { readTransform(nsView, entityId: $0) }
             DispatchQueue.main.async { selectedMeshTransform = snapshot }
+        }
+        if context.coordinator.selectedMaterialId != selectedMaterialId {
+            context.coordinator.selectedMaterialId = selectedMaterialId
+            let snapshot = selectedMaterialId.flatMap { readMaterial(nsView, materialId: $0) }
+            DispatchQueue.main.async { selectedMaterial = snapshot }
         }
         nsView.gaussianDebugMode = gaussianDebugMode
         nsView.exposureStops = exposureStops
@@ -89,6 +113,26 @@ struct AetherViewport: NSViewRepresentable {
             guard let entityId = Int(key) else { continue }
             let numbers = transform.values.map { NSNumber(value: $0) }
             _ = view.setMeshTransformForEntity(entityId, values: numbers)
+        }
+    }
+
+    private func readMaterial(_ view: AetherViewportView,
+                              materialId: Int) -> AetherMaterialOverride? {
+        guard materialId > 0, let numbers = view.material(forId: materialId), numbers.count == 13
+        else { return nil }
+        return AetherMaterialOverride(values: numbers.prefix(12).map(\.floatValue))
+    }
+
+    private func applyMaterialOverrides(_ overrides: [String: AetherMaterialOverride],
+                                        to view: AetherViewportView,
+                                        previous: [String: AetherMaterialOverride]) {
+        for key in previous.keys where overrides[key] == nil {
+            if let materialId = Int(key) { _ = view.clearMaterial(forId: materialId) }
+        }
+        for (key, material) in overrides where previous[key] != material {
+            guard let materialId = Int(key) else { continue }
+            _ = view.setMaterialForId(materialId,
+                                      values: material.values.map { NSNumber(value: $0) })
         }
     }
 }
