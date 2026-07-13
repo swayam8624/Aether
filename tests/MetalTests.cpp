@@ -399,6 +399,28 @@ int main() {
         return 1;
     }
     std::filesystem::remove(packagePath);
+    for (std::uint32_t frameIndex = 0; frameIndex < 2; ++frameIndex) {
+        const auto completedBeforeGaussian = (*renderer)->statistics().completedFrames;
+        (*renderer)->draw(testView.get());
+        for (std::uint32_t attempt = 0;
+             attempt < 100 &&
+             (*renderer)->statistics().completedFrames <= completedBeforeGaussian;
+             ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if ((*renderer)->statistics().completedFrames <= completedBeforeGaussian) {
+            std::cerr << "Gaussian temporal composition frame did not complete\n";
+            pool->release();
+            return 1;
+        }
+    }
+    const auto gaussianMotion = (*renderer)->sampleMotionVector(160, 90);
+    if (!gaussianMotion || gaussianMotion->w < 0.5F || gaussianMotion->z <= 0.0F ||
+        gaussianMotion->z >= 1.0F || std::abs(gaussianMotion->x) > 0.02F ||
+        std::abs(gaussianMotion->y) > 0.02F) {
+        std::cerr << "Gaussian temporal composition did not emit bounded camera motion and depth\n";
+        pool->release();
+        return 1;
+    }
     constexpr std::size_t width = 9;
     constexpr std::size_t height = 9;
     auto color = makeTexture(device.get(), MTL::PixelFormatRGBA32Float, width, height);

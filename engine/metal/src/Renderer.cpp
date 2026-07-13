@@ -288,6 +288,12 @@ void Renderer::draw(MTK::View* view) noexcept {
         pool->release();
         return;
     }
+    if (auto targets = ensureGaussianTargets(targetWidth, targetHeight); !targets) {
+        Log::instance().write(LogLevel::error, targets.error().describe());
+        dispatch_semaphore_signal(frameSemaphore_);
+        pool->release();
+        return;
+    }
     const std::uint64_t jitterIndex = frameNumber_ % 8U + 1U;
     const simd_float2 jitterPixels{halton(jitterIndex, 2U) - 0.5F,
                                    halton(jitterIndex, 3U) - 0.5F};
@@ -606,16 +612,26 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
     encoder->setLabel(NS::String::string("Scene HDR Pass", NS::UTF8StringEncoding));
     encoder->setRenderPipelineState(sceneBackgroundPipeline_.get());
-    AetherPresentationUniforms scenePresentation{};
-    scenePresentation.mode = presentGaussians ? 1U : 0U;
-    encoder->setFragmentBytes(&scenePresentation, sizeof(scenePresentation), 0);
-    if (presentGaussians)
-        encoder->setFragmentTexture(gaussianColor_.get(), 0);
-    else
-        encoder->setFragmentTexture(fallbackWhiteTexture_.get(), 0);
-    encoder->setFragmentTexture(fallbackWhiteTexture_.get(), 1);
-    encoder->setFragmentTexture(fallbackWhiteTexture_.get(), 2);
-    encoder->setFragmentSamplerState(temporalSampler_.get(), 0);
+    encoder->setDepthStencilState(gaussianCompositionDepthState_.get());
+    AetherGaussianCompositionUniforms gaussianComposition{};
+    if (jitteredMeshProjection && meshView) {
+        const simd_float4x4 currentViewProjection =
+            simd_mul(*jitteredMeshProjection, *meshView);
+        gaussianComposition.inverseCurrentViewProjection = simd_inverse(currentViewProjection);
+        gaussianComposition.previousViewProjection = temporalHistoryValid_
+                                                         ? previousViewProjection_
+                                                         : currentViewProjection;
+    } else {
+        gaussianComposition.inverseCurrentViewProjection = matrix_identity_float4x4;
+        gaussianComposition.previousViewProjection = matrix_identity_float4x4;
+    }
+    gaussianComposition.depthHistoryOpacity = {
+        meshCamera.nearPlane, presentGaussians ? 1.0F : 0.0F,
+        temporalHistoryValid_ ? 1.0F : 0.0F, 1.0F / 255.0F};
+    encoder->setFragmentBytes(&gaussianComposition, sizeof(gaussianComposition), 0);
+    encoder->setFragmentTexture(gaussianColor_.get(), 0);
+    encoder->setFragmentTexture(gaussianDepth_.get(), 1);
+    encoder->setFragmentTexture(gaussianIds_.get(), 2);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
     if (!meshPrimitives_.empty() && pbrPipeline_ && reverseZDepthState_) {
@@ -1861,7 +1877,9 @@ Result<void> Renderer::buildViewportPipeline() {
         NS::String::string("aetherViewportVertex", NS::UTF8StringEncoding)));
     auto fragment = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherViewportFragment", NS::UTF8StringEncoding)));
-    if (!vertex || !fragment) {
+    auto sceneBackgroundFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherSceneBackgroundFragment", NS::UTF8StringEncoding)));
+    if (!vertex || !fragment || !sceneBackgroundFragment) {
         return fail(ErrorCode::metal, "Offline shader library is missing viewport entry points");
     }
 
@@ -1928,6 +1946,7 @@ Result<void> Renderer::buildViewportPipeline() {
     }
     descriptor->setLabel(
         NS::String::string("AETHER HDR Background Pipeline", NS::UTF8StringEncoding));
+    descriptor->setFragmentFunction(sceneBackgroundFragment.get());
     descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     descriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
     descriptor->colorAttachments()->object(2)->setPixelFormat(MTL::PixelFormatRGBA16Float);
@@ -2155,6 +2174,14 @@ Result<void> Renderer::buildViewportPipeline() {
     if (!reverseZDepthState_) {
         return fail(ErrorCode::metal, "Unable to create reverse-Z depth state");
     }
+    depthDescriptor->setLabel(
+        NS::String::string("AETHER Gaussian Composition Depth", NS::UTF8StringEncoding));
+    depthDescriptor->setDepthCompareFunction(MTL::CompareFunctionGreaterEqual);
+    gaussianCompositionDepthState_ = adopt(device_->newDepthStencilState(depthDescriptor.get()));
+    if (!gaussianCompositionDepthState_)
+        return fail(ErrorCode::resourceExhausted,
+                    "Unable to create Gaussian composition depth state");
+    depthDescriptor->setDepthCompareFunction(MTL::CompareFunctionGreater);
     depthDescriptor->setLabel(
         NS::String::string("AETHER Reverse-Z Read-Only Depth", NS::UTF8StringEncoding));
     depthDescriptor->setDepthWriteEnabled(false);

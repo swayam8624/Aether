@@ -4,6 +4,7 @@
 
 static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherPresentationUniforms) == 16);
+static_assert(sizeof(AetherGaussianCompositionUniforms) == 144);
 static_assert(sizeof(AetherBloomUniforms) == 16);
 static_assert(sizeof(AetherTemporalUniforms) == 144);
 static_assert(sizeof(AetherGizmoUniforms) == 96);

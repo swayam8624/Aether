@@ -84,8 +84,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Previous-pose joint palettes and morph weights evaluated in morph-before-skin order for
   deforming motion vectors.
 - [x] Selectable directional-cascade and local-light shadow-map diagnostics in Studio.
-- [ ] Gaussian temporal depth and
-  isolated PBR/shadow/Gaussian golden fixtures.
+- [x] Gaussian reverse-Z scene depth and camera-motion reprojection for temporal history.
+- [ ] Isolated PBR/shadow/Gaussian golden fixtures.
 - [ ] Rotation/scale gizmo modes and generalized scene serialization.
 
 ## Phase 3 — Standard Gaussian renderer

@@ -47,6 +47,13 @@ struct AetherTemporalUniforms {
     AetherFloat4 historyParameters;
 };
 
+struct AetherGaussianCompositionUniforms {
+    AetherFloat4x4 inverseCurrentViewProjection;
+    AetherFloat4x4 previousViewProjection;
+    // near plane, Gaussian-present flag, history-valid flag, minimum opacity
+    AetherFloat4 depthHistoryOpacity;
+};
+
 struct AetherGizmoUniforms {
     AetherFloat4x4 viewProjection;
     // origin xyz, world-space axis length
@@ -209,6 +216,7 @@ static_assert(sizeof(AetherLocalShadowUniforms) == 1136);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);
+static_assert(sizeof(AetherGaussianCompositionUniforms) == 144);
 static_assert(sizeof(AetherProjectedGaussian) == 80);
 static_assert(sizeof(AetherGaussianCounters) == 16);
 #endif

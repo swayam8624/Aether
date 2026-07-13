@@ -16,6 +16,54 @@ vertex ViewportOutput aetherViewportVertex(uint vertexId [[vertex_id]]) {
     return output;
 }
 
+struct SceneBackgroundOutput {
+    float4 color [[color(0)]];
+    uint entityId [[color(1)]];
+    float4 motion [[color(2)]];
+    float depth [[depth(greater)]];
+};
+
+fragment SceneBackgroundOutput aetherSceneBackgroundFragment(
+    ViewportOutput input [[stage_in]],
+    constant AetherGaussianCompositionUniforms& composition [[buffer(0)]],
+    texture2d<float> gaussianColor [[texture(0)]],
+    texture2d<float> gaussianDepth [[texture(1)]],
+    texture2d<uint> gaussianIds [[texture(2)]]) {
+    const float3 background = float3(0.025f + input.uv.x * 0.02f);
+    SceneBackgroundOutput output{float4(background, 1.0f), 0u, float4(0.0f), 0.0f};
+    if (composition.depthHistoryOpacity.y < 0.5f)
+        return output;
+
+    const uint2 dimensions(gaussianColor.get_width(), gaussianColor.get_height());
+    const uint2 pixel = min(uint2(input.position.xy), dimensions - 1u);
+    const float4 gaussian = gaussianColor.read(pixel);
+    const float linearDepth = gaussianDepth.read(pixel).r;
+    if (!isfinite(linearDepth) || linearDepth <= 0.0f ||
+        gaussian.a < composition.depthHistoryOpacity.w)
+        return output;
+
+    output.color = float4(gaussian.rgb + (1.0f - gaussian.a) * background, 1.0f);
+    output.entityId = gaussianIds.read(pixel).r;
+    output.depth = clamp(composition.depthHistoryOpacity.x / linearDepth, 0.0f, 1.0f);
+
+    const float2 currentUv = (float2(pixel) + 0.5f) / float2(dimensions);
+    const float4 currentClip(float2(currentUv.x * 2.0f - 1.0f,
+                                    1.0f - currentUv.y * 2.0f),
+                             output.depth, 1.0f);
+    float4 world = composition.inverseCurrentViewProjection * currentClip;
+    world /= world.w;
+    const float4 previousClip = composition.previousViewProjection * world;
+    if (composition.depthHistoryOpacity.z > 0.5f && previousClip.w > 0.0f) {
+        const float3 previousNdc = previousClip.xyz / previousClip.w;
+        const float2 previousUv(previousNdc.x * 0.5f + 0.5f,
+                                0.5f - previousNdc.y * 0.5f);
+        if (all(previousUv >= 0.0f) && all(previousUv <= 1.0f) &&
+            previousNdc.z >= 0.0f && previousNdc.z <= 1.0f)
+            output.motion = float4(currentUv - previousUv, previousNdc.z, 1.0f);
+    }
+    return output;
+}
+
 float3 acesPresentation(float3 color) {
     constexpr float a = 2.51f;
     constexpr float b = 0.03f;

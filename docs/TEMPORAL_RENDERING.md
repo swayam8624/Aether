@@ -16,8 +16,15 @@ Skinned and morphed draws bind separate prior joint palettes and prior morph wei
 path evaluates both current and previous positions in morph-before-skin order, while shadow passes
 continue consuming only the current bindings. Palette upload preflight accounts for both copies,
 prior scene-node worlds advance after encoding, and a real skinned frame runs under Metal API and
-shader validation. Pixels without mesh reverse-Z depth, including the current Gaussian background
-path, do not accumulate history rather than risking camera-motion ghosting.
+shader validation.
+
+Gaussian composition converts the rasterizer's front-contributor positive camera depth into the
+same infinite-projection reverse-Z depth used by meshes. It writes Gaussian source IDs and depth
+into the shared scene targets, reconstructs world position with the inverse current jittered
+view-projection, and projects it through the previous jittered view-projection to emit camera-motion
+vectors and previous reverse-Z depth. Invalid, empty, sub-threshold, offscreen, or first-frame
+samples explicitly carry zero validity and do not accumulate history. This also establishes shared
+depth semantics for subsequent hybrid mesh/splat occlusion.
 
 Bloom runs after temporal resolve and before presentation. A soft-knee thresholded nine-tap
 downsample produces a half-resolution buffer, followed by a second filtered quarter-resolution
