@@ -1200,10 +1200,14 @@ Result<void> Renderer::buildViewportPipeline() {
     if (!pbrVertex || !pbrFragment) {
         return fail(ErrorCode::metal, "Offline shader library is missing PBR entry points");
     }
+    auto shadowVertex = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherShadowVertex", NS::UTF8StringEncoding)));
+    if (!shadowVertex)
+        return fail(ErrorCode::metal, "Offline shader library is missing shadow caster entry point");
     auto shadowDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
     shadowDescriptor->setLabel(
         NS::String::string("AETHER Cascaded Shadow Pipeline", NS::UTF8StringEncoding));
-    shadowDescriptor->setVertexFunction(pbrVertex.get());
+    shadowDescriptor->setVertexFunction(shadowVertex.get());
     shadowDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
     error = nullptr;
     shadowPipeline_ = adopt(device_->newRenderPipelineState(shadowDescriptor.get(), &error));

@@ -20,3 +20,7 @@ The renderer now owns a labeled four-slice Depth32 shadow array, comparison samp
 pipeline, receiver ABI, cascade selection, normal/depth bias fields, and 3x3 PCF implementation.
 Resources are initialized to fully lit depth and all bindings pass Metal API validation. Actual
 per-frame caster submission is still pending, so the roadmap does not yet claim rendered shadows.
+
+The offline library also contains a dedicated depth-only caster vertex entry point. It consumes the
+same vertex, joint-palette, morph-delta, morph-weight, and draw-uniform bindings as PBR and applies
+morphing before skinning in the same order. Cascade submission remains the active renderer task.
