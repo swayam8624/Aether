@@ -20,6 +20,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (void)addCameraDolly:(CGFloat)amount;
 - (void)clearCameraMovement;
 - (NSInteger)pickGaussianX:(NSUInteger)x y:(NSUInteger)y;
+- (NSInteger)pickMeshX:(NSUInteger)x y:(NSUInteger)y;
 - (void)setGaussianDebugMode:(NSInteger)mode;
 - (void)setExposureStops:(float)stops;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
@@ -145,6 +146,18 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     return static_cast<NSInteger>(*result);
 }
 
+- (NSInteger)pickMeshX:(NSUInteger)x y:(NSUInteger)y {
+    if (!_renderer)
+        return 0;
+    const auto result =
+        _renderer->pickMesh(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+    if (!result) {
+        NSLog(@"AETHER mesh pick failed: %s", result.error().describe().c_str());
+        return 0;
+    }
+    return static_cast<NSInteger>(*result);
+}
+
 - (void)setGaussianDebugMode:(NSInteger)mode {
     if (_renderer)
         _renderer->setGaussianDebugMode(static_cast<std::uint32_t>(MAX(0, mode)));
@@ -265,9 +278,13 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     const double topOriginY = static_cast<double>(height) - 1.0 - backing.y;
     const NSUInteger y =
         static_cast<NSUInteger>(std::clamp(topOriginY, 0.0, static_cast<double>(height - 1)));
-    const NSInteger sourceId = [_rendererDelegate pickGaussianX:x y:y];
-    if (self.onGaussianPicked)
-        self.onGaussianPicked(sourceId);
+    const NSString* sceneExtension = _scenePath.pathExtension.lowercaseString;
+    const BOOL gaussian = [sceneExtension isEqualToString:@"ply"] ||
+                          [sceneExtension isEqualToString:@"aether"];
+    const NSInteger entityId = gaussian ? [_rendererDelegate pickGaussianX:x y:y]
+                                        : [_rendererDelegate pickMeshX:x y:y];
+    if (self.onEntityPicked)
+        self.onEntityPicked(entityId, gaussian);
 }
 
 - (void)rightMouseDragged:(NSEvent*)event {

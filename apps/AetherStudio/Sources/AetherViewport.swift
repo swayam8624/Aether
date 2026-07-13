@@ -4,6 +4,7 @@ import SwiftUI
 struct AetherViewport: NSViewRepresentable {
     let scenePath: String?
     @Binding var selectedGaussianId: Int?
+    @Binding var selectedMeshId: Int?
     let gaussianDebugMode: Int
     let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
@@ -12,8 +13,9 @@ struct AetherViewport: NSViewRepresentable {
         let view = AetherViewportView(frame: .zero)
         view.preferredFramesPerSecond = preferredFramesPerSecond
         view.scenePath = scenePath
-        view.onGaussianPicked = { sourceId in
-            selectedGaussianId = sourceId == 0 ? nil : Int(sourceId)
+        view.onEntityPicked = { entityId, gaussian in
+            selectedGaussianId = gaussian && entityId != 0 ? Int(entityId) : nil
+            selectedMeshId = !gaussian && entityId != 0 ? Int(entityId) : nil
         }
         view.gaussianDebugMode = gaussianDebugMode
         view.exposureStops = exposureStops
@@ -23,8 +25,9 @@ struct AetherViewport: NSViewRepresentable {
     func updateNSView(_ nsView: AetherViewportView, context: Context) {
         nsView.preferredFramesPerSecond = preferredFramesPerSecond
         nsView.scenePath = scenePath
-        nsView.onGaussianPicked = { sourceId in
-            selectedGaussianId = sourceId == 0 ? nil : Int(sourceId)
+        nsView.onEntityPicked = { entityId, gaussian in
+            selectedGaussianId = gaussian && entityId != 0 ? Int(entityId) : nil
+            selectedMeshId = !gaussian && entityId != 0 ? Int(entityId) : nil
         }
         nsView.gaussianDebugMode = gaussianDebugMode
         nsView.exposureStops = exposureStops

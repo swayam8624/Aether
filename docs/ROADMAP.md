@@ -67,9 +67,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   complete HDR presentation path.
 - [x] SHA-256-keyed Metal binary archives, preventing stale shader/ABI cache deserialization after
   application upgrades.
+- [x] Depth-tested R32Uint mesh entity picking through C++, Objective-C++, and SwiftUI, with visible
+  entity and background integration assertions.
 - [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
-- [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
+- [ ] Outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer
 

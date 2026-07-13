@@ -211,6 +211,13 @@ int main() {
         pool->release();
         return 1;
     }
+    const auto pickedMesh = (*renderer)->pickMesh(160, 90);
+    const auto pickedBackground = (*renderer)->pickMesh(4, 4);
+    if (!pickedMesh || *pickedMesh != 1 || !pickedBackground || *pickedBackground != 0) {
+        std::cerr << "Depth-tested mesh entity-ID picking disagrees with the golden fixture\n";
+        pool->release();
+        return 1;
+    }
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

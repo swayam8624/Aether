@@ -117,7 +117,12 @@ float directionalShadowVisibility(float3 worldPosition, float3 normal, uint casc
     return visibility / 9.0f;
 }
 
-fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
+struct PbrFragmentOutput {
+    float4 color [[color(0)]];
+    uint entityId [[color(1)]];
+};
+
+fragment PbrFragmentOutput aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  constant AetherFrameUniforms& frame [[buffer(1)]],
                                  constant AetherMaterialUniforms& material [[buffer(2)]],
                                  texture2d<float> baseColorTexture [[texture(0)]],
@@ -314,5 +319,5 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                   gpuLight.colorIntensity.w * attenuation * nDotL * visibility;
     }
     float3 color = ambient + direct + emissive;
-    return float4(color, sampledBaseColor.a);
+    return PbrFragmentOutput{float4(color, sampledBaseColor.a), frame.drawIds.x};
 }

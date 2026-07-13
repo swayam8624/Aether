@@ -74,6 +74,8 @@ class Renderer final {
     /// Input: top-left-origin drawable pixel coordinate.
     /// Output: 1-based Gaussian source ID, or zero for background.
     [[nodiscard]] Result<std::uint32_t> pickGaussian(std::uint32_t x, std::uint32_t y);
+    /// Returns a 1-based visible mesh-instance ID, or zero for background.
+    [[nodiscard]] Result<std::uint32_t> pickMesh(std::uint32_t x, std::uint32_t y);
     void setCameraMovement(scene::CameraMove movement, bool active) noexcept;
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
@@ -188,6 +190,7 @@ class Renderer final {
     MetalPtr<MTL::Texture> gaussianIds_;
     MetalPtr<MTL::Texture> sceneHdrColor_;
     MetalPtr<MTL::Texture> sceneDepth_;
+    MetalPtr<MTL::Texture> sceneIds_;
     MetalPtr<MTL::Texture> bloomHalf_;
     MetalPtr<MTL::Texture> bloomQuarter_;
     std::array<MetalPtr<MTL::Texture>, 2> temporalColorHistory_;

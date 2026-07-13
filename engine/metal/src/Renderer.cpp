@@ -545,6 +545,11 @@ void Renderer::draw(MTK::View* view) noexcept {
     sceneColorAttachment->setLoadAction(MTL::LoadActionClear);
     sceneColorAttachment->setStoreAction(MTL::StoreActionStore);
     sceneColorAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 1.0));
+    auto* sceneIdAttachment = scenePass->colorAttachments()->object(1);
+    sceneIdAttachment->setTexture(sceneIds_.get());
+    sceneIdAttachment->setLoadAction(MTL::LoadActionClear);
+    sceneIdAttachment->setStoreAction(MTL::StoreActionStore);
+    sceneIdAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 0.0));
     auto* sceneDepthAttachment = scenePass->depthAttachment();
     sceneDepthAttachment->setTexture(sceneDepth_.get());
     sceneDepthAttachment->setLoadAction(MTL::LoadActionClear);
@@ -710,6 +715,8 @@ void Renderer::draw(MTK::View* view) noexcept {
                         const auto& material = meshMaterials_.at(primitive.materialIndex);
                         uniforms.model = instance.worldTransform;
                         uniforms.normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
+                        uniforms.drawIds = {static_cast<std::uint32_t>(instanceIndex + 1U), 0U, 0U,
+                                            0U};
                         encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
                         encoder->setFragmentBytes(&uniforms, sizeof(uniforms), 1);
                         if (!bindDeformation(encoder, instanceIndex)) continue;
@@ -1297,10 +1304,38 @@ Result<std::uint32_t> Renderer::pickGaussian(std::uint32_t x, std::uint32_t y) {
     return sourceId;
 }
 
+Result<std::uint32_t> Renderer::pickMesh(std::uint32_t x, std::uint32_t y) {
+    if (!sceneIds_)
+        return fail(ErrorCode::invalidArgument, "No mesh entity-ID target is available");
+    if (x >= sceneTargetWidth_ || y >= sceneTargetHeight_)
+        return fail(ErrorCode::invalidArgument, "Mesh pick coordinate is outside the viewport");
+    constexpr std::size_t readbackBytesPerRow = 256;
+    auto readback = adopt(device_->newBuffer(readbackBytesPerRow, MTL::ResourceStorageModeShared));
+    MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
+    MTL::BlitCommandEncoder* blit = commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+    if (!readback || !commandBuffer || !blit)
+        return fail(ErrorCode::metal, "Unable to allocate mesh pick readback");
+    readback->setLabel(NS::String::string("Mesh Pick Readback", NS::UTF8StringEncoding));
+    blit->setLabel(NS::String::string("Mesh Entity-ID Pick", NS::UTF8StringEncoding));
+    blit->copyFromTexture(sceneIds_.get(), 0, 0, MTL::Origin::Make(x, y, 0),
+                          MTL::Size::Make(1, 1, 1), readback.get(), 0, readbackBytesPerRow,
+                          readbackBytesPerRow);
+    blit->endEncoding();
+    commandBuffer->commit();
+    commandBuffer->waitUntilCompleted();
+    if (commandBuffer->status() == MTL::CommandBufferStatusError)
+        return fail(ErrorCode::metal, "Mesh pick command buffer failed");
+    std::uint32_t entityId{};
+    std::memcpy(&entityId, readback->contents(), sizeof(entityId));
+    if (entityId > meshInstances_.size())
+        return fail(ErrorCode::corruptData, "Mesh pick target contains an invalid entity ID");
+    return entityId;
+}
+
 Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Scene render target dimensions are zero");
-    if (sceneHdrColor_ && sceneDepth_ && bloomHalf_ && bloomQuarter_ && temporalColorHistory_[0] &&
+    if (sceneHdrColor_ && sceneDepth_ && sceneIds_ && bloomHalf_ && bloomQuarter_ && temporalColorHistory_[0] &&
         temporalColorHistory_[1] && temporalDepthHistory_[0] && temporalDepthHistory_[1] &&
         sceneTargetWidth_ == width &&
         sceneTargetHeight_ == height)
@@ -1321,6 +1356,14 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     depthDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
     auto color = adopt(device_->newTexture(colorDescriptor.get()));
     auto depth = adopt(device_->newTexture(depthDescriptor.get()));
+    auto idDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    idDescriptor->setTextureType(MTL::TextureType2D);
+    idDescriptor->setPixelFormat(MTL::PixelFormatR32Uint);
+    idDescriptor->setWidth(width);
+    idDescriptor->setHeight(height);
+    idDescriptor->setStorageMode(MTL::StorageModePrivate);
+    idDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    auto ids = adopt(device_->newTexture(idDescriptor.get()));
     colorDescriptor->setWidth(std::max<std::uint32_t>(1U, width / 2U));
     colorDescriptor->setHeight(std::max<std::uint32_t>(1U, height / 2U));
     auto bloomHalf = adopt(device_->newTexture(colorDescriptor.get()));
@@ -1342,7 +1385,7 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
         historyColor[index] = adopt(device_->newTexture(colorDescriptor.get()));
         historyDepth[index] = adopt(device_->newTexture(historyDepthDescriptor.get()));
     }
-    if (!color || !depth || !bloomHalf || !bloomQuarter || !historyColor[0] ||
+    if (!color || !depth || !ids || !bloomHalf || !bloomQuarter || !historyColor[0] ||
         !historyColor[1] || !historyDepth[0] ||
         !historyDepth[1])
         return fail(ErrorCode::resourceExhausted, "Unable to allocate HDR scene targets");
@@ -1350,6 +1393,8 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     depth->setLabel(NS::String::string("Scene Reverse-Z Depth", NS::UTF8StringEncoding));
     sceneHdrColor_ = std::move(color);
     sceneDepth_ = std::move(depth);
+    ids->setLabel(NS::String::string("Scene Entity IDs", NS::UTF8StringEncoding));
+    sceneIds_ = std::move(ids);
     bloomHalf->setLabel(NS::String::string("Bloom Half Resolution", NS::UTF8StringEncoding));
     bloomQuarter->setLabel(NS::String::string("Bloom Quarter Resolution", NS::UTF8StringEncoding));
     bloomHalf_ = std::move(bloomHalf);
@@ -1558,6 +1603,7 @@ Result<void> Renderer::buildViewportPipeline() {
     descriptor->setLabel(
         NS::String::string("AETHER HDR Background Pipeline", NS::UTF8StringEncoding));
     descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    descriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
     if (binaryArchive_) {
         error = nullptr;
         (void)binaryArchive_->addRenderPipelineFunctions(descriptor.get(), &error);
@@ -1712,6 +1758,7 @@ Result<void> Renderer::buildViewportPipeline() {
     pbrDescriptor->setVertexFunction(pbrVertex.get());
     pbrDescriptor->setFragmentFunction(pbrFragment.get());
     pbrDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    pbrDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
     pbrDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
     if (binaryArchive_) {
         pbrDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));

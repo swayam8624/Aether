@@ -90,6 +90,8 @@ struct AetherFrameUniforms {
     AetherFloat4 cameraPosition;
     AetherFloat4 lightDirectionIntensity;
     AetherFloat4 lightColorExposure;
+    // 1-based entity ID, reserved
+    AetherUInt4 drawIds;
 };
 
 struct AetherGpuLight {
@@ -186,7 +188,7 @@ static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);
 static_assert(sizeof(AetherMorphDelta) == 48);
 static_assert(sizeof(AetherMorphDraw) == 16);
-static_assert(sizeof(AetherFrameUniforms) == 304);
+static_assert(sizeof(AetherFrameUniforms) == 320);
 static_assert(sizeof(AetherGpuLight) == 64);
 static_assert(sizeof(AetherLightCluster) == 8);
 static_assert(sizeof(AetherClusterUniforms) == 32);

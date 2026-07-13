@@ -49,6 +49,7 @@ struct ContentView: View {
     let projectURL: URL?
     @State private var selection: Workspace? = .scene
     @State private var selectedGaussianId: Int?
+    @State private var selectedMeshId: Int?
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
@@ -101,6 +102,7 @@ struct ContentView: View {
                 } else {
                     AetherViewport(scenePath: resolvedScenePath,
                                    selectedGaussianId: $selectedGaussianId,
+                                   selectedMeshId: $selectedMeshId,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
@@ -113,6 +115,10 @@ struct ContentView: View {
                                     .foregroundStyle(.secondary)
                                 if let selectedGaussianId {
                                     Text("Selected Gaussian #\(selectedGaussianId)")
+                                        .font(.caption2.monospacedDigit())
+                                }
+                                if let selectedMeshId {
+                                    Text("Selected mesh entity #\(selectedMeshId)")
                                         .font(.caption2.monospacedDigit())
                                 }
                             }
@@ -130,6 +136,7 @@ struct ContentView: View {
         }
         .onChange(of: document.state.scenePath) { _, _ in
             selectedGaussianId = nil
+            selectedMeshId = nil
         }
         .onAppear {
             selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene
