@@ -974,6 +974,9 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     uploadedMaterials.reserve(loaded->materials.size());
     for (const auto& sourceMaterial : loaded->materials) {
         GpuMaterial material;
+        material.name = sourceMaterial.name.empty()
+                            ? "Material " + std::to_string(uploadedMaterials.size() + 1U)
+                            : sourceMaterial.name;
         material.textures.fill(fallbackWhiteTexture_.get());
         material.textures[2] = fallbackNormalTexture_.get();
         material.samplers.fill(fallbackSampler_.get());
@@ -1008,6 +1011,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
             material.material.uvRotation[index] = {std::cos(transform.rotation),
                                                    std::sin(transform.rotation), 0.0F, 0.0F};
         }
+        material.importedMaterial = material.material;
         material.doubleSided = sourceMaterial.doubleSided;
         material.alphaBlend = sourceMaterial.alphaBlend;
         uploadedMaterials.push_back(std::move(material));
@@ -1395,6 +1399,64 @@ Result<void> Renderer::clearMeshEntityTransform(std::uint32_t entityId) {
         instance.worldTransform, simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
     instance.worldBoundsCenter = transformed.xyz;
     instance.mirrored = simd_determinant(instance.worldTransform) < 0.0F;
+    temporalHistoryValid_ = false;
+    return {};
+}
+
+std::vector<MaterialSnapshot> Renderer::materialSnapshots() const {
+    std::vector<MaterialSnapshot> result;
+    result.reserve(meshMaterials_.size());
+    for (std::size_t index = 0; index < meshMaterials_.size(); ++index) {
+        const auto& source = meshMaterials_[index];
+        result.push_back(MaterialSnapshot{
+            static_cast<std::uint32_t>(index + 1U), source.name, source.material.baseColor,
+            source.material.emissiveMetallic.xyz, source.material.emissiveMetallic.w,
+            source.material.roughnessNormalOcclusionAlpha.x,
+            source.material.roughnessNormalOcclusionAlpha.y,
+            source.material.roughnessNormalOcclusionAlpha.z,
+            source.material.roughnessNormalOcclusionAlpha.w, source.overridden});
+    }
+    return result;
+}
+
+Result<void> Renderer::setMaterialOverride(const MaterialSnapshot& material) {
+    if (material.id == 0 || material.id > meshMaterials_.size())
+        return fail(ErrorCode::invalidArgument, "Material ID is out of range");
+    const auto finite4 = [](simd_float4 value) {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) &&
+               std::isfinite(value.w);
+    };
+    const auto finite3 = [](simd_float3 value) {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    };
+    if (!finite4(material.baseColor) || !finite3(material.emissive) ||
+        !std::isfinite(material.metallic) || !std::isfinite(material.roughness) ||
+        !std::isfinite(material.normalScale) || !std::isfinite(material.occlusionStrength) ||
+        !std::isfinite(material.alphaCutoff) || simd_reduce_min(material.baseColor) < 0.0F ||
+        simd_reduce_max(material.baseColor) > 1.0F || simd_reduce_min(material.emissive) < 0.0F ||
+        simd_reduce_max(material.emissive) > 65'504.0F || material.metallic < 0.0F ||
+        material.metallic > 1.0F || material.roughness < 0.0F || material.roughness > 1.0F ||
+        material.normalScale < 0.0F || material.normalScale > 8.0F ||
+        material.occlusionStrength < 0.0F || material.occlusionStrength > 1.0F ||
+        material.alphaCutoff < 0.0F || material.alphaCutoff > 1.0F)
+        return fail(ErrorCode::invalidArgument, "Material override factors are invalid");
+    auto& destination = meshMaterials_[material.id - 1U];
+    destination.material.baseColor = material.baseColor;
+    destination.material.emissiveMetallic = {material.emissive.x, material.emissive.y,
+                                             material.emissive.z, material.metallic};
+    destination.material.roughnessNormalOcclusionAlpha = {
+        material.roughness, material.normalScale, material.occlusionStrength, material.alphaCutoff};
+    destination.overridden = true;
+    temporalHistoryValid_ = false;
+    return {};
+}
+
+Result<void> Renderer::clearMaterialOverride(std::uint32_t materialId) {
+    if (materialId == 0 || materialId > meshMaterials_.size())
+        return fail(ErrorCode::invalidArgument, "Material ID is out of range");
+    auto& material = meshMaterials_[materialId - 1U];
+    material.material = material.importedMaterial;
+    material.overridden = false;
     temporalHistoryValid_ = false;
     return {};
 }

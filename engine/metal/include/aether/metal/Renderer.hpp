@@ -55,6 +55,19 @@ struct MeshEntitySnapshot final {
     bool overridden{};
 };
 
+struct MaterialSnapshot final {
+    std::uint32_t id{};
+    std::string name;
+    simd_float4 baseColor{1.0F, 1.0F, 1.0F, 1.0F};
+    simd_float3 emissive{};
+    float metallic{1.0F};
+    float roughness{1.0F};
+    float normalScale{1.0F};
+    float occlusionStrength{1.0F};
+    float alphaCutoff{0.5F};
+    bool overridden{};
+};
+
 class Renderer final {
   public:
     static Result<std::unique_ptr<Renderer>> create(MTL::Device* device,
@@ -89,6 +102,9 @@ class Renderer final {
     [[nodiscard]] Result<void> setMeshEntityTransform(std::uint32_t entityId,
                                                       const scene::Transform& transform);
     [[nodiscard]] Result<void> clearMeshEntityTransform(std::uint32_t entityId);
+    [[nodiscard]] std::vector<MaterialSnapshot> materialSnapshots() const;
+    [[nodiscard]] Result<void> setMaterialOverride(const MaterialSnapshot& material);
+    [[nodiscard]] Result<void> clearMaterialOverride(std::uint32_t materialId);
     void setCameraMovement(scene::CameraMove movement, bool active) noexcept;
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
@@ -180,7 +196,10 @@ class Renderer final {
         MetalPtr<MTL::SamplerState> sampler;
     };
     struct GpuMaterial {
+        std::string name;
         AetherMaterialUniforms material{};
+        AetherMaterialUniforms importedMaterial{};
+        bool overridden{};
         bool doubleSided{};
         bool alphaBlend{};
         std::array<MTL::Texture*, 5> textures{};

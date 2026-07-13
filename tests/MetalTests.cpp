@@ -243,6 +243,30 @@ int main() {
         pool->release();
         return 1;
     }
+    auto materials = (*renderer)->materialSnapshots();
+    if (materials.empty() || materials.front().name.empty()) {
+        std::cerr << "Renderer did not expose material snapshots\n";
+        pool->release();
+        return 1;
+    }
+    auto editedMaterial = materials.front();
+    editedMaterial.metallic = 0.2F;
+    editedMaterial.roughness = 0.7F;
+    if (!(*renderer)->setMaterialOverride(editedMaterial)) {
+        std::cerr << "Renderer rejected valid material factors\n";
+        pool->release();
+        return 1;
+    }
+    materials = (*renderer)->materialSnapshots();
+    auto invalidMaterial = editedMaterial;
+    invalidMaterial.id = 0;
+    if (!materials.front().overridden || std::abs(materials.front().metallic - 0.2F) > 1.0e-6F ||
+        !(*renderer)->clearMaterialOverride(editedMaterial.id) ||
+        (*renderer)->setMaterialOverride(invalidMaterial)) {
+        std::cerr << "Material override lifecycle is inconsistent\n";
+        pool->release();
+        return 1;
+    }
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

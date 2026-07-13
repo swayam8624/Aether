@@ -39,3 +39,10 @@ changes into schema-v2 `.aetherproject` overrides keyed by stable entity ID. Ove
 after scene load, removed overrides reset the engine entity, importing a different scene clears old
 IDs, and schema-v1 documents migrate with an empty override map. Project and renderer tests cover
 round-trip persistence, v1 migration, apply/read/reset, invalid IDs, and mirrored decomposition.
+
+Materials follow the same override rule. Immutable snapshots expose stable 1-based IDs, imported
+names with deterministic fallbacks, base color, emissive, metallic, roughness, normal scale,
+occlusion strength, alpha cutoff, and override state. Factor edits preserve imported texture and UV
+bindings, enforce finite physically bounded inputs, invalidate temporal history, and reset exactly
+to the imported GPU material. The Metal integration test covers snapshot, apply, readback, reset,
+and invalid-ID rejection.
