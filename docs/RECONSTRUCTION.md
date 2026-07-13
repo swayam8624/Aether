@@ -50,6 +50,11 @@ the sorted input paths/sizes/hashes, seed, training/checkpoint budgets, and prox
 Changed inputs or settings require a new job directory; legacy jobs without a fingerprint are not
 silently adopted.
 
+Studio discovers only non-empty, canonically named `checkpoint_<iteration>.ply` milestones and
+orders them numerically. The Reconstruction workspace can render any two milestones side-by-side in
+independent Metal viewports driven by one shared camera, so geometry/appearance progress is compared
+from the same view rather than from unrelated screenshots.
+
 COLMAP 3.13.0 is selected because it provides a deterministic `random_seed` option. AETHER's job
 manifest preserves the seed, full argument vectors, pinned identities, sorted input sizes/SHA-256
 hashes, expected outputs, sparse-coverage evidence, stage logs, and resume markers. It verifies all

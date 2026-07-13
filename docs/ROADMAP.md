@@ -127,7 +127,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
 - [x] Strict Brush milestone validation, torn-checkpoint fallback, geometry-state resume, stable final
   export, and explicit optimizer-state limitation in provenance.
-- [ ] Training comparison views.
+- [x] Numerically ordered Brush milestone discovery and side-by-side Metal comparison viewports with
+  synchronized cameras in Studio.
 
 ## Phase 5 — Hybrid worlds
 

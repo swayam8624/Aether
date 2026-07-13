@@ -91,6 +91,20 @@ enum SwiftDocumentTests {
               coverage.issues == ["Image overlap graph is fragmented"] else {
             throw TestFailure("Sparse coverage evidence did not decode for Studio")
         }
+        let checkpointRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aether-checkpoint-discovery-test")
+        try? FileManager.default.removeItem(at: checkpointRoot)
+        let exports = checkpointRoot.appendingPathComponent("exports")
+        try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+        try Data("ply\nfixture".utf8).write(to: exports.appendingPathComponent("checkpoint_010.ply"))
+        try Data("ply\nfixture".utf8).write(to: exports.appendingPathComponent("checkpoint_002.ply"))
+        try Data().write(to: exports.appendingPathComponent("checkpoint_003.ply"))
+        try Data("ignored".utf8).write(to: exports.appendingPathComponent("checkpoint_bad.ply"))
+        let checkpoints = try TrainingCheckpoint.discover(in: checkpointRoot)
+        guard checkpoints.map(\.iteration) == [2, 10] && checkpoints.allSatisfy({ $0.bytes > 0 }) else {
+            throw TestFailure("Training checkpoints were not strictly discovered and ordered")
+        }
+        try FileManager.default.removeItem(at: checkpointRoot)
         print("AETHER Swift document tests passed")
     }
 }

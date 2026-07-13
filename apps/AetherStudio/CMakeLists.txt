@@ -7,6 +7,7 @@ set(AETHER_STUDIO_SOURCES
     Sources/AetherViewport.swift
     Sources/ReconstructionReport.swift
     Sources/ReconstructionWorkspace.swift
+    Sources/TrainingComparisonViewport.swift
     Bridge/AetherCaptureBridge.mm
     Bridge/AetherViewportBridge.mm
 )

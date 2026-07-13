@@ -36,6 +36,7 @@ private final class ReconstructionModel: ObservableObject {
     @Published var proxyURL: URL?
     @Published var report: CaptureReport?
     @Published var coverageReport: SparseCoverageReport?
+    @Published var checkpoints: [TrainingCheckpoint] = []
     @Published var state: State = .idle
     @Published var transcript = ""
     @Published var completedStages = 0
@@ -47,6 +48,7 @@ private final class ReconstructionModel: ObservableObject {
         outputURL = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent)-aether-job")
         report = nil
         coverageReport = nil
+        checkpoints = []
         state = .idle
     }
 
@@ -54,7 +56,11 @@ private final class ReconstructionModel: ObservableObject {
         guard let url = chooseDirectory(title: "Choose Reconstruction Job Directory") else { return }
         outputURL = url
         coverageReport = nil
-        Task { coverageReport = await readCoverageReport(from: url) }
+        checkpoints = []
+        Task {
+            coverageReport = await readCoverageReport(from: url)
+            checkpoints = await readCheckpoints(from: url)
+        }
     }
 
     func chooseCOLMAP() { colmapURL = chooseExecutable(title: "Choose COLMAP 3.13.0") }
@@ -101,6 +107,7 @@ private final class ReconstructionModel: ObservableObject {
         process = task
         transcript = ""
         coverageReport = nil
+        checkpoints = []
         completedStages = 0
         state = .running
         Task {
@@ -111,6 +118,7 @@ private final class ReconstructionModel: ObservableObject {
                 task.waitUntilExit()
                 transcript = String(decoding: data, as: UTF8.self)
                 coverageReport = await readCoverageReport(from: outputURL)
+                checkpoints = await readCheckpoints(from: outputURL)
                 process = nil
                 if task.terminationReason == .uncaughtSignal || task.terminationStatus == 130 {
                     state = .cancelled
@@ -135,6 +143,12 @@ private final class ReconstructionModel: ObservableObject {
         return await Task.detached(priority: .utility) {
             guard let data = try? Data(contentsOf: reportURL) else { return nil }
             return try? JSONDecoder().decode(SparseCoverageReport.self, from: data)
+        }.value
+    }
+
+    private func readCheckpoints(from outputURL: URL) async -> [TrainingCheckpoint] {
+        await Task.detached(priority: .utility) {
+            (try? TrainingCheckpoint.discover(in: outputURL)) ?? []
         }.value
     }
 
@@ -173,6 +187,9 @@ private final class ReconstructionModel: ObservableObject {
 
 struct ReconstructionWorkspace: View {
     @StateObject private var model = ReconstructionModel()
+    @State private var leftCheckpoint: Int?
+    @State private var rightCheckpoint: Int?
+    @State private var comparisonCamera = AetherCameraState()
 
     var body: some View {
         ScrollView {
@@ -210,6 +227,7 @@ struct ReconstructionWorkspace: View {
 
                 if let report = model.report { reportView(report) }
                 if let coverage = model.coverageReport { coverageView(coverage) }
+                if !model.checkpoints.isEmpty { checkpointComparison }
                 if !model.transcript.isEmpty {
                     GroupBox("Process result") {
                         Text(model.transcript).font(.caption.monospaced()).textSelection(.enabled)
@@ -219,6 +237,19 @@ struct ReconstructionWorkspace: View {
             }
             .padding(22)
             .frame(maxWidth: 980, alignment: .leading)
+        }
+        .onChange(of: model.checkpoints) { _, checkpoints in
+            guard !checkpoints.isEmpty else {
+                leftCheckpoint = nil
+                rightCheckpoint = nil
+                return
+            }
+            if !checkpoints.contains(where: { $0.iteration == leftCheckpoint }) {
+                leftCheckpoint = checkpoints.first?.iteration
+            }
+            if !checkpoints.contains(where: { $0.iteration == rightCheckpoint }) {
+                rightCheckpoint = checkpoints.last?.iteration
+            }
         }
     }
 
@@ -287,5 +318,54 @@ struct ReconstructionWorkspace: View {
                 }
             }.padding(6)
         }
+    }
+
+    private var checkpointComparison: some View {
+        GroupBox("Training comparison") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    checkpointPicker("Left", selection: $leftCheckpoint)
+                    checkpointPicker("Right", selection: $rightCheckpoint)
+                    Spacer()
+                    Text("Synchronized camera").font(.caption).foregroundStyle(.secondary)
+                }
+                if let left = checkpoint(leftCheckpoint), let right = checkpoint(rightCheckpoint) {
+                    HStack(spacing: 8) {
+                        comparisonPanel(left)
+                        comparisonPanel(right)
+                    }
+                    .frame(height: 360)
+                }
+            }.padding(6)
+        }
+    }
+
+    private func checkpointPicker(_ label: String, selection: Binding<Int?>) -> some View {
+        Picker(label, selection: selection) {
+            ForEach(model.checkpoints) { checkpoint in
+                Text("Step \(checkpoint.iteration.formatted())")
+                    .tag(Int?.some(checkpoint.iteration))
+            }
+        }.frame(width: 220)
+    }
+
+    private func checkpoint(_ iteration: Int?) -> TrainingCheckpoint? {
+        model.checkpoints.first { $0.iteration == iteration }
+    }
+
+    private func comparisonPanel(_ checkpoint: TrainingCheckpoint) -> some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text("Step \(checkpoint.iteration.formatted())").font(.caption.bold())
+                Spacer()
+                Text(ByteCountFormatter.string(fromByteCount: Int64(checkpoint.bytes),
+                                               countStyle: .file))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            TrainingComparisonViewport(scenePath: checkpoint.url.path, camera: $comparisonCamera)
+                .background(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .frame(maxWidth: .infinity)
     }
 }
