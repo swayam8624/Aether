@@ -63,8 +63,12 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   invalidation, and two-stage soft-knee HDR bloom.
 - [x] Two-frame offscreen MTK submission covering local shadows, temporal history, bloom, and
   presentation under Metal API and shader validation.
+- [x] Asynchronous one-shot BGRA8 frame capture and bounded second-frame golden metrics for the
+  complete HDR presentation path.
+- [x] SHA-256-keyed Metal binary archives, preventing stale shader/ABI cache deserialization after
+  application upgrades.
 - [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
-  deterministic golden-image thresholds.
+  isolated PBR/shadow/Gaussian golden fixtures.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

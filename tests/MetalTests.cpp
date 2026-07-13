@@ -160,6 +160,7 @@ int main() {
     }
     testView->setColorPixelFormat(MTL::PixelFormatBGRA8Unorm_sRGB);
     testView->setDepthStencilPixelFormat(MTL::PixelFormatDepth32Float);
+    testView->setFramebufferOnly(false);
     testView->setDrawableSize(CGSizeMake(320.0, 180.0));
     (*renderer)->draw(testView.get());
     for (std::uint32_t attempt = 0; attempt < 100 &&
@@ -171,6 +172,7 @@ int main() {
         pool->release();
         return 1;
     }
+    (*renderer)->requestFrameCapture();
     (*renderer)->draw(testView.get());
     for (std::uint32_t attempt = 0; attempt < 100 &&
                                     (*renderer)->statistics().completedFrames < 2;
@@ -178,6 +180,34 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if ((*renderer)->statistics().completedFrames < 2) {
         std::cerr << "Renderer did not complete the temporal-history frame\n";
+        pool->release();
+        return 1;
+    }
+    auto frameCapture = (*renderer)->consumeFrameCapture();
+    if (!frameCapture || frameCapture->width != 320 || frameCapture->height != 180 ||
+        frameCapture->bgra8.size() != 320U * 180U * 4U) {
+        std::cerr << "Renderer frame capture dimensions are invalid\n";
+        pool->release();
+        return 1;
+    }
+    double luminanceSum = 0.0;
+    std::size_t brightPixels = 0;
+    std::size_t opaquePixels = 0;
+    for (std::size_t pixel = 0; pixel < frameCapture->bgra8.size(); pixel += 4) {
+        const double blue = static_cast<std::uint8_t>(frameCapture->bgra8[pixel]) / 255.0;
+        const double green = static_cast<std::uint8_t>(frameCapture->bgra8[pixel + 1]) / 255.0;
+        const double red = static_cast<std::uint8_t>(frameCapture->bgra8[pixel + 2]) / 255.0;
+        const auto alpha = static_cast<std::uint8_t>(frameCapture->bgra8[pixel + 3]);
+        const double luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        luminanceSum += luminance;
+        brightPixels += luminance > 0.25 ? 1U : 0U;
+        opaquePixels += alpha == 255U ? 1U : 0U;
+    }
+    const double meanLuminance = luminanceSum / (320.0 * 180.0);
+    if (meanLuminance < 0.17 || meanLuminance > 0.20 || brightPixels < 2'500 ||
+        brightPixels > 4'500 || opaquePixels != 320U * 180U) {
+        std::cerr << "Renderer golden thresholds failed: mean=" << meanLuminance
+                  << " bright=" << brightPixels << " opaque=" << opaquePixels << '\n';
         pool->release();
         return 1;
     }

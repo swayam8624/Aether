@@ -17,9 +17,11 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <dispatch/dispatch.h>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,6 +40,12 @@ struct RendererStatistics {
     std::uint64_t submittedFrames{};
     std::uint64_t completedFrames{};
     double lastGpuMilliseconds{};
+};
+
+struct FrameCapture final {
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::vector<std::byte> bgra8;
 };
 
 class Renderer final {
@@ -77,6 +85,10 @@ class Renderer final {
         return capabilities_;
     }
     [[nodiscard]] RendererStatistics statistics() const noexcept;
+    /// Requests an asynchronous copy of the next fully presented frame.
+    void requestFrameCapture() noexcept { frameCaptureRequested_.store(true); }
+    /// Returns and consumes the most recently completed capture.
+    [[nodiscard]] Result<FrameCapture> consumeFrameCapture();
 
   private:
     Renderer(MTL::Device* device, std::filesystem::path shaderLibraryPath);
@@ -123,6 +135,9 @@ class Renderer final {
     std::array<std::unique_ptr<FrameContext>, 3> frameContexts_;
     std::atomic<std::uint64_t> completedFrames_{};
     std::atomic<double> lastGpuMilliseconds_{};
+    std::atomic<bool> frameCaptureRequested_{};
+    std::mutex frameCaptureMutex_;
+    std::optional<FrameCapture> completedFrameCapture_;
 
     struct GpuMeshPrimitive {
         MetalPtr<MTL::Buffer> vertices;

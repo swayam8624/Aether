@@ -50,4 +50,5 @@ the final ten percent of each cascade interval to suppress hard split seams. Sta
 fixtures have each run under `MTL_DEBUG_LAYER=1` without binding or draw validation errors. Cascade
 slope-scaled raster bias tuning and golden-image quality thresholds remain open. Local and
 directional shadow submission now run inside the two-frame offscreen MTK validation test alongside
-temporal resolve and bloom.
+temporal resolve and bloom. Its captured second frame must also remain inside bounded luminance,
+bright-pixel, dimension, and opacity thresholds; isolated cascade and local-light goldens remain.

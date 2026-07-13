@@ -8,6 +8,7 @@
 #include <aether/mesh/Animation.hpp>
 #include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
+#include <aether/package/Sha256.hpp>
 #include <aether/scene/Camera.hpp>
 
 #include <CoreGraphics/CoreGraphics.h>
@@ -24,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <span>
 #include <utility>
@@ -249,6 +251,8 @@ void Renderer::draw(MTK::View* view) noexcept {
             }
         }
     }
+    if (frameCaptureRequested_.load(std::memory_order_relaxed))
+        view->setFramebufferOnly(false);
     MTL::RenderPassDescriptor* renderPass = view->currentRenderPassDescriptor();
     CA::MetalDrawable* drawable = view->currentDrawable();
     if (!renderPass || !drawable) {
@@ -833,6 +837,45 @@ void Renderer::draw(MTK::View* view) noexcept {
                                         NS::UInteger(3));
     presentationEncoder->endEncoding();
 
+    if (frameCaptureRequested_.exchange(false)) {
+        const std::size_t compactRowBytes = static_cast<std::size_t>(targetWidth) * 4U;
+        const std::size_t captureRowBytes = (compactRowBytes + 255U) & ~std::size_t{255U};
+        const std::size_t captureBytes = captureRowBytes * static_cast<std::size_t>(targetHeight);
+        MTL::Buffer* captureBuffer =
+            device_->newBuffer(captureBytes, MTL::ResourceStorageModeShared);
+        MTL::BlitCommandEncoder* captureEncoder =
+            captureBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+        if (captureEncoder) {
+            captureBuffer->setLabel(
+                NS::String::string("Presented Frame Readback", NS::UTF8StringEncoding));
+            captureEncoder->setLabel(
+                NS::String::string("Presented Frame Capture", NS::UTF8StringEncoding));
+            captureEncoder->copyFromTexture(drawableTexture, 0, 0, MTL::Origin::Make(0, 0, 0),
+                                            MTL::Size::Make(targetWidth, targetHeight, 1),
+                                            captureBuffer, 0, captureRowBytes, captureBytes);
+            captureEncoder->endEncoding();
+            commandBuffer->addCompletedHandler(
+                [this, captureBuffer, targetWidth, targetHeight, compactRowBytes,
+                 captureRowBytes](MTL::CommandBuffer* completed) {
+                    if (completed->status() != MTL::CommandBufferStatusError) {
+                        FrameCapture capture;
+                        capture.width = targetWidth;
+                        capture.height = targetHeight;
+                        capture.bgra8.resize(compactRowBytes * targetHeight);
+                        const auto* source = static_cast<const std::byte*>(captureBuffer->contents());
+                        for (std::uint32_t row = 0; row < targetHeight; ++row)
+                            std::memcpy(capture.bgra8.data() + row * compactRowBytes,
+                                        source + row * captureRowBytes, compactRowBytes);
+                        std::lock_guard lock(frameCaptureMutex_);
+                        completedFrameCapture_ = std::move(capture);
+                    }
+                    captureBuffer->release();
+                });
+        } else if (captureBuffer) {
+            captureBuffer->release();
+        }
+    }
+
     dispatch_semaphore_t semaphore = frameSemaphore_;
     commandBuffer->addCompletedHandler([this, semaphore](MTL::CommandBuffer* completed) {
         const double gpuSeconds = completed->GPUEndTime() - completed->GPUStartTime();
@@ -1379,6 +1422,15 @@ RendererStatistics Renderer::statistics() const noexcept {
                               lastGpuMilliseconds_.load(std::memory_order_relaxed)};
 }
 
+Result<FrameCapture> Renderer::consumeFrameCapture() {
+    std::lock_guard lock(frameCaptureMutex_);
+    if (!completedFrameCapture_)
+        return fail(ErrorCode::notFound, "No completed frame capture is available");
+    FrameCapture result = std::move(*completedFrameCapture_);
+    completedFrameCapture_.reset();
+    return result;
+}
+
 Result<void> Renderer::buildViewportPipeline() {
     std::string libraryPath;
     if (shaderLibraryPath_.empty()) {
@@ -1457,7 +1509,20 @@ Result<void> Renderer::buildViewportPipeline() {
     }
     std::error_code filesystemError;
     std::filesystem::create_directories(cacheRoot, filesystemError);
-    const auto archivePath = cacheRoot / "AetherPipelines.bin";
+    package::Sha256 libraryHasher;
+    std::ifstream libraryStream(libraryPath, std::ios::binary);
+    std::array<char, 64 * 1024> hashBuffer{};
+    while (libraryStream) {
+        libraryStream.read(hashBuffer.data(), static_cast<std::streamsize>(hashBuffer.size()));
+        const auto count = libraryStream.gcount();
+        if (count > 0)
+            libraryHasher.update(std::as_bytes(
+                std::span(hashBuffer.data(), static_cast<std::size_t>(count))));
+    }
+    if (!libraryStream.eof())
+        return fail(ErrorCode::io, "Unable to hash offline Metal shader library", libraryPath);
+    const std::string libraryHash = package::Sha256::hex(libraryHasher.finalize());
+    const auto archivePath = cacheRoot / ("AetherPipelines-" + libraryHash + ".bin");
     auto archiveDescriptor = adopt(MTL::BinaryArchiveDescriptor::alloc()->init());
     NS::URL* archiveUrl =
         NS::URL::fileURLWithPath(NS::String::string(archivePath.c_str(), NS::UTF8StringEncoding));

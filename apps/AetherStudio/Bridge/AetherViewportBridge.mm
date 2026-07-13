@@ -200,6 +200,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
         _metalView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         _metalView.colorPixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
         _metalView.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
+        _metalView.framebufferOnly = NO;
         _metalView.clearDepth = 0.0;
         _metalView.clearColor = MTLClearColorMake(0.018, 0.022, 0.030, 1.0);
         _metalView.preferredFramesPerSecond = 60;

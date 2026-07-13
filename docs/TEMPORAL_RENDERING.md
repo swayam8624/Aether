@@ -24,3 +24,16 @@ The Metal integration test submits two real 320x180 MTK frames. The first exerci
 initialization and the second exercises valid history reads; both also execute local and directional
 shadows, bloom, and presentation. The test is runnable with `MTL_DEBUG_LAYER=1` and
 `MTL_SHADER_VALIDATION=1`.
+
+The renderer also exposes an opt-in one-shot frame capture. Studio configures its MTK view as
+non-framebuffer-only so drawable readback is legal under Metal validation. A request inserts a drawable-to-shared
+buffer blit after presentation encoding and copies compact BGRA8 rows only from the command-buffer
+completion callback. Normal frames perform no readback or allocation. The integration test captures
+the second temporal frame and enforces a checked luminance interval, bright-pixel population, exact
+dimensions, compact byte count, and fully opaque presentation. These bounded metrics tolerate minor
+GPU-family rounding while detecting missing geometry, broken lighting, black output, bloom runaway,
+incorrect alpha, and presentation regressions.
+
+Pipeline binary archives are keyed by the SHA-256 of the complete offline `.metallib`. Shader or ABI
+changes therefore create a new archive instead of asking Metal to deserialize an incompatible cached
+pipeline. Validation runs cover both first creation and subsequent loading of the keyed archive.
