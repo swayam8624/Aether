@@ -24,7 +24,12 @@ into the shared scene targets, reconstructs world position with the inverse curr
 view-projection, and projects it through the previous jittered view-projection to emit camera-motion
 vectors and previous reverse-Z depth. Invalid, empty, sub-threshold, offscreen, or first-frame
 samples explicitly carry zero validity and do not accumulate history. This also establishes shared
-depth semantics for subsequent hybrid mesh/splat occlusion.
+depth semantics for hybrid mesh/splat occlusion. A separate proxy pass writes reverse-Z depth,
+world normal plus reconstruction confidence, surface IDs, and camera motion before composition.
+When a proxy sample is closer than a Gaussian, the visible Gaussian color may be anchored to proxy
+depth within a confidence-scaled tolerance; a Gaussian defensibly behind that tolerance is removed.
+Proxy depth and motion remain present even where no Gaussian survives, so later dynamic meshes see
+a stable captured-world occluder. Proxy IDs remain isolated from mesh and Gaussian selection IDs.
 
 Bloom runs after temporal resolve and before presentation. A soft-knee thresholded nine-tap
 downsample produces a half-resolution buffer, followed by a second filtered quarter-resolution

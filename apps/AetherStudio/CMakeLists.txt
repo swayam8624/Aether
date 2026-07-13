@@ -36,6 +36,7 @@ aether_add_metal_library(AetherShaders "AetherShaders.metallib"
     "${PROJECT_SOURCE_DIR}/shaders/viewport.metal"
     "${PROJECT_SOURCE_DIR}/shaders/pbr.metal"
     "${PROJECT_SOURCE_DIR}/shaders/gizmo.metal"
+    "${PROJECT_SOURCE_DIR}/shaders/proxy.metal"
     "${PROJECT_SOURCE_DIR}/shaders/shadow.metal"
     "${PROJECT_SOURCE_DIR}/shaders/gaussian.metal")
 if(TARGET AetherShaders)

@@ -52,6 +52,22 @@ struct AetherGaussianCompositionUniforms {
     AetherFloat4x4 previousViewProjection;
     // near plane, Gaussian-present flag, history-valid flag, minimum opacity
     AetherFloat4 depthHistoryOpacity;
+    // proxy-present flag, absolute tolerance, relative tolerance, low-confidence multiplier
+    AetherFloat4 proxyParameters;
+};
+
+struct AetherProxyGpuVertex {
+    // world position xyz, reconstruction confidence
+    AetherFloat4 positionConfidence;
+    // world normal xyz, reserved
+    AetherFloat4 normalPadding;
+};
+
+struct AetherProxyUniforms {
+    AetherFloat4x4 viewProjection;
+    AetherFloat4x4 previousViewProjection;
+    // history valid, reserved
+    AetherFloat4 options;
 };
 
 struct AetherGizmoUniforms {
@@ -218,7 +234,9 @@ static_assert(sizeof(AetherLocalShadowUniforms) == 1136);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);
-static_assert(sizeof(AetherGaussianCompositionUniforms) == 144);
+static_assert(sizeof(AetherGaussianCompositionUniforms) == 160);
+static_assert(sizeof(AetherProxyGpuVertex) == 32);
+static_assert(sizeof(AetherProxyUniforms) == 144);
 static_assert(sizeof(AetherProjectedGaussian) == 80);
 static_assert(sizeof(AetherGaussianCounters) == 16);
 #endif

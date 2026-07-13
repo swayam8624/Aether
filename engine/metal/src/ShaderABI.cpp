@@ -4,7 +4,12 @@
 
 static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherPresentationUniforms) == 16);
-static_assert(sizeof(AetherGaussianCompositionUniforms) == 144);
+static_assert(sizeof(AetherGaussianCompositionUniforms) == 160);
+static_assert(sizeof(AetherProxyGpuVertex) == 32);
+static_assert(offsetof(AetherProxyGpuVertex, normalPadding) == 16);
+static_assert(sizeof(AetherProxyUniforms) == 144);
+static_assert(offsetof(AetherProxyUniforms, previousViewProjection) == 64);
+static_assert(offsetof(AetherProxyUniforms, options) == 128);
 static_assert(sizeof(AetherBloomUniforms) == 16);
 static_assert(sizeof(AetherTemporalUniforms) == 144);
 static_assert(sizeof(AetherGizmoUniforms) == 112);

@@ -134,8 +134,12 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 - [x] Strict Open3D ASCII/binary triangle-PLY import, canonical proxy-mesh chunk v1, pack-time
   conversion, hostile-input checks, and real generated-proxy package verification.
-- [ ] Proxy G-buffer, confidence-aware splat occlusion, dynamic PBR meshes, shadows, collision, and
-  navigation.
+- [x] Canonical proxy upload and dedicated reverse-Z depth, world-normal/confidence, surface-ID,
+  and motion G-buffer with named Metal passes and GPU-validated readback.
+- [x] Confidence-aware proxy/Gaussian depth composition with an occlusion golden that proves a
+  foreground proxy suppresses a behind-surface Gaussian while preserving proxy motion/depth.
+- [ ] Concurrent dynamic PBR entities in captured scenes, proxy shadow receiving and transfer,
+  collision queries, particles, reflection probes, and navigation surfaces.
 
 ## Phase 6 — Material-aware relighting
 

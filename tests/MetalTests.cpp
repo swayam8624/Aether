@@ -1,6 +1,7 @@
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
 #include <aether/gaussian/ReferenceRasterizer.hpp>
+#include <aether/hybrid/ProxyMeshCodec.hpp>
 #include <aether/metal/FrameContext.hpp>
 #include <aether/metal/GaussianPipeline.hpp>
 #include <aether/metal/MetalPtr.hpp>
@@ -40,23 +41,26 @@ bool writeCaptureArtifact(const aether::metal::FrameCapture& capture, std::strin
     const std::filesystem::path root = AETHER_TEST_ARTIFACT_DIR;
     std::error_code error;
     std::filesystem::create_directories(root, error);
-    if (error) return false;
+    if (error)
+        return false;
     const auto imagePath = root / (std::string(name) + ".ppm");
     std::ofstream image(imagePath, std::ios::binary | std::ios::trunc);
-    if (!image) return false;
+    if (!image)
+        return false;
     image << "P6\n" << capture.width << ' ' << capture.height << "\n255\n";
     for (std::size_t pixel = 0; pixel < capture.bgra8.size(); pixel += 4) {
-        const char rgb[] = {
-            static_cast<char>(capture.bgra8[pixel + 2]),
-            static_cast<char>(capture.bgra8[pixel + 1]),
-            static_cast<char>(capture.bgra8[pixel])};
+        const char rgb[] = {static_cast<char>(capture.bgra8[pixel + 2]),
+                            static_cast<char>(capture.bgra8[pixel + 1]),
+                            static_cast<char>(capture.bgra8[pixel])};
         image.write(rgb, sizeof(rgb));
     }
     image.close();
-    if (!image) return false;
+    if (!image)
+        return false;
     const auto digest = aether::package::Sha256::hash(capture.bgra8);
     std::ofstream sidecar(root / (std::string(name) + ".sha256"), std::ios::trunc);
-    if (!sidecar) return false;
+    if (!sidecar)
+        return false;
     sidecar << aether::package::Sha256::hex(digest) << "  " << imagePath.filename().string()
             << '\n';
     return static_cast<bool>(sidecar);
@@ -66,7 +70,8 @@ bool resetCaptureArtifacts() {
     const std::filesystem::path root = AETHER_TEST_ARTIFACT_DIR;
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    if (error) return false;
+    if (error)
+        return false;
     std::filesystem::create_directories(root, error);
     return !error;
 }
@@ -92,8 +97,7 @@ CaptureMetrics measureCapture(const aether::metal::FrameCapture& capture) {
         metrics.darkPixels += luminance < 0.995 ? 1U : 0U;
         metrics.opaquePixels += alpha == 255U ? 1U : 0U;
     }
-    metrics.meanLuminance = luminanceSum /
-                            static_cast<double>(capture.width * capture.height);
+    metrics.meanLuminance = luminanceSum / static_cast<double>(capture.width * capture.height);
     return metrics;
 }
 } // namespace
@@ -247,8 +251,9 @@ int main() {
         pool->release();
         return 1;
     }
-    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_ANIMATED_GLTF); !loaded ||
-        (*renderer)->animationClipCount() != 1 || !(*renderer)->selectAnimation(0, true)) {
+    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_ANIMATED_GLTF);
+        !loaded || (*renderer)->animationClipCount() != 1 ||
+        !(*renderer)->selectAnimation(0, true)) {
         std::cerr << "Renderer could not upload and select glTF animation\n";
         pool->release();
         return 1;
@@ -268,12 +273,14 @@ int main() {
     (*renderer)->seekAnimation(0.5F);
     (*renderer)->setAnimationPlaying(false);
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_SKINNED_GLTF); !loaded) {
-        std::cerr << "Renderer could not upload skinned glTF: " << loaded.error().describe() << '\n';
+        std::cerr << "Renderer could not upload skinned glTF: " << loaded.error().describe()
+                  << '\n';
         pool->release();
         return 1;
     }
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_MORPHED_GLTF); !loaded) {
-        std::cerr << "Renderer could not upload morphed glTF: " << loaded.error().describe() << '\n';
+        std::cerr << "Renderer could not upload morphed glTF: " << loaded.error().describe()
+                  << '\n';
         pool->release();
         return 1;
     }
@@ -289,8 +296,7 @@ int main() {
     testView->setFramebufferOnly(false);
     testView->setDrawableSize(CGSizeMake(320.0, 180.0));
     (*renderer)->draw(testView.get());
-    for (std::uint32_t attempt = 0; attempt < 100 &&
-                                    (*renderer)->statistics().completedFrames == 0;
+    for (std::uint32_t attempt = 0; attempt < 100 && (*renderer)->statistics().completedFrames == 0;
          ++attempt)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if ((*renderer)->statistics().completedFrames == 0) {
@@ -300,8 +306,7 @@ int main() {
     }
     (*renderer)->requestFrameCapture();
     (*renderer)->draw(testView.get());
-    for (std::uint32_t attempt = 0; attempt < 100 &&
-                                    (*renderer)->statistics().completedFrames < 2;
+    for (std::uint32_t attempt = 0; attempt < 100 && (*renderer)->statistics().completedFrames < 2;
          ++attempt)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if ((*renderer)->statistics().completedFrames < 2) {
@@ -321,8 +326,8 @@ int main() {
         pbrMetrics.meanLuminance > 0.20 || pbrMetrics.brightPixels < 2'500 ||
         pbrMetrics.brightPixels > 4'500 || pbrMetrics.opaquePixels != 320U * 180U) {
         std::cerr << "PBR golden thresholds failed: mean=" << pbrMetrics.meanLuminance
-                  << " bright=" << pbrMetrics.brightPixels
-                  << " opaque=" << pbrMetrics.opaquePixels << '\n';
+                  << " bright=" << pbrMetrics.brightPixels << " opaque=" << pbrMetrics.opaquePixels
+                  << '\n';
         pool->release();
         return 1;
     }
@@ -341,8 +346,7 @@ int main() {
         return 1;
     }
     (*renderer)->draw(testView.get());
-    for (std::uint32_t attempt = 0; attempt < 100 &&
-                                    (*renderer)->statistics().completedFrames < 3;
+    for (std::uint32_t attempt = 0; attempt < 100 && (*renderer)->statistics().completedFrames < 3;
          ++attempt)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     const auto gizmoAxis = (*renderer)->pickGizmoAxis(175, 90);
@@ -359,8 +363,7 @@ int main() {
         return 1;
     }
     (*renderer)->draw(testView.get());
-    for (std::uint32_t attempt = 0; attempt < 100 &&
-                                    (*renderer)->statistics().completedFrames < 4;
+    for (std::uint32_t attempt = 0; attempt < 100 && (*renderer)->statistics().completedFrames < 4;
          ++attempt)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     const auto motion = (*renderer)->sampleMotionVector(166, 90);
@@ -373,8 +376,7 @@ int main() {
     const auto rotated = (*renderer)->rotateSelectedMeshPixels(2U, 10.0F);
     const auto scaled = (*renderer)->scaleSelectedMeshPixels(1U, 10.0F);
     if (!rotated || std::abs(rotated->worldTransform.rotation.vector.y) < 0.01F || !scaled ||
-        scaled->worldTransform.scale.x <= 1.0F ||
-        (*renderer)->rotateSelectedMeshPixels(0U, 1.0F) ||
+        scaled->worldTransform.scale.x <= 1.0F || (*renderer)->rotateSelectedMeshPixels(0U, 1.0F) ||
         (*renderer)->scaleSelectedMeshPixels(4U, 1.0F)) {
         std::cerr << "Rotation/scale gizmo mutation contract failed\n";
         pool->release();
@@ -455,8 +457,8 @@ int main() {
     }
     const auto completedBeforeSkin = (*renderer)->statistics().completedFrames;
     (*renderer)->draw(testView.get());
-    for (std::uint32_t attempt = 0; attempt < 100 &&
-                                    (*renderer)->statistics().completedFrames <= completedBeforeSkin;
+    for (std::uint32_t attempt = 0;
+         attempt < 100 && (*renderer)->statistics().completedFrames <= completedBeforeSkin;
          ++attempt)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if ((*renderer)->statistics().completedFrames <= completedBeforeSkin) {
@@ -469,8 +471,8 @@ int main() {
         pool->release();
         return 1;
     }
-    const auto captureShadowDiagnostic = [&](std::uint32_t mode, std::uint32_t slice)
-        -> std::optional<aether::metal::FrameCapture> {
+    const auto captureShadowDiagnostic =
+        [&](std::uint32_t mode, std::uint32_t slice) -> std::optional<aether::metal::FrameCapture> {
         (*renderer)->setShadowDebugMode(mode, slice);
         const auto completedBeforeDiagnostic = (*renderer)->statistics().completedFrames;
         (*renderer)->requestFrameCapture();
@@ -480,15 +482,16 @@ int main() {
              (*renderer)->statistics().completedFrames <= completedBeforeDiagnostic;
              ++attempt)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        if ((*renderer)->statistics().completedFrames <= completedBeforeDiagnostic) return std::nullopt;
+        if ((*renderer)->statistics().completedFrames <= completedBeforeDiagnostic)
+            return std::nullopt;
         auto capture = (*renderer)->consumeFrameCapture();
-        if (!capture) return std::nullopt;
+        if (!capture)
+            return std::nullopt;
         return std::move(*capture);
     };
     (*renderer)->setGizmoMode(1U);
     auto directionalCapture = captureShadowDiagnostic(1U, 0U);
-    if (!directionalCapture ||
-        measureCapture(*directionalCapture).darkPixels < 8U ||
+    if (!directionalCapture || measureCapture(*directionalCapture).darkPixels < 8U ||
         !writeCaptureArtifact(*directionalCapture, "shadow-directional-cascade-0")) {
         std::cerr << "Directional shadow golden lacks finite caster coverage\n";
         pool->release();
@@ -500,7 +503,8 @@ int main() {
     std::size_t maximumLocalCoverage = 0;
     for (std::uint32_t slice = 0; slice < 7U; ++slice) {
         auto candidate = captureShadowDiagnostic(2U, slice);
-        if (!candidate) continue;
+        if (!candidate)
+            continue;
         const auto coverage = measureCapture(*candidate).darkPixels;
         if (coverage > maximumLocalCoverage) {
             maximumLocalCoverage = coverage;
@@ -515,7 +519,8 @@ int main() {
         return 1;
     }
     std::ofstream localFace(std::filesystem::path(AETHER_TEST_ARTIFACT_DIR) /
-                            "shadow-local-populated-face.txt", std::ios::trunc);
+                                "shadow-local-populated-face.txt",
+                            std::ios::trunc);
     localFace << populatedLocalSlice << '\n';
     if (!localFace) {
         std::cerr << "Unable to record populated local shadow face\n";
@@ -552,27 +557,43 @@ int main() {
         return 1;
     }
     auto canonical = aether::gaussian::GaussianCodec::encode(*gaussianAsset);
+    aether::hybrid::ProxyMesh proxyFixture;
+    proxyFixture.vertices = {
+        {{{-2.0F, -2.0F, 2.25F}}, {{0.0F, 0.0F, 1.0F}}, 0.0F, 0xffffffffU},
+        {{{2.0F, -2.0F, 2.25F}}, {{0.0F, 0.0F, 1.0F}}, 0.0F, 0xffffffffU},
+        {{{2.0F, 2.0F, 2.25F}}, {{0.0F, 0.0F, 1.0F}}, 0.0F, 0xffffffffU},
+        {{{-2.0F, 2.0F, 2.25F}}, {{0.0F, 0.0F, 1.0F}}, 0.0F, 0xffffffffU},
+    };
+    proxyFixture.indices = {0U, 1U, 2U, 0U, 2U, 3U};
+    auto canonicalProxy = aether::hybrid::ProxyMeshCodec::encode(proxyFixture);
     const auto packagePath =
         std::filesystem::temp_directory_path() / "aether-metal-renderer-test.aether";
     constexpr std::string_view metadata = "{\"name\":\"Metal fixture\"}";
     aether::package::PackageWriter packageWriter;
-    if (!canonical ||
+    if (!canonical || !canonicalProxy ||
         !packageWriter.addChunk(aether::package::ChunkType::metadata,
                                 std::as_bytes(std::span(metadata.data(), metadata.size()))) ||
         !packageWriter.addChunk(aether::package::ChunkType::baseGaussians, *canonical) ||
+        !packageWriter.addChunk(aether::package::ChunkType::proxyMesh, *canonicalProxy) ||
         !packageWriter.write(packagePath) || !(*renderer)->loadAether(packagePath)) {
         std::cerr << "Renderer could not load a canonical AETHER Gaussian package\n";
+        pool->release();
+        return 1;
+    }
+    const auto proxyStatistics = (*renderer)->proxyMeshStatistics();
+    if (proxyStatistics.vertices != 4U || proxyStatistics.triangles != 2U) {
+        std::cerr << "Renderer did not retain canonical proxy geometry\n";
         pool->release();
         return 1;
     }
     std::filesystem::remove(packagePath);
     for (std::uint32_t frameIndex = 0; frameIndex < 2; ++frameIndex) {
         const auto completedBeforeGaussian = (*renderer)->statistics().completedFrames;
-        if (frameIndex == 1U) (*renderer)->requestFrameCapture();
+        if (frameIndex == 1U)
+            (*renderer)->requestFrameCapture();
         (*renderer)->draw(testView.get());
         for (std::uint32_t attempt = 0;
-             attempt < 100 &&
-             (*renderer)->statistics().completedFrames <= completedBeforeGaussian;
+             attempt < 100 && (*renderer)->statistics().completedFrames <= completedBeforeGaussian;
              ++attempt)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if ((*renderer)->statistics().completedFrames <= completedBeforeGaussian) {
@@ -589,7 +610,8 @@ int main() {
     }
     const std::size_t gaussianCenter =
         (static_cast<std::size_t>(gaussianCapture->height / 2U) * gaussianCapture->width +
-         gaussianCapture->width / 2U) * 4U;
+         gaussianCapture->width / 2U) *
+        4U;
     const auto centerRed = static_cast<std::uint8_t>(gaussianCapture->bgra8[gaussianCenter + 2U]);
     const auto centerAlpha = static_cast<std::uint8_t>(gaussianCapture->bgra8[gaussianCenter + 3U]);
     if (centerRed < 32U || centerAlpha != 255U) {
@@ -603,6 +625,58 @@ int main() {
         gaussianMotion->z >= 1.0F || std::abs(gaussianMotion->x) > 0.02F ||
         std::abs(gaussianMotion->y) > 0.02F) {
         std::cerr << "Gaussian temporal composition did not emit bounded camera motion and depth\n";
+        pool->release();
+        return 1;
+    }
+    for (auto& vertex : proxyFixture.vertices)
+        vertex.confidence = 1.0F;
+    canonicalProxy = aether::hybrid::ProxyMeshCodec::encode(proxyFixture);
+    const auto occlusionPackagePath =
+        std::filesystem::temp_directory_path() / "aether-metal-proxy-occlusion-test.aether";
+    aether::package::PackageWriter occlusionWriter;
+    if (!canonicalProxy ||
+        !occlusionWriter.addChunk(aether::package::ChunkType::metadata,
+                                  std::as_bytes(std::span(metadata.data(), metadata.size()))) ||
+        !occlusionWriter.addChunk(aether::package::ChunkType::baseGaussians, *canonical) ||
+        !occlusionWriter.addChunk(aether::package::ChunkType::proxyMesh, *canonicalProxy) ||
+        !occlusionWriter.write(occlusionPackagePath) ||
+        !(*renderer)->loadAether(occlusionPackagePath)) {
+        std::cerr << "Renderer could not load the proxy occlusion fixture\n";
+        pool->release();
+        return 1;
+    }
+    std::filesystem::remove(occlusionPackagePath);
+    for (std::uint32_t frameIndex = 0; frameIndex < 2U; ++frameIndex) {
+        const auto completedBeforeProxy = (*renderer)->statistics().completedFrames;
+        if (frameIndex == 1U)
+            (*renderer)->requestFrameCapture();
+        (*renderer)->draw(testView.get());
+        for (std::uint32_t attempt = 0;
+             attempt < 100 && (*renderer)->statistics().completedFrames <= completedBeforeProxy;
+             ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if ((*renderer)->statistics().completedFrames <= completedBeforeProxy) {
+            std::cerr << "Proxy occlusion frame did not complete\n";
+            pool->release();
+            return 1;
+        }
+    }
+    auto proxyCapture = (*renderer)->consumeFrameCapture();
+    if (!proxyCapture || !writeCaptureArtifact(*proxyCapture, "proxy-occlusion")) {
+        std::cerr << "Proxy occlusion golden capture was not produced\n";
+        pool->release();
+        return 1;
+    }
+    const std::size_t proxyCenter =
+        (static_cast<std::size_t>(proxyCapture->height / 2U) * proxyCapture->width +
+         proxyCapture->width / 2U) *
+        4U;
+    const auto occludedRed = static_cast<std::uint8_t>(proxyCapture->bgra8[proxyCenter + 2U]);
+    const auto proxyId = (*renderer)->pickProxy(160U, 90U);
+    const auto proxyMotion = (*renderer)->sampleMotionVector(160U, 90U);
+    if (occludedRed + 32U >= centerRed || !proxyId || *proxyId != 1U || !proxyMotion ||
+        proxyMotion->w < 0.5F || proxyMotion->z <= 0.0F || proxyMotion->z >= 1.0F) {
+        std::cerr << "Confidence-aware proxy surface did not occlude the behind-surface Gaussian\n";
         pool->release();
         return 1;
     }
@@ -718,8 +792,7 @@ int main() {
         visualizationCommand->waitUntilCompleted();
         color->getBytes(colorPixels.data(), width * sizeof(simd_float4), region, 0);
         const simd_float4 visualization = colorPixels[center];
-        const bool expected = debugMode == 5U ? visualization.y > 0.8F
-                                              : visualization.z > 0.4F;
+        const bool expected = debugMode == 5U ? visualization.y > 0.8F : visualization.z > 0.4F;
         if (visualization.w != 1.0F || !expected) {
             std::cerr << "Gaussian SH-band/sort-rank visualization is incorrect\n";
             pool->release();

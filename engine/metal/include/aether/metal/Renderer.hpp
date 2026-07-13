@@ -2,21 +2,21 @@
 
 #include <aether/core/Clock.hpp>
 #include <aether/core/Error.hpp>
+#include <aether/mesh/MeshAsset.hpp>
 #include <aether/metal/FrameContext.hpp>
 #include <aether/metal/GaussianPipeline.hpp>
 #include <aether/metal/MetalPtr.hpp>
-#include <aether/mesh/MeshAsset.hpp>
 #include <aether/scene/CameraController.hpp>
-#include <aether/scene/Lighting.hpp>
 #include <aether/scene/ImageBasedLighting.hpp>
+#include <aether/scene/Lighting.hpp>
 #include <aether/scene/Shadows.hpp>
 #include <shared/AetherShaderTypes.h>
 
 #include <Metal/Metal.hpp>
 #include <MetalKit/MetalKit.hpp>
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <dispatch/dispatch.h>
@@ -41,6 +41,11 @@ struct RendererStatistics {
     std::uint64_t submittedFrames{};
     std::uint64_t completedFrames{};
     double lastGpuMilliseconds{};
+};
+
+struct ProxyMeshStatistics {
+    std::uint32_t vertices{};
+    std::uint32_t triangles{};
 };
 
 struct FrameCapture final {
@@ -91,23 +96,31 @@ class Renderer final {
     [[nodiscard]] Result<void> loadPly(const std::filesystem::path& path);
     [[nodiscard]] Result<void> loadAether(const std::filesystem::path& path);
     [[nodiscard]] Result<void> selectAnimation(std::size_t clipIndex, bool loop = true);
-    void setAnimationPlaying(bool playing) noexcept { animationPlaying_ = playing; }
+    void setAnimationPlaying(bool playing) noexcept {
+        animationPlaying_ = playing;
+    }
     void seekAnimation(float seconds) noexcept;
     [[nodiscard]] Result<void> setAnimationPlayback(std::optional<std::size_t> clipIndex,
                                                     float seconds, bool playing, bool loop);
     [[nodiscard]] std::size_t animationClipCount() const noexcept;
     void setExposureStops(float stops) noexcept;
     [[nodiscard]] Result<void> setLights(std::vector<scene::Light> lights);
-    [[nodiscard]] const std::vector<scene::Light>& lights() const noexcept { return lights_; }
+    [[nodiscard]] const std::vector<scene::Light>& lights() const noexcept {
+        return lights_;
+    }
     [[nodiscard]] Result<void> setLight(std::uint32_t lightId, const scene::Light& light);
     [[nodiscard]] Result<std::uint32_t> addLight(const scene::Light& light);
     [[nodiscard]] Result<void> removeLight(std::uint32_t lightId);
-    [[nodiscard]] Result<void> setImageBasedLighting(
-        const scene::ImageBasedLightingData& data, float intensity = 1.0F);
-    [[nodiscard]] float exposureStops() const noexcept { return exposureStops_; }
+    [[nodiscard]] Result<void> setImageBasedLighting(const scene::ImageBasedLightingData& data,
+                                                     float intensity = 1.0F);
+    [[nodiscard]] float exposureStops() const noexcept {
+        return exposureStops_;
+    }
     /// Input: top-left-origin drawable pixel coordinate.
     /// Output: 1-based Gaussian source ID, or zero for background.
     [[nodiscard]] Result<std::uint32_t> pickGaussian(std::uint32_t x, std::uint32_t y);
+    /// Returns the canonical proxy surface ID at a drawable pixel, or zero for no proxy.
+    [[nodiscard]] Result<std::uint32_t> pickProxy(std::uint32_t x, std::uint32_t y);
     /// Returns a 1-based visible mesh-instance ID, or zero for background.
     [[nodiscard]] Result<std::uint32_t> pickMesh(std::uint32_t x, std::uint32_t y);
     /// Immutable names ordered by their 1-based mesh entity IDs.
@@ -120,14 +133,16 @@ class Renderer final {
     [[nodiscard]] Result<std::uint32_t> pickGizmoAxis(std::uint32_t x, std::uint32_t y);
     [[nodiscard]] Result<simd_float4> sampleMotionVector(std::uint32_t x, std::uint32_t y);
     [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMesh(std::uint32_t axis,
-                                                                  float worldDistance);
+                                                                   float worldDistance);
     [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMeshPixels(std::uint32_t axis,
-                                                                        float pixelDistance);
+                                                                         float pixelDistance);
     [[nodiscard]] Result<MeshEntitySnapshot> rotateSelectedMeshPixels(std::uint32_t axis,
-                                                                     float pixelDistance);
+                                                                      float pixelDistance);
     [[nodiscard]] Result<MeshEntitySnapshot> scaleSelectedMeshPixels(std::uint32_t axis,
-                                                                    float pixelDistance);
-    void setGizmoMode(std::uint32_t mode) noexcept { gizmoMode_ = std::min(mode, 2U); }
+                                                                     float pixelDistance);
+    void setGizmoMode(std::uint32_t mode) noexcept {
+        gizmoMode_ = std::min(mode, 2U);
+    }
     [[nodiscard]] std::vector<MaterialSnapshot> materialSnapshots() const;
     [[nodiscard]] Result<void> setMaterialOverride(const MaterialSnapshot& material);
     [[nodiscard]] Result<void> clearMaterialOverride(std::uint32_t materialId);
@@ -148,8 +163,14 @@ class Renderer final {
         return capabilities_;
     }
     [[nodiscard]] RendererStatistics statistics() const noexcept;
+    /// Returns zero counts when the active scene has no canonical proxy mesh.
+    [[nodiscard]] ProxyMeshStatistics proxyMeshStatistics() const noexcept {
+        return {proxyVertexCount_, proxyIndexCount_ / 3U};
+    }
     /// Requests an asynchronous copy of the next fully presented frame.
-    void requestFrameCapture() noexcept { frameCaptureRequested_.store(true); }
+    void requestFrameCapture() noexcept {
+        frameCaptureRequested_.store(true);
+    }
     /// Returns and consumes the most recently completed capture.
     [[nodiscard]] Result<FrameCapture> consumeFrameCapture();
 
@@ -171,6 +192,7 @@ class Renderer final {
     MetalPtr<MTL::RenderPipelineState> bloomPipeline_;
     MetalPtr<MTL::RenderPipelineState> gizmoPipeline_;
     MetalPtr<MTL::RenderPipelineState> sceneBackgroundPipeline_;
+    MetalPtr<MTL::RenderPipelineState> proxyPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrBlendPipeline_;
     MetalPtr<MTL::RenderPipelineState> shadowPipeline_;
@@ -258,6 +280,14 @@ class Renderer final {
     MetalPtr<MTL::Texture> gaussianColor_;
     MetalPtr<MTL::Texture> gaussianDepth_;
     MetalPtr<MTL::Texture> gaussianIds_;
+    MetalPtr<MTL::Buffer> proxyVertices_;
+    MetalPtr<MTL::Buffer> proxyIndices_;
+    std::uint32_t proxyVertexCount_{};
+    std::uint32_t proxyIndexCount_{};
+    MetalPtr<MTL::Texture> proxyNormalConfidence_;
+    MetalPtr<MTL::Texture> proxyIds_;
+    MetalPtr<MTL::Texture> proxyMotion_;
+    MetalPtr<MTL::Texture> proxyDepth_;
     MetalPtr<MTL::Texture> sceneHdrColor_;
     MetalPtr<MTL::Texture> sceneDepth_;
     MetalPtr<MTL::Texture> sceneIds_;

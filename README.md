@@ -20,6 +20,8 @@ verified, shippable milestones. The current foundation contains:
   bounded compositing, depth/IDs/counters, CPU/GPU agreement tests, and PLY/`.aether` presentation
   in AetherStudio, including click-to-pick source IDs and selectable depth, ID, occupancy, and
   opacity views from the real GPU attachments.
+- A canonical proxy-mesh path with a dedicated reverse-Z normal/confidence/ID/motion G-buffer and
+  confidence-aware Gaussian occlusion, verified by a real Metal golden and proxy-ID readback.
 - A core glTF metallic-roughness path with bounded embedded/external image ingestion, ImageIO decode,
   generated mipmaps and tangents, glTF samplers, material texture maps, normal mapping, and alpha
   mask/blend states.

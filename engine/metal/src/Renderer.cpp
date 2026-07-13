@@ -4,8 +4,9 @@
 #include <aether/core/Profiler.hpp>
 #include <aether/gaussian/GaussianCodec.hpp>
 #include <aether/gaussian/PlyLoader.hpp>
-#include <aether/mesh/GltfLoader.hpp>
+#include <aether/hybrid/ProxyMeshCodec.hpp>
 #include <aether/mesh/Animation.hpp>
+#include <aether/mesh/GltfLoader.hpp>
 #include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/package/Sha256.hpp>
@@ -229,25 +230,26 @@ void Renderer::draw(MTK::View* view) noexcept {
         if (animationPlaying_)
             animationSeconds_ += static_cast<float>(frameSeconds);
         auto localTransforms = mesh::sampleAnimation(*meshAnimationAsset_, *selectedAnimation_,
-                                                      animationSeconds_, animationLoop_);
-        auto worldTransforms = localTransforms
-                                   ? mesh::resolveWorldTransforms(*meshAnimationAsset_, *localTransforms)
-                                   : Result<std::vector<simd_float4x4>>(
-                                         std::unexpected(localTransforms.error()));
+                                                     animationSeconds_, animationLoop_);
+        auto worldTransforms =
+            localTransforms
+                ? mesh::resolveWorldTransforms(*meshAnimationAsset_, *localTransforms)
+                : Result<std::vector<simd_float4x4>>(std::unexpected(localTransforms.error()));
         if (!worldTransforms) {
             Log::instance().write(LogLevel::error, worldTransforms.error().describe());
             selectedAnimation_.reset();
         } else {
             meshWorldTransforms_ = *worldTransforms;
             for (auto& instance : meshInstances_) {
-                if (instance.nodeIndex >= worldTransforms->size()) continue;
+                if (instance.nodeIndex >= worldTransforms->size())
+                    continue;
                 instance.worldTransform = instance.transformOverride
                                               ? instance.transformOverride->matrix()
                                               : (*worldTransforms)[instance.nodeIndex];
                 const auto localCenter = meshPrimitives_[instance.primitiveIndex].localBoundsCenter;
-                const auto transformed = simd_mul(
-                    instance.worldTransform,
-                    simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
+                const auto transformed =
+                    simd_mul(instance.worldTransform,
+                             simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
                 instance.worldBoundsCenter = {transformed.x, transformed.y, transformed.z};
                 instance.mirrored = simd_determinant(instance.worldTransform) < 0.0F;
             }
@@ -295,8 +297,7 @@ void Renderer::draw(MTK::View* view) noexcept {
         return;
     }
     const std::uint64_t jitterIndex = frameNumber_ % 8U + 1U;
-    const simd_float2 jitterPixels{halton(jitterIndex, 2U) - 0.5F,
-                                   halton(jitterIndex, 3U) - 0.5F};
+    const simd_float2 jitterPixels{halton(jitterIndex, 2U) - 0.5F, halton(jitterIndex, 3U) - 0.5F};
     bool presentGaussians = false;
     if (gaussianPipeline_) {
         {
@@ -315,9 +316,9 @@ void Renderer::draw(MTK::View* view) noexcept {
                                     (2.0F * std::tan(camera.verticalFieldOfViewRadians * 0.5F));
                 AetherGaussianCamera gaussianCamera{};
                 gaussianCamera.worldToCamera = positiveZView;
-                gaussianCamera.focalCenter = {
-                    focal, focal, static_cast<float>(width) * 0.5F + jitterPixels.x,
-                    static_cast<float>(height) * 0.5F + jitterPixels.y};
+                gaussianCamera.focalCenter = {focal, focal,
+                                              static_cast<float>(width) * 0.5F + jitterPixels.x,
+                                              static_cast<float>(height) * 0.5F + jitterPixels.y};
                 gaussianCamera.depthViewport = {
                     camera.nearPlane, camera.infiniteFarPlane ? 10'000.0F : camera.farPlane,
                     static_cast<float>(width), static_cast<float>(height)};
@@ -364,50 +365,54 @@ void Renderer::draw(MTK::View* view) noexcept {
     if (!meshPrimitives_.empty() && meshProjection && meshView) {
         for (std::size_t lightIndex = 0; lightIndex < lights_.size(); ++lightIndex) {
             const auto& light = lights_[lightIndex];
-            if (light.type != scene::LightType::directional) continue;
+            if (light.type != scene::LightType::directional)
+                continue;
             auto built = scene::buildDirectionalShadowCascades(
                 meshCamera, meshCameraTransform, meshAspect, light.direction, shadowConfig_);
             if (built) {
                 shadowCascades = std::move(*built);
                 shadowLightIndex = static_cast<std::uint32_t>(lightIndex);
-            }
-            else Log::instance().write(LogLevel::error, built.error().describe());
+            } else
+                Log::instance().write(LogLevel::error, built.error().describe());
             break;
         }
         auto allocations = scene::selectLocalShadowLights(lights_);
         if (!allocations) {
             Log::instance().write(LogLevel::error, allocations.error().describe());
-        } else for (const auto& allocation : *allocations) {
-            const auto& light = lights_[allocation.sourceLightIndex];
-            if (light.type == scene::LightType::spot) {
-                auto projection = scene::buildSpotShadowProjection(light, localShadowConfig_);
-                if (!projection) {
-                    Log::instance().write(LogLevel::error, projection.error().describe());
-                    continue;
+        } else
+            for (const auto& allocation : *allocations) {
+                const auto& light = lights_[allocation.sourceLightIndex];
+                if (light.type == scene::LightType::spot) {
+                    auto projection = scene::buildSpotShadowProjection(light, localShadowConfig_);
+                    if (!projection) {
+                        Log::instance().write(LogLevel::error, projection.error().describe());
+                        continue;
+                    }
+                    localShadowUniforms.worldToShadow[allocation.baseSlice] =
+                        projection->worldToShadowClip;
+                    localShadowUniforms.lightMetadata[localShadowLightCount++] = {
+                        static_cast<float>(allocation.sourceLightIndex),
+                        static_cast<float>(light.type), static_cast<float>(allocation.baseSlice),
+                        1.0F};
+                } else {
+                    auto projection = scene::buildPointShadowProjection(light, localShadowConfig_);
+                    if (!projection) {
+                        Log::instance().write(LogLevel::error, projection.error().describe());
+                        continue;
+                    }
+                    for (std::uint32_t face = 0; face < allocation.sliceCount; ++face)
+                        localShadowUniforms.worldToShadow[allocation.baseSlice + face] =
+                            projection->worldToShadowClip[face];
+                    localShadowUniforms.lightMetadata[localShadowLightCount++] = {
+                        static_cast<float>(allocation.sourceLightIndex),
+                        static_cast<float>(light.type), static_cast<float>(allocation.baseSlice),
+                        6.0F};
                 }
-                localShadowUniforms.worldToShadow[allocation.baseSlice] =
-                    projection->worldToShadowClip;
-                localShadowUniforms.lightMetadata[localShadowLightCount++] = {
-                    static_cast<float>(allocation.sourceLightIndex), static_cast<float>(light.type),
-                    static_cast<float>(allocation.baseSlice), 1.0F};
-            } else {
-                auto projection = scene::buildPointShadowProjection(light, localShadowConfig_);
-                if (!projection) {
-                    Log::instance().write(LogLevel::error, projection.error().describe());
-                    continue;
-                }
-                for (std::uint32_t face = 0; face < allocation.sliceCount; ++face)
-                    localShadowUniforms.worldToShadow[allocation.baseSlice + face] =
-                        projection->worldToShadowClip[face];
-                localShadowUniforms.lightMetadata[localShadowLightCount++] = {
-                    static_cast<float>(allocation.sourceLightIndex), static_cast<float>(light.type),
-                    static_cast<float>(allocation.baseSlice), 6.0F};
+                localShadowSliceCount = allocation.baseSlice + allocation.sliceCount;
             }
-            localShadowSliceCount = allocation.baseSlice + allocation.sliceCount;
-        }
     }
-    localShadowUniforms.countBias = {static_cast<float>(localShadowLightCount), 0.001F,
-                                     0.01F, 0.0F};
+    localShadowUniforms.countBias = {static_cast<float>(localShadowLightCount), 0.001F, 0.01F,
+                                     0.0F};
     std::vector<std::optional<BufferSlice>> frameSkinPalettes(meshInstances_.size());
     std::vector<std::optional<BufferSlice>> previousFrameSkinPalettes(meshInstances_.size());
     for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
@@ -421,12 +426,11 @@ void Renderer::draw(MTK::View* view) noexcept {
         const auto inverseMesh = simd_inverse(instance.worldTransform);
         for (std::size_t joint = 0; joint < skin.jointNodeIndices.size(); ++joint) {
             const auto nodeIndex = skin.jointNodeIndices[joint];
-            if (nodeIndex >= meshWorldTransforms_.size()) break;
-            const auto position = simd_mul(
-                simd_mul(inverseMesh, meshWorldTransforms_[nodeIndex]),
-                skin.inverseBindMatrices[joint]);
-            palette.push_back(
-                AetherJointMatrix{position, simd_transpose(simd_inverse(position))});
+            if (nodeIndex >= meshWorldTransforms_.size())
+                break;
+            const auto position = simd_mul(simd_mul(inverseMesh, meshWorldTransforms_[nodeIndex]),
+                                           skin.inverseBindMatrices[joint]);
+            palette.push_back(AetherJointMatrix{position, simd_transpose(simd_inverse(position))});
         }
         if (palette.size() != skin.jointNodeIndices.size()) {
             Log::instance().write(LogLevel::error, "Skin joint world transform is unavailable");
@@ -445,10 +449,11 @@ void Renderer::draw(MTK::View* view) noexcept {
         const auto inversePreviousMesh = simd_inverse(instance.previousWorldTransform);
         for (std::size_t joint = 0; joint < skin.jointNodeIndices.size(); ++joint) {
             const auto nodeIndex = skin.jointNodeIndices[joint];
-            if (nodeIndex >= previousMeshWorldTransforms_.size()) break;
-            const auto position = simd_mul(
-                simd_mul(inversePreviousMesh, previousMeshWorldTransforms_[nodeIndex]),
-                skin.inverseBindMatrices[joint]);
+            if (nodeIndex >= previousMeshWorldTransforms_.size())
+                break;
+            const auto position =
+                simd_mul(simd_mul(inversePreviousMesh, previousMeshWorldTransforms_[nodeIndex]),
+                         skin.inverseBindMatrices[joint]);
             previousPalette.push_back(
                 AetherJointMatrix{position, simd_transpose(simd_inverse(position))});
         }
@@ -479,7 +484,8 @@ void Renderer::draw(MTK::View* view) noexcept {
             const auto& previousSlice = *previousFrameSkinPalettes[instanceIndex];
             targetEncoder->setVertexBuffer(slice.buffer, slice.offset, 2);
             targetEncoder->setVertexBuffer(previousSlice.buffer, previousSlice.offset, 7);
-            skinDraw.jointCount = static_cast<std::uint32_t>(slice.size / sizeof(AetherJointMatrix));
+            skinDraw.jointCount =
+                static_cast<std::uint32_t>(slice.size / sizeof(AetherJointMatrix));
             skinDraw.enabled = 1;
         } else {
             targetEncoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 2);
@@ -491,11 +497,13 @@ void Renderer::draw(MTK::View* view) noexcept {
         AetherMorphDelta zeroMorph{};
         float zeroMorphWeight = 0.0F;
         if (primitive.morphTargetCount > 0) {
-            if (instance.morphWeights.size() != primitive.morphTargetCount) return false;
+            if (instance.morphWeights.size() != primitive.morphTargetCount)
+                return false;
             targetEncoder->setVertexBuffer(primitive.morphDeltas.get(), 0, 4);
             targetEncoder->setVertexBytes(instance.morphWeights.data(),
                                           instance.morphWeights.size() * sizeof(float), 5);
-            if (instance.previousMorphWeights.size() != primitive.morphTargetCount) return false;
+            if (instance.previousMorphWeights.size() != primitive.morphTargetCount)
+                return false;
             targetEncoder->setVertexBytes(instance.previousMorphWeights.data(),
                                           instance.previousMorphWeights.size() * sizeof(float), 9);
             morphDraw = {primitive.morphTargetCount, primitive.vertexCount, 1U, 0U};
@@ -510,15 +518,18 @@ void Renderer::draw(MTK::View* view) noexcept {
     };
 
     if (shadowCascades && shadowPipeline_ && shadowDepthState_) {
-        for (std::size_t cascade = 0; cascade < shadowCascades->worldToShadowClip.size(); ++cascade) {
-            MTL::RenderPassDescriptor* shadowPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+        for (std::size_t cascade = 0; cascade < shadowCascades->worldToShadowClip.size();
+             ++cascade) {
+            MTL::RenderPassDescriptor* shadowPass =
+                MTL::RenderPassDescriptor::renderPassDescriptor();
             shadowPass->depthAttachment()->setTexture(directionalShadowMap_.get());
             shadowPass->depthAttachment()->setSlice(cascade);
             shadowPass->depthAttachment()->setLoadAction(MTL::LoadActionClear);
             shadowPass->depthAttachment()->setStoreAction(MTL::StoreActionStore);
             shadowPass->depthAttachment()->setClearDepth(1.0);
             auto* shadowEncoder = commandBuffer->renderCommandEncoder(shadowPass);
-            if (!shadowEncoder) continue;
+            if (!shadowEncoder)
+                continue;
             shadowEncoder->setLabel(
                 NS::String::string("Directional Shadow Cascade", NS::UTF8StringEncoding));
             shadowEncoder->setRenderPipelineState(shadowPipeline_.get());
@@ -526,37 +537,43 @@ void Renderer::draw(MTK::View* view) noexcept {
             shadowEncoder->setViewport(
                 MTL::Viewport{0, 0, static_cast<double>(shadowConfig_.resolution),
                               static_cast<double>(shadowConfig_.resolution), 0.0, 1.0});
-            for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
+            for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size();
+                 ++instanceIndex) {
                 const auto& instance = meshInstances_[instanceIndex];
                 const auto& primitive = meshPrimitives_[instance.primitiveIndex];
                 const auto& material = meshMaterials_[primitive.materialIndex];
-                if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex)) continue;
+                if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex))
+                    continue;
                 AetherFrameUniforms shadowFrame{};
                 shadowFrame.viewProjection = shadowCascades->worldToShadowClip[cascade];
                 shadowFrame.model = instance.worldTransform;
                 shadowEncoder->setVertexBytes(&shadowFrame, sizeof(shadowFrame), 1);
-                shadowEncoder->setFrontFacingWinding(instance.mirrored ? MTL::WindingClockwise
-                                                                       : MTL::WindingCounterClockwise);
-                shadowEncoder->setCullMode(material.doubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+                shadowEncoder->setFrontFacingWinding(
+                    instance.mirrored ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
+                shadowEncoder->setCullMode(material.doubleSided ? MTL::CullModeNone
+                                                                : MTL::CullModeBack);
                 shadowEncoder->setFragmentBytes(&material.material, sizeof(material.material), 2);
                 shadowEncoder->setFragmentTexture(material.textures[0], 0);
                 shadowEncoder->setFragmentSamplerState(material.samplers[0], 0);
-                shadowEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, primitive.indexCount,
-                                                     MTL::IndexTypeUInt32, primitive.indices.get(), 0);
+                shadowEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle,
+                                                     primitive.indexCount, MTL::IndexTypeUInt32,
+                                                     primitive.indices.get(), 0);
             }
             shadowEncoder->endEncoding();
         }
     }
     if (localShadowSliceCount > 0 && localShadowMap_ && shadowPipeline_ && shadowDepthState_) {
         for (std::uint32_t slice = 0; slice < localShadowSliceCount; ++slice) {
-            MTL::RenderPassDescriptor* shadowPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+            MTL::RenderPassDescriptor* shadowPass =
+                MTL::RenderPassDescriptor::renderPassDescriptor();
             shadowPass->depthAttachment()->setTexture(localShadowMap_.get());
             shadowPass->depthAttachment()->setSlice(slice);
             shadowPass->depthAttachment()->setLoadAction(MTL::LoadActionClear);
             shadowPass->depthAttachment()->setStoreAction(MTL::StoreActionStore);
             shadowPass->depthAttachment()->setClearDepth(1.0);
             auto* shadowEncoder = commandBuffer->renderCommandEncoder(shadowPass);
-            if (!shadowEncoder) continue;
+            if (!shadowEncoder)
+                continue;
             shadowEncoder->setLabel(
                 NS::String::string("Local Shadow Slice", NS::UTF8StringEncoding));
             shadowEncoder->setRenderPipelineState(shadowPipeline_.get());
@@ -564,27 +581,78 @@ void Renderer::draw(MTK::View* view) noexcept {
             shadowEncoder->setViewport(
                 MTL::Viewport{0, 0, static_cast<double>(localShadowConfig_.resolution),
                               static_cast<double>(localShadowConfig_.resolution), 0.0, 1.0});
-            for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
+            for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size();
+                 ++instanceIndex) {
                 const auto& instance = meshInstances_[instanceIndex];
                 const auto& primitive = meshPrimitives_[instance.primitiveIndex];
                 const auto& material = meshMaterials_[primitive.materialIndex];
-                if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex)) continue;
+                if (material.alphaBlend || !bindDeformation(shadowEncoder, instanceIndex))
+                    continue;
                 AetherFrameUniforms shadowFrame{};
                 shadowFrame.viewProjection = localShadowUniforms.worldToShadow[slice];
                 shadowFrame.model = instance.worldTransform;
                 shadowEncoder->setVertexBytes(&shadowFrame, sizeof(shadowFrame), 1);
-                shadowEncoder->setFrontFacingWinding(instance.mirrored ? MTL::WindingClockwise
-                                                                       : MTL::WindingCounterClockwise);
-                shadowEncoder->setCullMode(material.doubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+                shadowEncoder->setFrontFacingWinding(
+                    instance.mirrored ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
+                shadowEncoder->setCullMode(material.doubleSided ? MTL::CullModeNone
+                                                                : MTL::CullModeBack);
                 shadowEncoder->setFragmentBytes(&material.material, sizeof(material.material), 2);
                 shadowEncoder->setFragmentTexture(material.textures[0], 0);
                 shadowEncoder->setFragmentSamplerState(material.samplers[0], 0);
-                shadowEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, primitive.indexCount,
-                                                     MTL::IndexTypeUInt32, primitive.indices.get(), 0);
+                shadowEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle,
+                                                     primitive.indexCount, MTL::IndexTypeUInt32,
+                                                     primitive.indices.get(), 0);
             }
             shadowEncoder->endEncoding();
         }
     }
+    MTL::RenderPassDescriptor* proxyPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+    auto* proxyNormalAttachment = proxyPass->colorAttachments()->object(0);
+    proxyNormalAttachment->setTexture(proxyNormalConfidence_.get());
+    proxyNormalAttachment->setLoadAction(MTL::LoadActionClear);
+    proxyNormalAttachment->setStoreAction(MTL::StoreActionStore);
+    proxyNormalAttachment->setClearColor(MTL::ClearColor::Make(0.5, 0.5, 1.0, 0.0));
+    auto* proxyIdAttachment = proxyPass->colorAttachments()->object(1);
+    proxyIdAttachment->setTexture(proxyIds_.get());
+    proxyIdAttachment->setLoadAction(MTL::LoadActionClear);
+    proxyIdAttachment->setStoreAction(MTL::StoreActionStore);
+    proxyIdAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 0.0));
+    auto* proxyMotionAttachment = proxyPass->colorAttachments()->object(2);
+    proxyMotionAttachment->setTexture(proxyMotion_.get());
+    proxyMotionAttachment->setLoadAction(MTL::LoadActionClear);
+    proxyMotionAttachment->setStoreAction(MTL::StoreActionStore);
+    proxyMotionAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 0.0));
+    auto* proxyDepthAttachment = proxyPass->depthAttachment();
+    proxyDepthAttachment->setTexture(proxyDepth_.get());
+    proxyDepthAttachment->setLoadAction(MTL::LoadActionClear);
+    proxyDepthAttachment->setStoreAction(MTL::StoreActionStore);
+    proxyDepthAttachment->setClearDepth(0.0);
+    MTL::RenderCommandEncoder* proxyEncoder = commandBuffer->renderCommandEncoder(proxyPass);
+    if (!proxyEncoder) {
+        dispatch_semaphore_signal(frameSemaphore_);
+        pool->release();
+        return;
+    }
+    proxyEncoder->setLabel(NS::String::string("Proxy G-buffer Pass", NS::UTF8StringEncoding));
+    if (proxyVertexCount_ > 0 && proxyIndexCount_ > 0 && proxyVertices_ && proxyIndices_ &&
+        proxyPipeline_ && reverseZDepthState_ && jitteredMeshProjection && meshView) {
+        const simd_float4x4 currentViewProjection = simd_mul(*jitteredMeshProjection, *meshView);
+        AetherProxyUniforms proxyUniforms{};
+        proxyUniforms.viewProjection = currentViewProjection;
+        proxyUniforms.previousViewProjection =
+            temporalHistoryValid_ ? previousViewProjection_ : currentViewProjection;
+        proxyUniforms.options = {temporalHistoryValid_ ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F};
+        proxyEncoder->setRenderPipelineState(proxyPipeline_.get());
+        proxyEncoder->setDepthStencilState(reverseZDepthState_.get());
+        proxyEncoder->setCullMode(MTL::CullModeNone);
+        proxyEncoder->setVertexBuffer(proxyVertices_.get(), 0, 0);
+        proxyEncoder->setVertexBytes(&proxyUniforms, sizeof(proxyUniforms), 1);
+        proxyEncoder->setFragmentBytes(&proxyUniforms, sizeof(proxyUniforms), 1);
+        proxyEncoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, proxyIndexCount_,
+                                            MTL::IndexTypeUInt32, proxyIndices_.get(), 0);
+    }
+    proxyEncoder->endEncoding();
+
     MTL::RenderPassDescriptor* scenePass = MTL::RenderPassDescriptor::renderPassDescriptor();
     auto* sceneColorAttachment = scenePass->colorAttachments()->object(0);
     sceneColorAttachment->setTexture(sceneHdrColor_.get());
@@ -617,23 +685,25 @@ void Renderer::draw(MTK::View* view) noexcept {
     encoder->setDepthStencilState(gaussianCompositionDepthState_.get());
     AetherGaussianCompositionUniforms gaussianComposition{};
     if (jitteredMeshProjection && meshView) {
-        const simd_float4x4 currentViewProjection =
-            simd_mul(*jitteredMeshProjection, *meshView);
+        const simd_float4x4 currentViewProjection = simd_mul(*jitteredMeshProjection, *meshView);
         gaussianComposition.inverseCurrentViewProjection = simd_inverse(currentViewProjection);
-        gaussianComposition.previousViewProjection = temporalHistoryValid_
-                                                         ? previousViewProjection_
-                                                         : currentViewProjection;
+        gaussianComposition.previousViewProjection =
+            temporalHistoryValid_ ? previousViewProjection_ : currentViewProjection;
     } else {
         gaussianComposition.inverseCurrentViewProjection = matrix_identity_float4x4;
         gaussianComposition.previousViewProjection = matrix_identity_float4x4;
     }
-    gaussianComposition.depthHistoryOpacity = {
-        meshCamera.nearPlane, presentGaussians ? 1.0F : 0.0F,
-        temporalHistoryValid_ ? 1.0F : 0.0F, 1.0F / 255.0F};
+    gaussianComposition.depthHistoryOpacity = {meshCamera.nearPlane, presentGaussians ? 1.0F : 0.0F,
+                                               temporalHistoryValid_ ? 1.0F : 0.0F, 1.0F / 255.0F};
+    gaussianComposition.proxyParameters = {proxyIndexCount_ > 0 ? 1.0F : 0.0F, 0.01F, 0.015F, 4.0F};
     encoder->setFragmentBytes(&gaussianComposition, sizeof(gaussianComposition), 0);
     encoder->setFragmentTexture(gaussianColor_.get(), 0);
     encoder->setFragmentTexture(gaussianDepth_.get(), 1);
     encoder->setFragmentTexture(gaussianIds_.get(), 2);
+    encoder->setFragmentTexture(proxyNormalConfidence_.get(), 3);
+    encoder->setFragmentTexture(proxyDepth_.get(), 4);
+    encoder->setFragmentTexture(proxyIds_.get(), 5);
+    encoder->setFragmentTexture(proxyMotion_.get(), 6);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
     if (!meshPrimitives_.empty() && pbrPipeline_ && reverseZDepthState_) {
@@ -645,8 +715,8 @@ void Renderer::draw(MTK::View* view) noexcept {
         if (projection && jitteredMeshProjection && viewMatrix) {
             AetherFrameUniforms uniforms{};
             uniforms.viewProjection = simd_mul(*jitteredMeshProjection, *viewMatrix);
-            uniforms.previousViewProjection = temporalHistoryValid_ ? previousViewProjection_
-                                                                    : uniforms.viewProjection;
+            uniforms.previousViewProjection =
+                temporalHistoryValid_ ? previousViewProjection_ : uniforms.viewProjection;
             uniforms.view = *viewMatrix;
             uniforms.model = matrix_identity_float4x4;
             const simd_float3 cameraPosition = cameraController_.position();
@@ -658,7 +728,7 @@ void Renderer::draw(MTK::View* view) noexcept {
                 clusterConfig.nearDepth = camera.nearPlane;
                 clusterConfig.farDepth = camera.infiniteFarPlane ? 10'000.0F : camera.farPlane;
                 auto clustered = scene::buildClusteredLightLists(lights_, *viewMatrix, *projection,
-                                                                  clusterConfig);
+                                                                 clusterConfig);
                 std::vector<AetherGpuLight> gpuLights;
                 if (clustered) {
                     gpuLights.reserve(lights_.size());
@@ -681,22 +751,22 @@ void Renderer::draw(MTK::View* view) noexcept {
                     for (const auto& cluster : clustered->clusters)
                         gpuClusters.push_back({cluster.offset, cluster.count});
                 }
-                auto lightSlice = clustered
-                                      ? frame.allocateUpload(gpuLights.size() * sizeof(AetherGpuLight))
-                                      : Result<BufferSlice>(std::unexpected(clustered.error()));
-                auto clusterSlice = clustered
-                                        ? frame.allocateUpload(gpuClusters.size() *
-                                                               sizeof(AetherLightCluster))
-                                        : Result<BufferSlice>(std::unexpected(clustered.error()));
+                auto lightSlice =
+                    clustered ? frame.allocateUpload(gpuLights.size() * sizeof(AetherGpuLight))
+                              : Result<BufferSlice>(std::unexpected(clustered.error()));
+                auto clusterSlice =
+                    clustered
+                        ? frame.allocateUpload(gpuClusters.size() * sizeof(AetherLightCluster))
+                        : Result<BufferSlice>(std::unexpected(clustered.error()));
                 auto indexSlice = clustered
                                       ? frame.allocateUpload(clustered->lightIndices.size() *
                                                              sizeof(std::uint32_t))
                                       : Result<BufferSlice>(std::unexpected(clustered.error()));
                 if (!clustered || !lightSlice || !clusterSlice || !indexSlice) {
-                    const auto message = !clustered ? clustered.error().describe()
-                                         : !lightSlice ? lightSlice.error().describe()
+                    const auto message = !clustered      ? clustered.error().describe()
+                                         : !lightSlice   ? lightSlice.error().describe()
                                          : !clusterSlice ? clusterSlice.error().describe()
-                                                           : indexSlice.error().describe();
+                                                         : indexSlice.error().describe();
                     Log::instance().write(LogLevel::error, message);
                     encoder->endEncoding();
                     dispatch_semaphore_signal(frameSemaphore_);
@@ -732,19 +802,22 @@ void Renderer::draw(MTK::View* view) noexcept {
                 encoder->setFragmentTexture(brdfLutTexture_.get(), 7);
                 encoder->setFragmentSamplerState(environmentSampler_.get(), 5);
                 AetherShadowUniforms shadowUniforms{};
-                for (auto& matrix : shadowUniforms.worldToShadow) matrix = matrix_identity_float4x4;
+                for (auto& matrix : shadowUniforms.worldToShadow)
+                    matrix = matrix_identity_float4x4;
                 shadowUniforms.splitDepths = {10'000.0F, 10'000.0F, 10'000.0F, 10'000.0F};
                 std::uint32_t activeCascades = 1;
                 if (shadowCascades) {
                     activeCascades = static_cast<std::uint32_t>(shadowCascades->splitDepths.size());
-                    for (std::size_t index = 0; index < shadowCascades->worldToShadowClip.size(); ++index) {
-                        shadowUniforms.worldToShadow[index] = shadowCascades->worldToShadowClip[index];
+                    for (std::size_t index = 0; index < shadowCascades->worldToShadowClip.size();
+                         ++index) {
+                        shadowUniforms.worldToShadow[index] =
+                            shadowCascades->worldToShadowClip[index];
                         shadowUniforms.splitDepths[index] = shadowCascades->splitDepths[index];
                     }
                 }
-                shadowUniforms.biasNormalCascadeCount = {0.001F, 0.01F,
-                                                         static_cast<float>(activeCascades),
-                                                         static_cast<float>(shadowLightIndex.value_or(0))};
+                shadowUniforms.biasNormalCascadeCount = {
+                    0.001F, 0.01F, static_cast<float>(activeCascades),
+                    static_cast<float>(shadowLightIndex.value_or(0))};
                 shadowUniforms.transitionParameters = {0.1F, 0.0F, 0.0F, 0.0F};
                 encoder->setFragmentBytes(&shadowUniforms, sizeof(shadowUniforms), 8);
                 encoder->setFragmentTexture(directionalShadowMap_.get(), 8);
@@ -763,7 +836,8 @@ void Renderer::draw(MTK::View* view) noexcept {
                         const auto& instance = meshInstances_[index];
                         const auto& primitive = meshPrimitives_.at(instance.primitiveIndex);
                         const auto& material = meshMaterials_.at(primitive.materialIndex);
-                        if (material.alphaBlend == alphaBlend) drawOrder.push_back(index);
+                        if (material.alphaBlend == alphaBlend)
+                            drawOrder.push_back(index);
                     }
                     if (alphaBlend) {
                         std::vector<simd_float3> centers;
@@ -778,12 +852,14 @@ void Renderer::draw(MTK::View* view) noexcept {
                         const auto& material = meshMaterials_.at(primitive.materialIndex);
                         uniforms.model = instance.worldTransform;
                         uniforms.previousModel = instance.previousWorldTransform;
-                        uniforms.normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
+                        uniforms.normalTransform =
+                            simd_transpose(simd_inverse(instance.worldTransform));
                         uniforms.drawIds = {static_cast<std::uint32_t>(instanceIndex + 1U), 0U, 0U,
                                             0U};
                         encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
                         encoder->setFragmentBytes(&uniforms, sizeof(uniforms), 1);
-                        if (!bindDeformation(encoder, instanceIndex)) continue;
+                        if (!bindDeformation(encoder, instanceIndex))
+                            continue;
                         encoder->setFrontFacingWinding(instance.mirrored
                                                            ? MTL::WindingClockwise
                                                            : MTL::WindingCounterClockwise);
@@ -805,8 +881,8 @@ void Renderer::draw(MTK::View* view) noexcept {
             }
         }
     }
-    if (selectedMeshEntity_ > 0 && selectedMeshEntity_ <= meshInstances_.size() &&
-        gizmoPipeline_ && jitteredMeshProjection && meshView) {
+    if (selectedMeshEntity_ > 0 && selectedMeshEntity_ <= meshInstances_.size() && gizmoPipeline_ &&
+        jitteredMeshProjection && meshView) {
         const auto origin = meshInstances_[selectedMeshEntity_ - 1U].worldTransform.columns[3].xyz;
         const float distance = simd_length(cameraController_.position() - origin);
         AetherGizmoUniforms gizmo{};
@@ -819,8 +895,7 @@ void Renderer::draw(MTK::View* view) noexcept {
         encoder->setDepthStencilState(reverseZReadOnlyDepthState_.get());
         encoder->setCullMode(MTL::CullModeNone);
         encoder->setVertexBytes(&gizmo, sizeof(gizmo), 0);
-        const NS::UInteger vertexCount = gizmoMode_ == 1U ? NS::UInteger(1'152)
-                                                          : NS::UInteger(18);
+        const NS::UInteger vertexCount = gizmoMode_ == 1U ? NS::UInteger(1'152) : NS::UInteger(18);
         encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), vertexCount);
     }
     encoder->endEncoding();
@@ -829,15 +904,13 @@ void Renderer::draw(MTK::View* view) noexcept {
     if (temporalPipeline_ && temporalSampler_ && jitteredMeshProjection && meshView) {
         const std::size_t outputIndex = static_cast<std::size_t>(frameNumber_ % 2U);
         const std::size_t inputIndex = 1U - outputIndex;
-        const simd_float4x4 currentViewProjection =
-            simd_mul(*jitteredMeshProjection, *meshView);
+        const simd_float4x4 currentViewProjection = simd_mul(*jitteredMeshProjection, *meshView);
         float maximumMatrixDelta = 0.0F;
         for (std::size_t column = 0; column < 4; ++column)
             for (std::size_t row = 0; row < 4; ++row)
                 maximumMatrixDelta = std::max(
-                    maximumMatrixDelta,
-                    std::abs(currentViewProjection.columns[column][row] -
-                             previousViewProjection_.columns[column][row]));
+                    maximumMatrixDelta, std::abs(currentViewProjection.columns[column][row] -
+                                                 previousViewProjection_.columns[column][row]));
         const bool historyUsable = temporalHistoryValid_ && maximumMatrixDelta < 0.5F;
         auto* temporalPass = MTL::RenderPassDescriptor::renderPassDescriptor();
         auto* temporalColor = temporalPass->colorAttachments()->object(0);
@@ -882,12 +955,14 @@ void Renderer::draw(MTK::View* view) noexcept {
             attachment->setLoadAction(MTL::LoadActionDontCare);
             attachment->setStoreAction(MTL::StoreActionStore);
             auto* bloomEncoder = commandBuffer->renderCommandEncoder(bloomPass);
-            if (!bloomEncoder) return false;
+            if (!bloomEncoder)
+                return false;
             bloomEncoder->setLabel(NS::String::string(label, NS::UTF8StringEncoding));
             bloomEncoder->setRenderPipelineState(bloomPipeline_.get());
             AetherBloomUniforms bloom{{1.0F / static_cast<float>(source->width()),
                                        1.0F / static_cast<float>(source->height())},
-                                      threshold, knee};
+                                      threshold,
+                                      knee};
             bloomEncoder->setFragmentBytes(&bloom, sizeof(bloom), 0);
             bloomEncoder->setFragmentTexture(source, 0);
             bloomEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
@@ -919,10 +994,10 @@ void Renderer::draw(MTK::View* view) noexcept {
     presentation.padding1 = shadowDebugSlice_;
     presentationEncoder->setFragmentBytes(&presentation, sizeof(presentation), 0);
     presentationEncoder->setFragmentTexture(presentationSource, 0);
-    presentationEncoder->setFragmentTexture(bloomReady ? bloomHalf_.get()
-                                                        : fallbackWhiteTexture_.get(), 1);
-    presentationEncoder->setFragmentTexture(bloomReady ? bloomQuarter_.get()
-                                                        : fallbackWhiteTexture_.get(), 2);
+    presentationEncoder->setFragmentTexture(
+        bloomReady ? bloomHalf_.get() : fallbackWhiteTexture_.get(), 1);
+    presentationEncoder->setFragmentTexture(
+        bloomReady ? bloomQuarter_.get() : fallbackWhiteTexture_.get(), 2);
     presentationEncoder->setFragmentTexture(directionalShadowMap_.get(), 3);
     presentationEncoder->setFragmentTexture(localShadowMap_.get(), 4);
     presentationEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
@@ -947,23 +1022,23 @@ void Renderer::draw(MTK::View* view) noexcept {
                                             MTL::Size::Make(targetWidth, targetHeight, 1),
                                             captureBuffer, 0, captureRowBytes, captureBytes);
             captureEncoder->endEncoding();
-            commandBuffer->addCompletedHandler(
-                [this, captureBuffer, targetWidth, targetHeight, compactRowBytes,
-                 captureRowBytes](MTL::CommandBuffer* completed) {
-                    if (completed->status() != MTL::CommandBufferStatusError) {
-                        FrameCapture capture;
-                        capture.width = targetWidth;
-                        capture.height = targetHeight;
-                        capture.bgra8.resize(compactRowBytes * targetHeight);
-                        const auto* source = static_cast<const std::byte*>(captureBuffer->contents());
-                        for (std::uint32_t row = 0; row < targetHeight; ++row)
-                            std::memcpy(capture.bgra8.data() + row * compactRowBytes,
-                                        source + row * captureRowBytes, compactRowBytes);
-                        std::lock_guard lock(frameCaptureMutex_);
-                        completedFrameCapture_ = std::move(capture);
-                    }
-                    captureBuffer->release();
-                });
+            commandBuffer->addCompletedHandler([this, captureBuffer, targetWidth, targetHeight,
+                                                compactRowBytes,
+                                                captureRowBytes](MTL::CommandBuffer* completed) {
+                if (completed->status() != MTL::CommandBufferStatusError) {
+                    FrameCapture capture;
+                    capture.width = targetWidth;
+                    capture.height = targetHeight;
+                    capture.bgra8.resize(compactRowBytes * targetHeight);
+                    const auto* source = static_cast<const std::byte*>(captureBuffer->contents());
+                    for (std::uint32_t row = 0; row < targetHeight; ++row)
+                        std::memcpy(capture.bgra8.data() + row * compactRowBytes,
+                                    source + row * captureRowBytes, compactRowBytes);
+                    std::lock_guard lock(frameCaptureMutex_);
+                    completedFrameCapture_ = std::move(capture);
+                }
+                captureBuffer->release();
+            });
         } else if (captureBuffer) {
             captureBuffer->release();
         }
@@ -1000,7 +1075,8 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     }
     std::size_t skinUploadBytes = 0;
     for (const auto& instance : loaded->instances) {
-        if (!instance.skinIndex) continue;
+        if (!instance.skinIndex)
+            continue;
         const auto jointBytes = loaded->skins.at(*instance.skinIndex).jointNodeIndices.size() *
                                 sizeof(AetherJointMatrix);
         if (jointBytes > (frameContexts_[0]->uploadCapacity() - skinUploadBytes) / 2U)
@@ -1138,18 +1214,18 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                          target.normalDeltas[vertex].z, 0.0F},
                         {target.tangentDeltas[vertex].x, target.tangentDeltas[vertex].y,
                          target.tangentDeltas[vertex].z, 0.0F}});
-            auto uploadedMorphs = uploadPrivateBuffer(deltas.data(),
-                                                       deltas.size() * sizeof(AetherMorphDelta),
-                                                       "glTF Morph Delta Buffer");
-            if (!uploadedMorphs) return std::unexpected(uploadedMorphs.error());
+            auto uploadedMorphs = uploadPrivateBuffer(
+                deltas.data(), deltas.size() * sizeof(AetherMorphDelta), "glTF Morph Delta Buffer");
+            if (!uploadedMorphs)
+                return std::unexpected(uploadedMorphs.error());
             morphBuffer = std::move(*uploadedMorphs);
         }
-        uploaded.push_back(GpuMeshPrimitive{std::move(*vertices), std::move(*indices),
-                                            static_cast<std::uint32_t>(primitive.indices.size()),
-                                            primitive.materialIndex, primitive.localBoundsCenter,
-                                            std::move(morphBuffer),
-                                            static_cast<std::uint32_t>(primitive.morphTargets.size()),
-                                            static_cast<std::uint32_t>(primitive.vertices.size())});
+        uploaded.push_back(GpuMeshPrimitive{
+            std::move(*vertices), std::move(*indices),
+            static_cast<std::uint32_t>(primitive.indices.size()), primitive.materialIndex,
+            primitive.localBoundsCenter, std::move(morphBuffer),
+            static_cast<std::uint32_t>(primitive.morphTargets.size()),
+            static_cast<std::uint32_t>(primitive.vertices.size())});
     }
     meshPrimitives_ = std::move(uploaded);
     std::vector<GpuMeshInstance> instances;
@@ -1157,7 +1233,8 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     for (const auto& sourceInstance : loaded->instances) {
         if (sourceInstance.primitiveIndex >= loaded->primitives.size())
             return fail(ErrorCode::corruptData, "glTF instance references invalid primitive");
-        const auto localCenter = loaded->primitives[sourceInstance.primitiveIndex].localBoundsCenter;
+        const auto localCenter =
+            loaded->primitives[sourceInstance.primitiveIndex].localBoundsCenter;
         const auto transformed =
             simd_mul(sourceInstance.worldTransform,
                      simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
@@ -1166,8 +1243,10 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             sourceInstance.worldTransform,
                                             {transformed.x, transformed.y, transformed.z},
                                             simd_determinant(sourceInstance.worldTransform) < 0.0F,
-                                            sourceInstance.nodeIndex, sourceInstance.skinIndex,
-                                            sourceInstance.morphWeights, sourceInstance.morphWeights,
+                                            sourceInstance.nodeIndex,
+                                            sourceInstance.skinIndex,
+                                            sourceInstance.morphWeights,
+                                            sourceInstance.morphWeights,
                                             std::nullopt});
     }
     meshInstances_ = std::move(instances);
@@ -1182,15 +1261,19 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     for (const auto& node : meshAnimationAsset_->nodes)
         initialTransforms.push_back(node.localTransform);
     auto initialWorlds = mesh::resolveWorldTransforms(*meshAnimationAsset_, initialTransforms);
-    if (!initialWorlds) return std::unexpected(initialWorlds.error());
+    if (!initialWorlds)
+        return std::unexpected(initialWorlds.error());
     meshWorldTransforms_ = std::move(*initialWorlds);
     previousMeshWorldTransforms_ = meshWorldTransforms_;
-    selectedAnimation_ = meshAnimationAsset_->animations.empty()
-                             ? std::nullopt
-                             : std::optional<std::size_t>{0};
+    selectedAnimation_ =
+        meshAnimationAsset_->animations.empty() ? std::nullopt : std::optional<std::size_t>{0};
     animationSeconds_ = 0.0F;
     animationPlaying_ = true;
     gaussianPipeline_.reset();
+    proxyVertices_.reset();
+    proxyIndices_.reset();
+    proxyVertexCount_ = 0;
+    proxyIndexCount_ = 0;
     selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
@@ -1238,7 +1321,8 @@ std::size_t Renderer::animationClipCount() const noexcept {
 }
 
 void Renderer::setExposureStops(float stops) noexcept {
-    if (std::isfinite(stops)) exposureStops_ = std::clamp(stops, -16.0F, 16.0F);
+    if (std::isfinite(stops))
+        exposureStops_ = std::clamp(stops, -16.0F, 16.0F);
 }
 
 Result<void> Renderer::setLights(std::vector<scene::Light> lights) {
@@ -1258,7 +1342,8 @@ Result<void> Renderer::setLights(std::vector<scene::Light> lights) {
 Result<void> Renderer::setLight(std::uint32_t lightId, const scene::Light& light) {
     if (lightId == 0 || lightId > lights_.size())
         return fail(ErrorCode::invalidArgument, "Light ID is out of range");
-    if (auto valid = scene::validateLight(light); !valid) return std::unexpected(valid.error());
+    if (auto valid = scene::validateLight(light); !valid)
+        return std::unexpected(valid.error());
     lights_[lightId - 1U] = light;
     temporalHistoryValid_ = false;
     return {};
@@ -1268,7 +1353,8 @@ Result<std::uint32_t> Renderer::addLight(const scene::Light& light) {
     constexpr std::size_t maximumLights = 4096;
     if (lights_.size() >= maximumLights)
         return fail(ErrorCode::resourceExhausted, "Light count exceeds the editor/GPU budget");
-    if (auto valid = scene::validateLight(light); !valid) return std::unexpected(valid.error());
+    if (auto valid = scene::validateLight(light); !valid)
+        return std::unexpected(valid.error());
     lights_.push_back(light);
     temporalHistoryValid_ = false;
     return static_cast<std::uint32_t>(lights_.size());
@@ -1285,7 +1371,7 @@ Result<void> Renderer::removeLight(std::uint32_t lightId) {
 }
 
 Result<void> Renderer::setImageBasedLighting(const scene::ImageBasedLightingData& data,
-                                              float intensity) {
+                                             float intensity) {
     if (!std::isfinite(intensity) || intensity < 0.0F || data.irradiance.size == 0 ||
         data.prefilteredSpecular.empty() || data.brdfLutSize == 0)
         return fail(ErrorCode::invalidArgument, "IBL data or intensity is invalid");
@@ -1335,7 +1421,8 @@ Result<void> Renderer::setImageBasedLighting(const scene::ImageBasedLightingData
         const std::size_t faceTexels = static_cast<std::size_t>(level.size) * level.size;
         for (std::uint32_t face = 0; face < 6; ++face)
             texture->replaceRegion(MTL::Region::Make2D(0, 0, level.size, level.size), mip, face,
-                                   rgba.data() + faceTexels * face, level.size * sizeof(simd_float4),
+                                   rgba.data() + faceTexels * face,
+                                   level.size * sizeof(simd_float4),
                                    faceTexels * sizeof(simd_float4));
     };
     uploadCubeLevel(irradiance.get(), data.irradiance, 0);
@@ -1352,7 +1439,8 @@ Result<void> Renderer::setImageBasedLighting(const scene::ImageBasedLightingData
     samplerDescriptor->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
     samplerDescriptor->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
     auto sampler = adopt(device_->newSamplerState(samplerDescriptor.get()));
-    if (!sampler) return fail(ErrorCode::resourceExhausted, "Unable to allocate IBL sampler");
+    if (!sampler)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate IBL sampler");
     irradiance->setLabel(NS::String::string("IBL Diffuse Irradiance", NS::UTF8StringEncoding));
     specular->setLabel(NS::String::string("IBL Prefiltered Specular", NS::UTF8StringEncoding));
     lut->setLabel(NS::String::string("IBL Split Sum BRDF", NS::UTF8StringEncoding));
@@ -1385,6 +1473,10 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
+    proxyVertices_.reset();
+    proxyIndices_.reset();
+    proxyVertexCount_ = 0;
+    proxyIndexCount_ = 0;
     selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded PLY scene with " +
@@ -1409,6 +1501,46 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
         return std::unexpected(pipeline.error());
     if (auto loaded = (*pipeline)->load(*asset); !loaded)
         return std::unexpected(loaded.error());
+    MetalPtr<MTL::Buffer> proxyVertices;
+    MetalPtr<MTL::Buffer> proxyIndices;
+    std::uint32_t proxyVertexCount = 0;
+    std::uint32_t proxyIndexCount = 0;
+    const bool hasProxyChunk =
+        std::ranges::any_of(scenePackage->info().chunks, [](const package::ChunkInfo& chunk) {
+            return chunk.type == package::ChunkType::proxyMesh;
+        });
+    if (hasProxyChunk) {
+        auto proxyBytes = scenePackage->readChunk(package::ChunkType::proxyMesh);
+        if (!proxyBytes)
+            return std::unexpected(proxyBytes.error());
+        auto proxy = hybrid::ProxyMeshCodec::decode(*proxyBytes);
+        if (!proxy)
+            return std::unexpected(proxy.error());
+        if (proxy->vertices.size() > std::numeric_limits<std::uint32_t>::max() ||
+            proxy->indices.size() > std::numeric_limits<std::uint32_t>::max())
+            return fail(ErrorCode::resourceExhausted, "Proxy mesh exceeds Metal index limits");
+        std::vector<AetherProxyGpuVertex> gpuVertices;
+        gpuVertices.reserve(proxy->vertices.size());
+        for (const auto& vertex : proxy->vertices) {
+            gpuVertices.push_back(
+                {{vertex.position[0], vertex.position[1], vertex.position[2], vertex.confidence},
+                 {vertex.normal[0], vertex.normal[1], vertex.normal[2], 0.0F}});
+        }
+        auto uploadedVertices = uploadPrivateBuffer(
+            gpuVertices.data(), gpuVertices.size() * sizeof(AetherProxyGpuVertex),
+            "Proxy Vertex Buffer");
+        auto uploadedIndices = uploadPrivateBuffer(proxy->indices.data(),
+                                                   proxy->indices.size() * sizeof(std::uint32_t),
+                                                   "Proxy Index Buffer");
+        if (!uploadedVertices)
+            return std::unexpected(uploadedVertices.error());
+        if (!uploadedIndices)
+            return std::unexpected(uploadedIndices.error());
+        proxyVertices = std::move(*uploadedVertices);
+        proxyIndices = std::move(*uploadedIndices);
+        proxyVertexCount = static_cast<std::uint32_t>(proxy->vertices.size());
+        proxyIndexCount = static_cast<std::uint32_t>(proxy->indices.size());
+    }
     meshPrimitives_.clear();
     meshInstances_.clear();
     meshAnimationAsset_.reset();
@@ -1418,11 +1550,16 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
+    proxyVertices_ = std::move(proxyVertices);
+    proxyIndices_ = std::move(proxyIndices);
+    proxyVertexCount_ = proxyVertexCount;
+    proxyIndexCount_ = proxyIndexCount;
     selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
-    Log::instance().write(LogLevel::info, "Loaded AETHER scene with " +
-                                              std::to_string(asset->gaussians.size()) +
-                                              " Gaussians");
+    Log::instance().write(LogLevel::info,
+                          "Loaded AETHER scene with " + std::to_string(asset->gaussians.size()) +
+                              " Gaussians and " + std::to_string(proxyIndexCount_ / 3U) +
+                              " proxy triangles");
     return {};
 }
 
@@ -1450,6 +1587,32 @@ Result<std::uint32_t> Renderer::pickGaussian(std::uint32_t x, std::uint32_t y) {
     std::uint32_t sourceId{};
     std::memcpy(&sourceId, readback->contents(), sizeof(sourceId));
     return sourceId;
+}
+
+Result<std::uint32_t> Renderer::pickProxy(std::uint32_t x, std::uint32_t y) {
+    if (!proxyIds_)
+        return fail(ErrorCode::invalidArgument, "No proxy ID target is available");
+    if (x >= sceneTargetWidth_ || y >= sceneTargetHeight_)
+        return fail(ErrorCode::invalidArgument, "Proxy pick coordinate is outside the viewport");
+    constexpr std::size_t readbackBytesPerRow = 256;
+    auto readback = adopt(device_->newBuffer(readbackBytesPerRow, MTL::ResourceStorageModeShared));
+    MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
+    MTL::BlitCommandEncoder* blit = commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+    if (!readback || !commandBuffer || !blit)
+        return fail(ErrorCode::metal, "Unable to allocate proxy pick readback");
+    readback->setLabel(NS::String::string("Proxy Pick Readback", NS::UTF8StringEncoding));
+    blit->setLabel(NS::String::string("Proxy ID Pick", NS::UTF8StringEncoding));
+    blit->copyFromTexture(proxyIds_.get(), 0, 0, MTL::Origin::Make(x, y, 0),
+                          MTL::Size::Make(1, 1, 1), readback.get(), 0, readbackBytesPerRow,
+                          readbackBytesPerRow);
+    blit->endEncoding();
+    commandBuffer->commit();
+    commandBuffer->waitUntilCompleted();
+    if (commandBuffer->status() == MTL::CommandBufferStatusError)
+        return fail(ErrorCode::metal, "Proxy pick command buffer failed");
+    std::uint32_t proxyId{};
+    std::memcpy(&proxyId, readback->contents(), sizeof(proxyId));
+    return proxyId;
 }
 
 Result<std::uint32_t> Renderer::pickMesh(std::uint32_t x, std::uint32_t y) {
@@ -1488,7 +1651,8 @@ std::vector<std::string> Renderer::meshEntityNames() const {
         std::string name;
         if (meshAnimationAsset_ && nodeIndex < meshAnimationAsset_->nodes.size())
             name = meshAnimationAsset_->nodes[nodeIndex].name;
-        if (name.empty()) name = "Entity " + std::to_string(index + 1U);
+        if (name.empty())
+            name = "Entity " + std::to_string(index + 1U);
         names.push_back(std::move(name));
     }
     return names;
@@ -1572,7 +1736,8 @@ Result<std::uint32_t> Renderer::pickGizmoAxis(std::uint32_t x, std::uint32_t y) 
         return fail(ErrorCode::metal, "Gizmo pick command buffer failed");
     std::uint32_t encoded{};
     std::memcpy(&encoded, readback->contents(), sizeof(encoded));
-    if ((encoded & 0x80000000U) == 0) return 0U;
+    if ((encoded & 0x80000000U) == 0)
+        return 0U;
     const std::uint32_t axis = encoded & 0x7fffffffU;
     if (axis < 1U || axis > 3U)
         return fail(ErrorCode::corruptData, "Gizmo target contains an invalid axis ID");
@@ -1610,9 +1775,11 @@ Result<MeshEntitySnapshot> Renderer::translateSelectedMesh(std::uint32_t axis,
     if (axis < 1U || axis > 3U || !std::isfinite(worldDistance))
         return fail(ErrorCode::invalidArgument, "Translation gizmo delta is invalid");
     auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
-    if (!snapshot) return std::unexpected(snapshot.error());
+    if (!snapshot)
+        return std::unexpected(snapshot.error());
     snapshot->worldTransform.translation[axis - 1U] += worldDistance;
-    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform); !updated)
+    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform);
+        !updated)
         return std::unexpected(updated.error());
     return meshEntitySnapshot(selectedMeshEntity_);
 }
@@ -1622,14 +1789,15 @@ Result<MeshEntitySnapshot> Renderer::translateSelectedMeshPixels(std::uint32_t a
     if (!std::isfinite(pixelDistance) || sceneTargetHeight_ == 0)
         return fail(ErrorCode::invalidArgument, "Translation gizmo pixel delta is invalid");
     auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
-    if (!snapshot) return std::unexpected(snapshot.error());
-    const float cameraDistance = simd_length(cameraController_.position() -
-                                             snapshot->worldTransform.translation);
+    if (!snapshot)
+        return std::unexpected(snapshot.error());
+    const float cameraDistance =
+        simd_length(cameraController_.position() - snapshot->worldTransform.translation);
     scene::Camera camera;
     camera.verticalFieldOfViewRadians = cameraVerticalFieldOfViewRadians_;
-    const float worldPerPixel =
-        2.0F * cameraDistance * std::tan(camera.verticalFieldOfViewRadians * 0.5F) /
-        static_cast<float>(sceneTargetHeight_);
+    const float worldPerPixel = 2.0F * cameraDistance *
+                                std::tan(camera.verticalFieldOfViewRadians * 0.5F) /
+                                static_cast<float>(sceneTargetHeight_);
     return translateSelectedMesh(axis, pixelDistance * worldPerPixel);
 }
 
@@ -1639,13 +1807,15 @@ Result<MeshEntitySnapshot> Renderer::rotateSelectedMeshPixels(std::uint32_t axis
         axis > 3U || !std::isfinite(pixelDistance))
         return fail(ErrorCode::invalidArgument, "Rotation gizmo delta is invalid");
     auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
-    if (!snapshot) return std::unexpected(snapshot.error());
+    if (!snapshot)
+        return std::unexpected(snapshot.error());
     simd_float3 axisVector{};
     axisVector[axis - 1U] = 1.0F;
     const simd_quatf delta = simd_quaternion(pixelDistance * 0.01F, axisVector);
-    snapshot->worldTransform.rotation = simd_normalize(simd_mul(snapshot->worldTransform.rotation,
-                                                               delta));
-    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform); !updated)
+    snapshot->worldTransform.rotation =
+        simd_normalize(simd_mul(snapshot->worldTransform.rotation, delta));
+    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform);
+        !updated)
         return std::unexpected(updated.error());
     return meshEntitySnapshot(selectedMeshEntity_);
 }
@@ -1656,13 +1826,15 @@ Result<MeshEntitySnapshot> Renderer::scaleSelectedMeshPixels(std::uint32_t axis,
         axis > 3U || !std::isfinite(pixelDistance))
         return fail(ErrorCode::invalidArgument, "Scale gizmo delta is invalid");
     auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
-    if (!snapshot) return std::unexpected(snapshot.error());
+    if (!snapshot)
+        return std::unexpected(snapshot.error());
     const float factor = std::exp(std::clamp(pixelDistance * 0.01F, -4.0F, 4.0F));
     const float component = snapshot->worldTransform.scale[axis - 1U];
     const float sign = component < 0.0F ? -1.0F : 1.0F;
     snapshot->worldTransform.scale[axis - 1U] =
         sign * std::clamp(std::abs(component) * factor, 1.0e-4F, 1.0e4F);
-    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform); !updated)
+    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform);
+        !updated)
         return std::unexpected(updated.error());
     return meshEntitySnapshot(selectedMeshEntity_);
 }
@@ -1728,10 +1900,10 @@ Result<void> Renderer::clearMaterialOverride(std::uint32_t materialId) {
 Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Scene render target dimensions are zero");
-    if (sceneHdrColor_ && sceneDepth_ && sceneIds_ && sceneMotion_ && bloomHalf_ && bloomQuarter_ && temporalColorHistory_[0] &&
-        temporalColorHistory_[1] && temporalDepthHistory_[0] && temporalDepthHistory_[1] &&
-        sceneTargetWidth_ == width &&
-        sceneTargetHeight_ == height)
+    if (sceneHdrColor_ && sceneDepth_ && sceneIds_ && sceneMotion_ && proxyNormalConfidence_ &&
+        proxyIds_ && proxyMotion_ && proxyDepth_ && bloomHalf_ && bloomQuarter_ &&
+        temporalColorHistory_[0] && temporalColorHistory_[1] && temporalDepthHistory_[0] &&
+        temporalDepthHistory_[1] && sceneTargetWidth_ == width && sceneTargetHeight_ == height)
         return {};
     auto colorDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
     colorDescriptor->setTextureType(MTL::TextureType2D);
@@ -1759,6 +1931,11 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     auto ids = adopt(device_->newTexture(idDescriptor.get()));
     idDescriptor->setPixelFormat(MTL::PixelFormatRGBA16Float);
     auto motion = adopt(device_->newTexture(idDescriptor.get()));
+    auto proxyNormalConfidence = adopt(device_->newTexture(idDescriptor.get()));
+    auto proxyMotion = adopt(device_->newTexture(idDescriptor.get()));
+    idDescriptor->setPixelFormat(MTL::PixelFormatR32Uint);
+    auto proxyIds = adopt(device_->newTexture(idDescriptor.get()));
+    auto proxyDepth = adopt(device_->newTexture(depthDescriptor.get()));
     colorDescriptor->setWidth(std::max<std::uint32_t>(1U, width / 2U));
     colorDescriptor->setHeight(std::max<std::uint32_t>(1U, height / 2U));
     auto bloomHalf = adopt(device_->newTexture(colorDescriptor.get()));
@@ -1780,9 +1957,9 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
         historyColor[index] = adopt(device_->newTexture(colorDescriptor.get()));
         historyDepth[index] = adopt(device_->newTexture(historyDepthDescriptor.get()));
     }
-    if (!color || !depth || !ids || !motion || !bloomHalf || !bloomQuarter || !historyColor[0] ||
-        !historyColor[1] || !historyDepth[0] ||
-        !historyDepth[1])
+    if (!color || !depth || !ids || !motion || !proxyNormalConfidence || !proxyMotion ||
+        !proxyIds || !proxyDepth || !bloomHalf || !bloomQuarter || !historyColor[0] ||
+        !historyColor[1] || !historyDepth[0] || !historyDepth[1])
         return fail(ErrorCode::resourceExhausted, "Unable to allocate HDR scene targets");
     color->setLabel(NS::String::string("Scene HDR Color", NS::UTF8StringEncoding));
     depth->setLabel(NS::String::string("Scene Reverse-Z Depth", NS::UTF8StringEncoding));
@@ -1792,17 +1969,26 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     sceneIds_ = std::move(ids);
     motion->setLabel(NS::String::string("Scene Motion Vectors", NS::UTF8StringEncoding));
     sceneMotion_ = std::move(motion);
+    proxyNormalConfidence->setLabel(
+        NS::String::string("Proxy World Normal + Confidence", NS::UTF8StringEncoding));
+    proxyIds->setLabel(NS::String::string("Proxy Surface IDs", NS::UTF8StringEncoding));
+    proxyMotion->setLabel(NS::String::string("Proxy Motion Vectors", NS::UTF8StringEncoding));
+    proxyDepth->setLabel(NS::String::string("Proxy Reverse-Z Depth", NS::UTF8StringEncoding));
+    proxyNormalConfidence_ = std::move(proxyNormalConfidence);
+    proxyIds_ = std::move(proxyIds);
+    proxyMotion_ = std::move(proxyMotion);
+    proxyDepth_ = std::move(proxyDepth);
     bloomHalf->setLabel(NS::String::string("Bloom Half Resolution", NS::UTF8StringEncoding));
     bloomQuarter->setLabel(NS::String::string("Bloom Quarter Resolution", NS::UTF8StringEncoding));
     bloomHalf_ = std::move(bloomHalf);
     bloomQuarter_ = std::move(bloomQuarter);
     for (std::size_t index = 0; index < temporalColorHistory_.size(); ++index) {
-        historyColor[index]->setLabel(NS::String::string(
-            index == 0 ? "Temporal Color History A" : "Temporal Color History B",
-            NS::UTF8StringEncoding));
-        historyDepth[index]->setLabel(NS::String::string(
-            index == 0 ? "Temporal Depth History A" : "Temporal Depth History B",
-            NS::UTF8StringEncoding));
+        historyColor[index]->setLabel(
+            NS::String::string(index == 0 ? "Temporal Color History A" : "Temporal Color History B",
+                               NS::UTF8StringEncoding));
+        historyDepth[index]->setLabel(
+            NS::String::string(index == 0 ? "Temporal Depth History A" : "Temporal Depth History B",
+                               NS::UTF8StringEncoding));
     }
     temporalColorHistory_ = std::move(historyColor);
     temporalDepthHistory_ = std::move(historyDepth);
@@ -1956,7 +2142,11 @@ Result<void> Renderer::buildViewportPipeline() {
         NS::String::string("aetherViewportFragment", NS::UTF8StringEncoding)));
     auto sceneBackgroundFragment = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherSceneBackgroundFragment", NS::UTF8StringEncoding)));
-    if (!vertex || !fragment || !sceneBackgroundFragment) {
+    auto proxyVertex = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherProxyVertex", NS::UTF8StringEncoding)));
+    auto proxyFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherProxyFragment", NS::UTF8StringEncoding)));
+    if (!vertex || !fragment || !sceneBackgroundFragment || !proxyVertex || !proxyFragment) {
         return fail(ErrorCode::metal, "Offline shader library is missing viewport entry points");
     }
 
@@ -1982,8 +2172,8 @@ Result<void> Renderer::buildViewportPipeline() {
         libraryStream.read(hashBuffer.data(), static_cast<std::streamsize>(hashBuffer.size()));
         const auto count = libraryStream.gcount();
         if (count > 0)
-            libraryHasher.update(std::as_bytes(
-                std::span(hashBuffer.data(), static_cast<std::size_t>(count))));
+            libraryHasher.update(
+                std::as_bytes(std::span(hashBuffer.data(), static_cast<std::size_t>(count))));
     }
     if (!libraryStream.eof())
         return fail(ErrorCode::io, "Unable to hash offline Metal shader library", libraryPath);
@@ -2039,10 +2229,33 @@ Result<void> Renderer::buildViewportPipeline() {
         return fail(ErrorCode::metal, "Unable to create AETHER HDR background pipeline", message);
     }
 
+    auto proxyDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    proxyDescriptor->setLabel(
+        NS::String::string("AETHER Proxy G-buffer Pipeline", NS::UTF8StringEncoding));
+    proxyDescriptor->setVertexFunction(proxyVertex.get());
+    proxyDescriptor->setFragmentFunction(proxyFragment.get());
+    proxyDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    proxyDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
+    proxyDescriptor->colorAttachments()->object(2)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    proxyDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
+    if (binaryArchive_) {
+        proxyDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+        error = nullptr;
+        (void)binaryArchive_->addRenderPipelineFunctions(proxyDescriptor.get(), &error);
+    }
+    error = nullptr;
+    proxyPipeline_ = adopt(device_->newRenderPipelineState(proxyDescriptor.get(), &error));
+    if (!proxyPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown proxy pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create proxy G-buffer pipeline", message);
+    }
+
     auto temporalFragment = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherTemporalResolveFragment", NS::UTF8StringEncoding)));
     if (!temporalFragment)
-        return fail(ErrorCode::metal, "Offline shader library is missing temporal resolve entry point");
+        return fail(ErrorCode::metal,
+                    "Offline shader library is missing temporal resolve entry point");
     auto temporalDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
     temporalDescriptor->setLabel(
         NS::String::string("AETHER Temporal Resolve Pipeline", NS::UTF8StringEncoding));
@@ -2050,7 +2263,8 @@ Result<void> Renderer::buildViewportPipeline() {
     temporalDescriptor->setFragmentFunction(temporalFragment.get());
     temporalDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     temporalDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Float);
-    if (binaryArchive_) temporalDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+    if (binaryArchive_)
+        temporalDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
     error = nullptr;
     temporalPipeline_ = adopt(device_->newRenderPipelineState(temporalDescriptor.get(), &error));
     if (!temporalPipeline_) {
@@ -2076,7 +2290,8 @@ Result<void> Renderer::buildViewportPipeline() {
     bloomDescriptor->setVertexFunction(vertex.get());
     bloomDescriptor->setFragmentFunction(bloomFragment.get());
     bloomDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
-    if (binaryArchive_) bloomDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+    if (binaryArchive_)
+        bloomDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
     error = nullptr;
     bloomPipeline_ = adopt(device_->newRenderPipelineState(bloomDescriptor.get(), &error));
     if (!bloomPipeline_) {
@@ -2099,7 +2314,8 @@ Result<void> Renderer::buildViewportPipeline() {
     gizmoDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
     gizmoDescriptor->colorAttachments()->object(2)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     gizmoDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
-    if (binaryArchive_) gizmoDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+    if (binaryArchive_)
+        gizmoDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
     error = nullptr;
     gizmoPipeline_ = adopt(device_->newRenderPipelineState(gizmoDescriptor.get(), &error));
     if (!gizmoPipeline_) {
@@ -2120,7 +2336,8 @@ Result<void> Renderer::buildViewportPipeline() {
     auto shadowFragment = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherShadowFragment", NS::UTF8StringEncoding)));
     if (!shadowVertex || !shadowFragment)
-        return fail(ErrorCode::metal, "Offline shader library is missing shadow caster entry points");
+        return fail(ErrorCode::metal,
+                    "Offline shader library is missing shadow caster entry points");
     auto shadowDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
     shadowDescriptor->setLabel(
         NS::String::string("AETHER Cascaded Shadow Pipeline", NS::UTF8StringEncoding));
@@ -2155,8 +2372,7 @@ Result<void> Renderer::buildViewportPipeline() {
         return fail(ErrorCode::resourceExhausted, "Unable to allocate shadow resources");
     directionalShadowMap_->setLabel(
         NS::String::string("Directional Shadow Cascades", NS::UTF8StringEncoding));
-    localShadowMap_->setLabel(
-        NS::String::string("Local Shadow Slices", NS::UTF8StringEncoding));
+    localShadowMap_->setLabel(NS::String::string("Local Shadow Slices", NS::UTF8StringEncoding));
     MTL::CommandBuffer* shadowClearBuffer = commandQueue_->commandBuffer();
     if (!shadowClearBuffer)
         return fail(ErrorCode::metal, "Unable to create shadow initialization command buffer");
@@ -2170,8 +2386,7 @@ Result<void> Renderer::buildViewportPipeline() {
         auto* clearEncoder = shadowClearBuffer->renderCommandEncoder(clearPass);
         if (!clearEncoder)
             return fail(ErrorCode::metal, "Unable to encode shadow initialization");
-        clearEncoder->setLabel(
-            NS::String::string("Shadow Cascade Clear", NS::UTF8StringEncoding));
+        clearEncoder->setLabel(NS::String::string("Shadow Cascade Clear", NS::UTF8StringEncoding));
         clearEncoder->endEncoding();
     }
     for (std::uint32_t slice = 0; slice < AETHER_LOCAL_SHADOW_SLICE_COUNT; ++slice) {
@@ -2184,8 +2399,7 @@ Result<void> Renderer::buildViewportPipeline() {
         auto* clearEncoder = shadowClearBuffer->renderCommandEncoder(clearPass);
         if (!clearEncoder)
             return fail(ErrorCode::metal, "Unable to encode local shadow initialization");
-        clearEncoder->setLabel(
-            NS::String::string("Local Shadow Clear", NS::UTF8StringEncoding));
+        clearEncoder->setLabel(NS::String::string("Local Shadow Clear", NS::UTF8StringEncoding));
         clearEncoder->endEncoding();
     }
     shadowClearBuffer->commit();
