@@ -14,6 +14,12 @@
       "license": "Apache-2.0",
       "cargoPackage": "brush-app",
       "cargoBinary": "brush_app"
+    },
+    "open3d": {
+      "version": "0.19.0",
+      "repository": "https://github.com/isl-org/Open3D.git",
+      "license": "MIT",
+      "integration": "Python wheel locked by tools/aether-proxy/uv.lock"
     }
   }
 }

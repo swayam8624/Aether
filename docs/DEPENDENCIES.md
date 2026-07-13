@@ -11,6 +11,7 @@
 | Zstandard 1.5.7 | Per-chunk `.aether` compression | BSD-3-Clause | Static FetchContent archive pinned by SHA-256 |
 | COLMAP 3.13.0 | Local camera poses and sparse/dense reconstruction | BSD-3-Clause | External process pinned by commit |
 | Brush 0.3.0 | Local standard Gaussian training | Apache-2.0 | Cargo source build pinned by commit and lockfile |
+| Open3D 0.19.0 | Deterministic sparse-point proxy reconstruction | MIT | Isolated Python 3.12 environment locked by `uv.lock` |
 
 KairoMath was evaluated for scene math but is not consumed because its current repository has no
 explicit license file. AETHER uses Apple SIMD until that legal boundary changes.
@@ -21,6 +22,7 @@ explicit license file. AETHER uses Apple SIMD until that legal boundary changes.
 |---|---|---|
 | Brush | Local standard 3DGS training baseline | Apache-2.0, separate pinned process |
 | COLMAP | Camera calibration and structure from motion | BSD, separate pinned process |
+| Open3D | Proxy cleanup, Poisson reconstruction, and decimation | MIT, isolated pinned process |
 | Open3D | Automated proxy generation | MIT, separate tool/library after audit |
 | Zstandard | `.aether` chunk compression | BSD, pinned library |
 | Sparkle 2 | Signed application updates | MIT, app-only dependency |

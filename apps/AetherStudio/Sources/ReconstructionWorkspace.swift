@@ -33,6 +33,7 @@ private final class ReconstructionModel: ObservableObject {
     @Published var outputURL: URL?
     @Published var colmapURL: URL?
     @Published var brushURL: URL?
+    @Published var proxyURL: URL?
     @Published var report: CaptureReport?
     @Published var coverageReport: SparseCoverageReport?
     @Published var state: State = .idle
@@ -58,6 +59,7 @@ private final class ReconstructionModel: ObservableObject {
 
     func chooseCOLMAP() { colmapURL = chooseExecutable(title: "Choose COLMAP 3.13.0") }
     func chooseBrush() { brushURL = chooseExecutable(title: "Choose Brush 0.3.0") }
+    func chooseProxy() { proxyURL = chooseExecutable(title: "Choose AETHER Proxy Tool") }
 
     func validate() {
         guard let datasetURL else { return }
@@ -82,7 +84,8 @@ private final class ReconstructionModel: ObservableObject {
     }
 
     func reconstruct() {
-        guard case .ready = state, let datasetURL, let outputURL, let colmapURL, let brushURL else { return }
+        guard case .ready = state, let datasetURL, let outputURL, let colmapURL, let brushURL,
+              let proxyURL else { return }
         guard let helper = Bundle.main.url(forAuxiliaryExecutable: "aether-reconstruct") else {
             state = .failed("The signed reconstruction helper is missing from the app bundle.")
             return
@@ -91,7 +94,8 @@ private final class ReconstructionModel: ObservableObject {
         let output = Pipe()
         task.executableURL = helper
         task.arguments = [datasetURL.path, "--output", outputURL.path, "--trainer", "brush",
-                          "--colmap", colmapURL.path, "--brush", brushURL.path, "--json"]
+                          "--colmap", colmapURL.path, "--brush", brushURL.path,
+                          "--proxy", proxyURL.path, "--json"]
         task.standardOutput = output
         task.standardError = output
         process = task
@@ -136,7 +140,7 @@ private final class ReconstructionModel: ObservableObject {
 
     private func monitorMarkers(in outputURL: URL, process: Process) async {
         let stages = ["feature-extraction", "feature-matching", "sparse-mapping",
-                      "sparse-model-export", "pose-coverage-validation", "undistortion",
+                      "sparse-model-export", "pose-coverage-validation", "proxy-generation", "undistortion",
                       "brush-training"]
         while process.isRunning {
             completedStages = stages.filter {
@@ -183,6 +187,7 @@ struct ReconstructionWorkspace: View {
                         pickerRow("Job output", value: model.outputURL?.path, action: model.chooseOutput)
                         pickerRow("COLMAP 3.13.0", value: model.colmapURL?.path, action: model.chooseCOLMAP)
                         pickerRow("Brush 0.3.0", value: model.brushURL?.path, action: model.chooseBrush)
+                        pickerRow("AETHER Proxy 0.1", value: model.proxyURL?.path, action: model.chooseProxy)
                     }.padding(6)
                 }
 
@@ -192,11 +197,11 @@ struct ReconstructionWorkspace: View {
                     Button("Start / Resume Reconstruction", action: model.reconstruct)
                         .buttonStyle(.borderedProminent)
                         .disabled(model.state != .ready || model.outputURL == nil ||
-                                  model.colmapURL == nil || model.brushURL == nil)
+                                  model.colmapURL == nil || model.brushURL == nil || model.proxyURL == nil)
                     if model.state == .running {
-                        ProgressView(value: Double(model.completedStages), total: 7)
+                        ProgressView(value: Double(model.completedStages), total: 8)
                             .frame(width: 120)
-                        Text("\(model.completedStages)/7 stages").font(.caption.monospacedDigit())
+                        Text("\(model.completedStages)/8 stages").font(.caption.monospacedDigit())
                         Button("Cancel", role: .destructive, action: model.cancel)
                     }
                     Spacer()

@@ -42,6 +42,8 @@ struct Options final {
     std::filesystem::path output;
     std::string colmap{"colmap"};
     std::string brush{"brush"};
+    std::string proxy{"aether-proxy"};
+    std::filesystem::path proxyConfig;
     std::uint32_t seed{42};
     std::uint32_t steps{30'000};
     bool json{};
@@ -52,6 +54,7 @@ struct Stage final {
     std::string name;
     std::vector<std::string> arguments;
     std::filesystem::path expectedOutput;
+    std::filesystem::path requiredCompanion{};
 };
 
 struct InputImage final {
@@ -96,7 +99,8 @@ std::string commandDisplay(const std::vector<std::string>& arguments) {
 
 int usage() {
     std::cout << "Usage: aether-reconstruct <dataset> --output <job-directory> "
-                 "[--trainer brush] [--colmap PATH] [--brush PATH] [--seed 42] "
+                 "[--trainer brush] [--colmap PATH] [--brush PATH] [--proxy PATH] "
+                 "[--proxy-config FILE] [--seed 42] "
                  "[--steps 30000] [--dry-run] [--json]\n";
     return 0;
 }
@@ -147,7 +151,8 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
             return std::string_view(argv[index]);
         };
         if (argument == "--output" || argument == "--colmap" || argument == "--brush" ||
-            argument == "--trainer" || argument == "--seed" || argument == "--steps") {
+            argument == "--proxy" || argument == "--proxy-config" || argument == "--trainer" ||
+            argument == "--seed" || argument == "--steps") {
             auto supplied = value();
             if (!supplied)
                 return std::nullopt;
@@ -157,6 +162,10 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
                 options.colmap = *supplied;
             else if (argument == "--brush")
                 options.brush = *supplied;
+            else if (argument == "--proxy")
+                options.proxy = *supplied;
+            else if (argument == "--proxy-config")
+                options.proxyConfig = *supplied;
             else if (argument == "--trainer" && *supplied != "brush") {
                 exitCode = fail("Only the pinned Brush adapter is supported", options.json);
                 return std::nullopt;
@@ -284,14 +293,15 @@ aether::Result<void> writeManifest(const Options& options, const std::filesystem
     const auto path = options.output / "job.json";
     const auto temporary = path.string() + ".tmp";
     std::ofstream stream(temporary, std::ios::trunc);
-    stream << "{\n  \"schemaVersion\":2,\n  \"status\":\"" << status << "\",\n  \"dataset\":\""
+    stream << "{\n  \"schemaVersion\":3,\n  \"status\":\"" << status << "\",\n  \"dataset\":\""
            << escapeJson(options.dataset.string()) << "\",\n  \"images\":\""
            << escapeJson(images.string()) << "\",\n  \"imageCount\":" << inputImages.size()
            << ",\n  \"seed\":" << options.seed << ",\n  \"steps\":" << options.steps
            << ",\n  \"dependencies\":{\n    \"colmap\":{\"version\":\"3.13.0\","
               "\"commit\":\"0b31f98133b470eae62811b557dc2bcff1e4f9a5\"},\n"
               "    \"brush\":{\"version\":\"0.3.0\","
-              "\"commit\":\"3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486\"}\n  },\n"
+              "\"commit\":\"3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486\"},\n"
+              "    \"proxy\":{\"version\":\"0.1.0\",\"open3d\":\"0.19.0\"}\n  },\n"
               "  \"inputs\":[\n";
     for (std::size_t index = 0; index < inputImages.size(); ++index) {
         stream << "    {\"path\":\"" << escapeJson(inputImages[index].path.string())
@@ -303,8 +313,11 @@ aether::Result<void> writeManifest(const Options& options, const std::filesystem
     for (std::size_t index = 0; index < stages.size(); ++index) {
         stream << "    {\"name\":\"" << escapeJson(stages[index].name) << "\",\"command\":\""
                << escapeJson(commandDisplay(stages[index].arguments)) << "\",\"expectedOutput\":\""
-               << escapeJson(stages[index].expectedOutput.string()) << "\"}"
-               << (index + 1 == stages.size() ? "\n" : ",\n");
+               << escapeJson(stages[index].expectedOutput.string()) << '"';
+        if (!stages[index].requiredCompanion.empty())
+            stream << ",\"requiredCompanion\":\""
+                   << escapeJson(stages[index].requiredCompanion.string()) << '"';
+        stream << '}' << (index + 1 == stages.size() ? "\n" : ",\n");
     }
     stream << "  ]";
     if (coverage) {
@@ -422,8 +435,17 @@ int main(int argc, char** argv) {
     const auto sparseText = sparse / "0-text";
     const auto dense = options->output / "dense";
     const auto exports = options->output / "exports";
+    const auto proxyDirectory = options->output / "proxy";
+    const auto proxyMesh = proxyDirectory / "proxy.ply";
     const std::string seed = std::to_string(options->seed);
     const std::string steps = std::to_string(options->steps);
+    std::vector<std::string> proxyArguments{
+        options->proxy, (sparseText / "points3D.txt").string(),   "--output", proxyMesh.string(),
+        "--report",     (proxyDirectory / "proxy.json").string(), "--json"};
+    if (!options->proxyConfig.empty()) {
+        proxyArguments.emplace_back("--config");
+        proxyArguments.push_back(options->proxyConfig.string());
+    }
     std::vector<Stage> stages{
         {"feature-extraction",
          {options->colmap, "feature_extractor", "--database_path", database.string(),
@@ -443,6 +465,7 @@ int main(int argc, char** argv) {
          {options->colmap, "model_converter", "--input_path", (sparse / "0").string(),
           "--output_path", sparseText.string(), "--output_type", "TXT"},
          sparseText / "images.txt"},
+        {"proxy-generation", std::move(proxyArguments), proxyMesh, proxyDirectory / "proxy.json"},
         {"undistortion",
          {options->colmap, "image_undistorter", "--image_path", images.string(), "--input_path",
           (sparse / "0").string(), "--output_path", dense.string(), "--output_type", "COLMAP"},
@@ -477,6 +500,7 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(options->output / "logs", filesystemError);
     std::filesystem::create_directories(sparse, filesystemError);
     std::filesystem::create_directories(exports, filesystemError);
+    std::filesystem::create_directories(proxyDirectory, filesystemError);
     if (filesystemError)
         return fail("Unable to create reconstruction job directories", options->json, 3);
     if (auto manifest = writeManifest(*options, images, inputImages, stages, "running", nullptr);
@@ -490,13 +514,19 @@ int main(int argc, char** argv) {
             verifyTool(options->brush, "0.3.0", options->output / "logs" / "brush-version.log");
         !verified)
         return fail(verified.error().describe(), options->json, 3);
+    if (auto verified = verifyTool(options->proxy, "aether-proxy 0.1.0",
+                                   options->output / "logs" / "proxy-version.log");
+        !verified)
+        return fail(verified.error().describe(), options->json, 3);
     std::signal(SIGINT, interruptChild);
     std::signal(SIGTERM, interruptChild);
     std::optional<aether::reconstruction::SparseCoverageReport> sparseCoverage;
     for (const Stage& stage : stages) {
         const auto marker = options->output / (stage.name + ".complete");
-        const bool complete = std::filesystem::is_regular_file(marker) &&
-                              std::filesystem::exists(stage.expectedOutput);
+        const bool complete =
+            std::filesystem::is_regular_file(marker) &&
+            std::filesystem::exists(stage.expectedOutput) &&
+            (stage.requiredCompanion.empty() || std::filesystem::exists(stage.requiredCompanion));
         if (!complete) {
             if (auto result = runStage(stage, options->output / "logs" / (stage.name + ".log"));
                 !result)
@@ -505,6 +535,10 @@ int main(int argc, char** argv) {
         if (!std::filesystem::exists(stage.expectedOutput))
             return fail("Stage exited successfully but expected output is missing: " +
                             stage.expectedOutput.string(),
+                        options->json, 4);
+        if (!stage.requiredCompanion.empty() && !std::filesystem::exists(stage.requiredCompanion))
+            return fail("Stage exited successfully but required companion output is missing: " +
+                            stage.requiredCompanion.string(),
                         options->json, 4);
         if (stage.name == "sparse-model-export") {
             auto validated =
@@ -540,7 +574,8 @@ int main(int argc, char** argv) {
     if (options->json)
         std::cout << "{\"ok\":true,\"output\":\""
                   << escapeJson((exports / "base-gaussians.ply").string())
-                  << "\",\"images\":" << imageCount
+                  << "\",\"images\":" << imageCount << ",\"proxy\":\""
+                  << escapeJson(proxyMesh.string()) << "\""
                   << ",\"registeredImages\":" << sparseCoverage->registeredImages
                   << ",\"trackedPoints\":" << sparseCoverage->trackedPoints
                   << ",\"seed\":" << options->seed << "}\n";

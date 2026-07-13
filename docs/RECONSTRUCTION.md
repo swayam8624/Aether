@@ -13,12 +13,17 @@ The expected private tool directory is `.aether-deps/bin`, ignored by Git. Sourc
 verified after checkout. Public releases must additionally archive dependency notices, the lock
 manifest, build logs, and checksums of redistributed binaries.
 
-`aether-reconstruct` runs six external resumable stages: feature extraction, exhaustive matching,
-seeded sparse mapping, text-model export, undistortion, and Brush training. Between export and
-undistortion, an AETHER-owned gate parses the COLMAP text model and requires enough registered
+The same bootstrap creates an isolated Python 3.12 environment for `aether-proxy` using the
+committed `tools/aether-proxy/uv.lock`. Open3D 0.19.0 and every transitive wheel are version- and
+hash-locked; nothing is installed into the user's system Python.
+
+`aether-reconstruct` runs seven external resumable stages: feature extraction, exhaustive matching,
+seeded sparse mapping, text-model export, proxy generation, undistortion, and Brush training. After
+export, an AETHER-owned gate parses the COLMAP text model and requires enough registered
 images, multi-view tracks, overlap-graph connectivity, camera baseline, and angular diversity.
 It writes `pose-coverage.json` atomically; a failed gate records `coverage-failed` in `job.json` and
-does not launch Brush. Every subprocess receives an argument vector directly—never a shell
+does not launch proxy generation or Brush. A passing model feeds the pinned `aether-proxy` process;
+its mesh and report land under `<job>/proxy`. Every subprocess receives an argument vector directly—never a shell
 command—while stdout/stderr go to separate stage logs. Completion markers are written atomically
 only after the process exits successfully and its expected output exists. SIGINT and SIGTERM are
 forwarded to the active child.

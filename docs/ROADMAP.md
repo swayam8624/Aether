@@ -122,8 +122,10 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   bundled process helper, atomic-marker progress, cancellation, and resume-safe job output.
 - [x] Strict COLMAP text-model validation for registered-image ratio, multi-view tracks, overlap-graph
   connectivity, camera baseline, and angular diversity, with an atomic JSON report and hard Brush gate.
+- [x] Pinned Open3D 0.19 proxy tool with bounded COLMAP parsing, deterministic Poisson reconstruction,
+  cleanup/decimation budgets, atomic hashed provenance, locked environment, and isolated tests.
 - [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
-- [ ] Proxy generation, checkpointing, and comparison views.
+- [ ] Checkpoint recovery and training comparison views.
 
 ## Phase 5 — Hybrid worlds
 

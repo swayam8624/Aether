@@ -19,6 +19,18 @@ cargo build --locked --release --manifest-path ${brush_source}/Cargo.toml \
   --package brush-app --bin brush_app
 ln -sfn ${brush_source}/target/release/brush_app ${bin}/brush
 
+if ! command -v uv >/dev/null 2>&1; then
+  print -u2 "AETHER proxy setup requires uv; install it without elevated privileges, then rerun."
+  exit 5
+fi
+if ! command -v python3.12 >/dev/null 2>&1; then
+  print -u2 "AETHER proxy setup requires Python 3.12 for the pinned Open3D wheel."
+  exit 5
+fi
+UV_PROJECT_ENVIRONMENT=${deps}/proxy-venv uv sync \
+  --project ${root}/tools/aether-proxy --python $(command -v python3.12) --locked --no-dev
+ln -sfn ${deps}/proxy-venv/bin/aether-proxy ${bin}/aether-proxy
+
 colmap_commit=0b31f98133b470eae62811b557dc2bcff1e4f9a5
 if command -v colmap >/dev/null 2>&1; then
   colmap_version=$(colmap --version 2>&1 || true)
@@ -42,4 +54,5 @@ fi
 
 ${bin}/brush --version
 ${bin}/colmap --version
+${bin}/aether-proxy --version
 print "AETHER reconstruction tools are ready in ${bin}"

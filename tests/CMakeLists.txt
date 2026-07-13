@@ -7,6 +7,15 @@ target_compile_definitions(AetherTests PRIVATE
 aether_configure_target(AetherTests)
 add_test(NAME AetherTests COMMAND AetherTests)
 
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME AetherProxyPythonTests
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover
+            -s "${PROJECT_SOURCE_DIR}/tools/aether-proxy/tests" -v)
+    set_tests_properties(AetherProxyPythonTests PROPERTIES
+        ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/tools/aether-proxy/src")
+endif()
+
 if(TARGET AetherCapture)
     add_executable(AetherCaptureTests CaptureTests.cpp)
     target_link_libraries(AetherCaptureTests PRIVATE Aether::Capture
@@ -79,6 +88,7 @@ if(TARGET aether-reconstruct)
             --output "${AETHER_RECONSTRUCTION_TEST_JOB}"
             --colmap "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
             --brush "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
+            --proxy "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh"
             --seed 42 --steps 10 --json)
     add_test(NAME AetherReconstructionCoverageGate
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-coverage-gate.zsh"
@@ -86,5 +96,16 @@ if(TARGET aether-reconstruct)
             "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-reconstruction"
             "${CMAKE_CURRENT_BINARY_DIR}/reconstruction-weak-job"
             "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap-weak.zsh"
-            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh")
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh")
+    add_test(NAME AetherReconstructionProxyResume
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-proxy-resume.zsh"
+            $<TARGET_FILE:aether-reconstruct>
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-reconstruction"
+            "${AETHER_RECONSTRUCTION_TEST_JOB}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh")
+    set_tests_properties(AetherReconstructionProxyResume PROPERTIES
+        DEPENDS AetherReconstructionAdapter)
 endif()
