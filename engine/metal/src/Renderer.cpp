@@ -180,6 +180,12 @@ Renderer::Renderer(MTL::Device* device, std::filesystem::path shaderLibraryPath)
     if (commandQueue_) {
         commandQueue_->setLabel(NS::String::string("AETHER Primary Queue", NS::UTF8StringEncoding));
     }
+    scene::Light sun;
+    sun.type = scene::LightType::directional;
+    sun.direction = {-0.4F, -1.0F, -0.6F};
+    sun.color = {1.0F, 0.95F, 0.85F};
+    sun.intensity = 4.0F;
+    lights_.push_back(sun);
     Log::instance().write(LogLevel::info, "Initialized Metal device: " + capabilities_.name);
 }
 
@@ -341,12 +347,78 @@ void Renderer::draw(MTK::View* view) noexcept {
         if (projection && viewMatrix) {
             AetherFrameUniforms uniforms{};
             uniforms.viewProjection = simd_mul(*projection, *viewMatrix);
+            uniforms.view = *viewMatrix;
             uniforms.model = matrix_identity_float4x4;
             const simd_float3 cameraPosition = cameraController_.position();
             uniforms.cameraPosition = {cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0F};
             uniforms.lightDirectionIntensity = {-0.4F, -1.0F, -0.6F, 4.0F};
             uniforms.lightColorExposure = {1.0F, 0.95F, 0.85F, 0.0F};
             {
+                scene::ClusterGridConfig clusterConfig;
+                clusterConfig.nearDepth = camera.nearPlane;
+                clusterConfig.farDepth = camera.infiniteFarPlane ? 10'000.0F : camera.farPlane;
+                auto clustered = scene::buildClusteredLightLists(lights_, *viewMatrix, *projection,
+                                                                  clusterConfig);
+                std::vector<AetherGpuLight> gpuLights;
+                if (clustered) {
+                    gpuLights.reserve(lights_.size());
+                    for (const auto& light : lights_) {
+                        const auto direction = light.type == scene::LightType::point
+                                                   ? simd_float3{0.0F, -1.0F, 0.0F}
+                                                   : simd_normalize(light.direction);
+                        gpuLights.push_back(AetherGpuLight{
+                            {light.position.x, light.position.y, light.position.z, light.range},
+                            {direction.x, direction.y, direction.z,
+                             static_cast<float>(static_cast<std::uint32_t>(light.type))},
+                            {light.color.x, light.color.y, light.color.z, light.intensity},
+                            {std::cos(light.innerConeRadians), std::cos(light.outerConeRadians),
+                             0.0F, 0.0F}});
+                    }
+                }
+                std::vector<AetherLightCluster> gpuClusters;
+                if (clustered) {
+                    gpuClusters.reserve(clustered->clusters.size());
+                    for (const auto& cluster : clustered->clusters)
+                        gpuClusters.push_back({cluster.offset, cluster.count});
+                }
+                auto lightSlice = clustered
+                                      ? frame.allocateUpload(gpuLights.size() * sizeof(AetherGpuLight))
+                                      : Result<BufferSlice>(std::unexpected(clustered.error()));
+                auto clusterSlice = clustered
+                                        ? frame.allocateUpload(gpuClusters.size() *
+                                                               sizeof(AetherLightCluster))
+                                        : Result<BufferSlice>(std::unexpected(clustered.error()));
+                auto indexSlice = clustered
+                                      ? frame.allocateUpload(clustered->lightIndices.size() *
+                                                             sizeof(std::uint32_t))
+                                      : Result<BufferSlice>(std::unexpected(clustered.error()));
+                if (!clustered || !lightSlice || !clusterSlice || !indexSlice) {
+                    const auto message = !clustered ? clustered.error().describe()
+                                         : !lightSlice ? lightSlice.error().describe()
+                                         : !clusterSlice ? clusterSlice.error().describe()
+                                                           : indexSlice.error().describe();
+                    Log::instance().write(LogLevel::error, message);
+                    encoder->endEncoding();
+                    dispatch_semaphore_signal(frameSemaphore_);
+                    pool->release();
+                    return;
+                }
+                std::memcpy(lightSlice->cpuAddress, gpuLights.data(),
+                            gpuLights.size() * sizeof(AetherGpuLight));
+                std::memcpy(clusterSlice->cpuAddress, gpuClusters.data(),
+                            gpuClusters.size() * sizeof(AetherLightCluster));
+                std::memcpy(indexSlice->cpuAddress, clustered->lightIndices.data(),
+                            clustered->lightIndices.size() * sizeof(std::uint32_t));
+                encoder->setFragmentBuffer(lightSlice->buffer, lightSlice->offset, 3);
+                encoder->setFragmentBuffer(clusterSlice->buffer, clusterSlice->offset, 4);
+                encoder->setFragmentBuffer(indexSlice->buffer, indexSlice->offset, 5);
+                AetherClusterUniforms clusterUniforms{};
+                clusterUniforms.dimensionsLightCount = {
+                    clusterConfig.columns, clusterConfig.rows, clusterConfig.depthSlices,
+                    static_cast<std::uint32_t>(gpuLights.size())};
+                clusterUniforms.viewportDepth = {width, height, clusterConfig.nearDepth,
+                                                 clusterConfig.farDepth};
+                encoder->setFragmentBytes(&clusterUniforms, sizeof(clusterUniforms), 6);
                 encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
                 auto renderMaterialClass = [&](bool alphaBlend) {
                     encoder->setRenderPipelineState(alphaBlend ? pbrBlendPipeline_.get()
@@ -715,6 +787,18 @@ std::size_t Renderer::animationClipCount() const noexcept {
 
 void Renderer::setExposureStops(float stops) noexcept {
     if (std::isfinite(stops)) exposureStops_ = std::clamp(stops, -16.0F, 16.0F);
+}
+
+Result<void> Renderer::setLights(std::vector<scene::Light> lights) {
+    if (lights.empty())
+        return fail(ErrorCode::invalidArgument, "Renderer requires at least one light");
+    if (lights.size() > std::numeric_limits<std::uint32_t>::max())
+        return fail(ErrorCode::resourceExhausted, "Light count exceeds GPU representation");
+    for (const auto& light : lights)
+        if (auto valid = scene::validateLight(light); !valid)
+            return std::unexpected(valid.error());
+    lights_ = std::move(lights);
+    return {};
 }
 
 Result<void> Renderer::loadPly(const std::filesystem::path& path) {

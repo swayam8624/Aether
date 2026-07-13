@@ -9,6 +9,7 @@ struct PbrVertexOutput {
     float3 worldNormal;
     float4 worldTangent;
     float2 uv;
+    float viewDepth;
 };
 
 vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
@@ -59,6 +60,7 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
                                                                 frame.model[1].xyz,
                                                                 frame.model[2].xyz))));
     output.uv = meshVertex.textureCoordinate;
+    output.viewDepth = max(-(frame.view * worldPosition).z, 1.0e-6f);
     return output;
 }
 
@@ -100,7 +102,11 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  sampler metallicRoughnessSampler [[sampler(1)]],
                                  sampler normalSampler [[sampler(2)]],
                                  sampler occlusionSampler [[sampler(3)]],
-                                 sampler emissiveSampler [[sampler(4)]]) {
+                                 sampler emissiveSampler [[sampler(4)]],
+                                 device const AetherGpuLight* lights [[buffer(3)]],
+                                 device const AetherLightCluster* clusters [[buffer(4)]],
+                                 device const uint* lightIndices [[buffer(5)]],
+                                 constant AetherClusterUniforms& clusterUniforms [[buffer(6)]]) {
     const uint textureMask = material.textureFlags.x;
     float4 sampledBaseColor = material.baseColor;
     if ((textureMask & 1u) != 0)
@@ -121,8 +127,6 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         normal = normalize(float3x3(tangent, bitangent, normal) * tangentNormal);
     }
     const float3 view = normalize(frame.cameraPosition.xyz - input.worldPosition);
-    const float3 light = normalize(-frame.lightDirectionIntensity.xyz);
-    const float3 halfway = normalize(view + light);
     float metallic = clamp(material.emissiveMetallic.w, 0.0f, 1.0f);
     float roughness = clamp(material.roughnessNormalOcclusionAlpha.x, 0.045f, 1.0f);
     if ((textureMask & 2u) != 0) {
@@ -136,15 +140,6 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
     const float3 f0 = mix(float3(0.04f), baseColor, metallic);
 
     const float nDotV = max(dot(normal, view), 0.0f);
-    const float nDotL = max(dot(normal, light), 0.0f);
-    const float distribution = distributionGgx(normal, halfway, roughness);
-    const float geometry =
-        geometrySchlickGgx(nDotV, roughness) * geometrySchlickGgx(nDotL, roughness);
-    const float3 fresnel = fresnelSchlick(max(dot(halfway, view), 0.0f), f0);
-    const float3 specular =
-        (distribution * geometry * fresnel) / max(4.0f * nDotV * nDotL, 1.0e-4f);
-    const float3 diffuse = (1.0f - fresnel) * (1.0f - metallic) * baseColor / M_PI_F;
-    const float3 radiance = frame.lightColorExposure.rgb * frame.lightDirectionIntensity.w;
     float ambientOcclusion = 1.0f;
     if ((textureMask & 8u) != 0) {
         const float sampledOcclusion =
@@ -157,7 +152,59 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         emissive *= emissiveTexture.sample(emissiveSampler,
                                            transformedUv(input.uv, material, 4u)).rgb;
     const float3 ambient = baseColor * (1.0f - metallic) * 0.025f * ambientOcclusion;
-    float3 color =
-        ambient + (diffuse + specular) * radiance * nDotL + emissive;
+    const uint columns = clusterUniforms.dimensionsLightCount.x;
+    const uint rows = clusterUniforms.dimensionsLightCount.y;
+    const uint slices = clusterUniforms.dimensionsLightCount.z;
+    const uint clusterX = min(columns - 1u,
+                              uint(input.position.x * float(columns) /
+                                   clusterUniforms.viewportDepth.x));
+    const uint clusterY = min(rows - 1u,
+                              uint(input.position.y * float(rows) /
+                                   clusterUniforms.viewportDepth.y));
+    const float nearDepth = clusterUniforms.viewportDepth.z;
+    const float farDepth = clusterUniforms.viewportDepth.w;
+    const float normalizedDepth = clamp(log(input.viewDepth / nearDepth) /
+                                            log(farDepth / nearDepth),
+                                        0.0f, 0.999999f);
+    const uint clusterZ = min(slices - 1u, uint(normalizedDepth * float(slices)));
+    const AetherLightCluster cluster =
+        clusters[(clusterZ * rows + clusterY) * columns + clusterX];
+    float3 direct = 0.0f;
+    for (uint reference = 0u; reference < cluster.count; ++reference) {
+        const AetherGpuLight gpuLight = lights[lightIndices[cluster.offset + reference]];
+        const uint type = uint(gpuLight.directionType.w + 0.5f);
+        float3 lightDirection;
+        float attenuation = 1.0f;
+        if (type == 0u) {
+            lightDirection = normalize(-gpuLight.directionType.xyz);
+        } else {
+            const float3 toLight = gpuLight.positionRange.xyz - input.worldPosition;
+            const float distanceSquared = max(dot(toLight, toLight), 1.0e-6f);
+            const float distance = sqrt(distanceSquared);
+            lightDirection = toLight / distance;
+            const float normalizedRange = distance / gpuLight.positionRange.w;
+            const float window = saturate(1.0f - normalizedRange * normalizedRange *
+                                                   normalizedRange * normalizedRange);
+            attenuation = window * window / (1.0f + distanceSquared);
+            if (type == 2u) {
+                const float cone = dot(-lightDirection, normalize(gpuLight.directionType.xyz));
+                attenuation *= smoothstep(gpuLight.spotCosines.y,
+                                          gpuLight.spotCosines.x, cone);
+            }
+        }
+        const float nDotL = max(dot(normal, lightDirection), 0.0f);
+        if (nDotL <= 0.0f || attenuation <= 0.0f) continue;
+        const float3 halfway = normalize(view + lightDirection);
+        const float distribution = distributionGgx(normal, halfway, roughness);
+        const float geometry = geometrySchlickGgx(nDotV, roughness) *
+                               geometrySchlickGgx(nDotL, roughness);
+        const float3 fresnel = fresnelSchlick(max(dot(halfway, view), 0.0f), f0);
+        const float3 specular = (distribution * geometry * fresnel) /
+                                max(4.0f * nDotV * nDotL, 1.0e-4f);
+        const float3 diffuse = (1.0f - fresnel) * (1.0f - metallic) * baseColor / M_PI_F;
+        direct += (diffuse + specular) * gpuLight.colorIntensity.rgb *
+                  gpuLight.colorIntensity.w * attenuation * nDotL;
+    }
+    float3 color = ambient + direct + emissive;
     return float4(color, sampledBaseColor.a);
 }

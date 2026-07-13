@@ -47,7 +47,10 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Resize-safe RGBA16F scene color and Depth32F reverse-Z targets, linear PBR/Gaussian
   composition, dedicated ACES presentation pass, EV exposure control, and fully bound fallback
   material resources validated through Metal's API layer.
-- [ ] Clustered lights, IBL, shadows, TAA, bloom, and debug views.
+- [x] Validated directional/point/spot light model, deterministic 16x9x24 logarithmic clusters,
+  conservative screen/depth bounds, hard reference budgets, per-frame GPU lists, inverse-square
+  range windows, spot cones, and multi-light GGX accumulation.
+- [ ] IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

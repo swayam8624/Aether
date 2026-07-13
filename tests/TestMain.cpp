@@ -17,6 +17,7 @@
 #include <aether/scene/CameraController.hpp>
 #include <aether/scene/CameraPath.hpp>
 #include <aether/scene/Scene.hpp>
+#include <aether/scene/Lighting.hpp>
 
 #include <array>
 #include <bit>
@@ -426,6 +427,51 @@ void testMeshAnimation() {
         "Animation world resolution rejects hierarchy cycles");
 }
 
+void testClusteredLighting() {
+    aether::scene::Camera camera;
+    camera.infiniteFarPlane = false;
+    camera.nearPlane = 0.1F;
+    camera.farPlane = 100.0F;
+    const auto projection = camera.projectionMatrix(16.0F / 9.0F);
+    expect(projection.has_value(), "Clustered-light test camera projection is valid");
+    if (!projection) return;
+    aether::scene::Light sun;
+    sun.type = aether::scene::LightType::directional;
+    sun.direction = {-0.4F, -1.0F, -0.2F};
+    sun.intensity = 3.0F;
+    aether::scene::Light point;
+    point.type = aether::scene::LightType::point;
+    point.position = {0.0F, 0.0F, -5.0F};
+    point.range = 1.0F;
+    aether::scene::ClusterGridConfig config;
+    config.columns = 4;
+    config.rows = 2;
+    config.depthSlices = 4;
+    config.nearDepth = camera.nearPlane;
+    config.farDepth = camera.farPlane;
+    const auto lists = aether::scene::buildClusteredLightLists(
+        {sun, point}, matrix_identity_float4x4, *projection, config);
+    expect(lists.has_value(), "Directional and point lights build bounded cluster lists");
+    if (lists) {
+        expect(lists->clusters.size() == 32,
+               "Cluster list dimensions produce the exact configured cell count");
+        expect(lists->lightIndices.size() >= 32,
+               "Directional light is assigned to every cluster");
+        expect(std::ranges::count(lists->lightIndices, 0U) == 32,
+               "Directional cluster assignment is complete and non-duplicated");
+        expect(std::ranges::count(lists->lightIndices, 1U) > 0 &&
+                   std::ranges::count(lists->lightIndices, 1U) < 32,
+               "Finite point light is culled to a cluster subset");
+    }
+    config.maximumLightReferences = 1;
+    expect(!aether::scene::buildClusteredLightLists(
+                {sun}, matrix_identity_float4x4, *projection, config).has_value(),
+           "Cluster light-reference overflow fails explicitly");
+    point.range = 0.0F;
+    expect(!aether::scene::validateLight(point).has_value(),
+           "Local lights reject non-positive range");
+}
+
 void testSha256() {
     constexpr std::string_view value = "abc";
     const auto bytes = std::as_bytes(std::span(value.data(), value.size()));
@@ -607,6 +653,7 @@ int main() {
     testCameraPath();
     testGltfLoader();
     testMeshAnimation();
+    testClusteredLighting();
     testSha256();
     testAetherPackage();
     testGaussianPly();

@@ -71,11 +71,29 @@ struct AetherMorphDraw {
 
 struct AetherFrameUniforms {
     AetherFloat4x4 viewProjection;
+    AetherFloat4x4 view;
     AetherFloat4x4 model;
     AetherFloat4x4 normalTransform;
     AetherFloat4 cameraPosition;
     AetherFloat4 lightDirectionIntensity;
     AetherFloat4 lightColorExposure;
+};
+
+struct AetherGpuLight {
+    AetherFloat4 positionRange;
+    AetherFloat4 directionType;
+    AetherFloat4 colorIntensity;
+    AetherFloat4 spotCosines;
+};
+
+struct AetherLightCluster {
+    AetherUInt offset;
+    AetherUInt count;
+};
+
+struct AetherClusterUniforms {
+    AetherUInt4 dimensionsLightCount;
+    AetherFloat4 viewportDepth;
 };
 
 struct AetherMaterialUniforms {
@@ -127,7 +145,10 @@ static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);
 static_assert(sizeof(AetherMorphDelta) == 48);
 static_assert(sizeof(AetherMorphDraw) == 16);
-static_assert(sizeof(AetherFrameUniforms) == 240);
+static_assert(sizeof(AetherFrameUniforms) == 304);
+static_assert(sizeof(AetherGpuLight) == 64);
+static_assert(sizeof(AetherLightCluster) == 8);
+static_assert(sizeof(AetherClusterUniforms) == 32);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);

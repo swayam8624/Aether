@@ -7,6 +7,7 @@
 #include <aether/metal/MetalPtr.hpp>
 #include <aether/mesh/MeshAsset.hpp>
 #include <aether/scene/CameraController.hpp>
+#include <aether/scene/Lighting.hpp>
 #include <shared/AetherShaderTypes.h>
 
 #include <Metal/Metal.hpp>
@@ -56,6 +57,7 @@ class Renderer final {
     void seekAnimation(float seconds) noexcept;
     [[nodiscard]] std::size_t animationClipCount() const noexcept;
     void setExposureStops(float stops) noexcept;
+    [[nodiscard]] Result<void> setLights(std::vector<scene::Light> lights);
     [[nodiscard]] float exposureStops() const noexcept { return exposureStops_; }
     /// Input: top-left-origin drawable pixel coordinate.
     /// Output: 1-based Gaussian source ID, or zero for background.
@@ -144,6 +146,7 @@ class Renderer final {
     bool animationLoop_{true};
     bool animationPlaying_{true};
     float exposureStops_{};
+    std::vector<scene::Light> lights_;
     std::unique_ptr<GaussianPipeline> gaussianPipeline_;
     MetalPtr<MTL::Texture> gaussianColor_;
     MetalPtr<MTL::Texture> gaussianDepth_;

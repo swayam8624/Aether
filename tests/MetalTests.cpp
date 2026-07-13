@@ -90,6 +90,19 @@ int main() {
         return 1;
     }
     (*renderer)->setExposureStops(0.0F);
+    aether::scene::Light pointLight;
+    pointLight.type = aether::scene::LightType::point;
+    pointLight.position = {0.0F, 2.0F, -3.0F};
+    pointLight.range = 8.0F;
+    aether::scene::Light spotLight;
+    spotLight.type = aether::scene::LightType::spot;
+    spotLight.position = {1.0F, 3.0F, 0.0F};
+    spotLight.direction = {0.0F, -1.0F, -0.25F};
+    if (!(*renderer)->setLights({pointLight, spotLight}) || (*renderer)->setLights({})) {
+        std::cerr << "Renderer bounded light API validation failed\n";
+        pool->release();
+        return 1;
+    }
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_GLTF); !loaded) {
         std::cerr << loaded.error().describe() << '\n';
         pool->release();
