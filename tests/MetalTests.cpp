@@ -11,12 +11,14 @@
 #include <Metal/Metal.hpp>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <iostream>
 #include <span>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -146,6 +148,36 @@ int main() {
     }
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_MORPHED_GLTF); !loaded) {
         std::cerr << "Renderer could not upload morphed glTF: " << loaded.error().describe() << '\n';
+        pool->release();
+        return 1;
+    }
+    auto testView = aether::metal::adopt(
+        MTK::View::alloc()->init(CGRectMake(0.0, 0.0, 320.0, 180.0), device.get()));
+    if (!testView) {
+        std::cerr << "Unable to create offscreen Metal renderer test view\n";
+        pool->release();
+        return 1;
+    }
+    testView->setColorPixelFormat(MTL::PixelFormatBGRA8Unorm_sRGB);
+    testView->setDepthStencilPixelFormat(MTL::PixelFormatDepth32Float);
+    testView->setDrawableSize(CGSizeMake(320.0, 180.0));
+    (*renderer)->draw(testView.get());
+    for (std::uint32_t attempt = 0; attempt < 100 &&
+                                    (*renderer)->statistics().completedFrames == 0;
+         ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if ((*renderer)->statistics().completedFrames == 0) {
+        std::cerr << "Renderer did not complete the offscreen shadow/post-processing frame\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->draw(testView.get());
+    for (std::uint32_t attempt = 0; attempt < 100 &&
+                                    (*renderer)->statistics().completedFrames < 2;
+         ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if ((*renderer)->statistics().completedFrames < 2) {
+        std::cerr << "Renderer did not complete the temporal-history frame\n";
         pool->release();
         return 1;
     }

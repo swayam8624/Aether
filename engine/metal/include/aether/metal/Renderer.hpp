@@ -92,6 +92,8 @@ class Renderer final {
     MetalPtr<MTL::Library> shaderLibrary_;
     MetalPtr<MTL::BinaryArchive> binaryArchive_;
     MetalPtr<MTL::RenderPipelineState> viewportPipeline_;
+    MetalPtr<MTL::RenderPipelineState> temporalPipeline_;
+    MetalPtr<MTL::RenderPipelineState> bloomPipeline_;
     MetalPtr<MTL::RenderPipelineState> sceneBackgroundPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrBlendPipeline_;
@@ -106,6 +108,7 @@ class Renderer final {
     MetalPtr<MTL::Texture> specularEnvironmentTexture_;
     MetalPtr<MTL::Texture> brdfLutTexture_;
     MetalPtr<MTL::SamplerState> environmentSampler_;
+    MetalPtr<MTL::SamplerState> temporalSampler_;
     MetalPtr<MTL::Texture> directionalShadowMap_;
     MetalPtr<MTL::Texture> localShadowMap_;
     MetalPtr<MTL::SamplerState> shadowComparisonSampler_;
@@ -170,6 +173,12 @@ class Renderer final {
     MetalPtr<MTL::Texture> gaussianIds_;
     MetalPtr<MTL::Texture> sceneHdrColor_;
     MetalPtr<MTL::Texture> sceneDepth_;
+    MetalPtr<MTL::Texture> bloomHalf_;
+    MetalPtr<MTL::Texture> bloomQuarter_;
+    std::array<MetalPtr<MTL::Texture>, 2> temporalColorHistory_;
+    std::array<MetalPtr<MTL::Texture>, 2> temporalDepthHistory_;
+    simd_float4x4 previousViewProjection_{matrix_identity_float4x4};
+    bool temporalHistoryValid_{};
     std::uint32_t sceneTargetWidth_{};
     std::uint32_t sceneTargetHeight_{};
     std::uint32_t gaussianTargetWidth_{};

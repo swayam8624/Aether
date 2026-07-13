@@ -48,5 +48,6 @@ The receiver uses the same live cascade matrices and split depths, selects by ca
 shadows only the directional light that owns the cascade set, and cross-fades PCF visibility over
 the final ten percent of each cascade interval to suppress hard split seams. Static, skinned, and morphed
 fixtures have each run under `MTL_DEBUG_LAYER=1` without binding or draw validation errors. Cascade
-slope-scaled raster bias tuning, live local-shadow drawable validation, and golden-image quality
-thresholds remain open.
+slope-scaled raster bias tuning and golden-image quality thresholds remain open. Local and
+directional shadow submission now run inside the two-frame offscreen MTK validation test alongside
+temporal resolve and bloom.

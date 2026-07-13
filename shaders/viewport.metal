@@ -27,17 +27,106 @@ float3 acesPresentation(float3 color) {
 
 fragment float4 aetherViewportFragment(ViewportOutput input [[stage_in]],
                                        constant AetherPresentationUniforms& presentation [[buffer(0)]],
-                                       texture2d<float> sourceColor [[texture(0)]]) {
+                                       texture2d<float> sourceColor [[texture(0)]],
+                                       texture2d<float> bloomHalf [[texture(1)]],
+                                       texture2d<float> bloomQuarter [[texture(2)]],
+                                       sampler linearSampler [[sampler(0)]]) {
     const float3 background = float3(0.025f + input.uv.x * 0.02f);
     if (presentation.mode == 0u)
         return float4(background, 1.0f);
     const uint2 pixel = uint2(input.position.xy);
     const float4 source = sourceColor.read(pixel);
     if (presentation.mode == 2u) {
-        return float4(acesPresentation(max(source.rgb, 0.0f) * exp2(presentation.exposureStops)),
+        const float2 uv = (float2(pixel) + 0.5f) /
+                          float2(sourceColor.get_width(), sourceColor.get_height());
+        const float3 bloom = bloomHalf.sample(linearSampler, uv).rgb +
+                             bloomQuarter.sample(linearSampler, uv).rgb;
+        const float3 hdr = max(source.rgb + bloom * presentation.bloomIntensity, 0.0f);
+        return float4(acesPresentation(hdr * exp2(presentation.exposureStops)),
                       1.0f);
     }
     const float4 gaussian = source;
     const float3 composite = gaussian.rgb + (1.0f - gaussian.a) * float3(background);
     return float4(composite, 1.0f);
+}
+
+fragment float4 aetherBloomDownsampleFragment(
+    ViewportOutput input [[stage_in]],
+    constant AetherBloomUniforms& bloom [[buffer(0)]],
+    texture2d<float> source [[texture(0)]],
+    sampler linearSampler [[sampler(0)]]) {
+    const float2 uv = input.position.xy * bloom.inverseSourceSize * 2.0f;
+    const float2 texel = bloom.inverseSourceSize;
+    float3 color = source.sample(linearSampler, uv).rgb * 0.25f;
+    color += source.sample(linearSampler, uv + float2(texel.x, 0.0f)).rgb * 0.125f;
+    color += source.sample(linearSampler, uv - float2(texel.x, 0.0f)).rgb * 0.125f;
+    color += source.sample(linearSampler, uv + float2(0.0f, texel.y)).rgb * 0.125f;
+    color += source.sample(linearSampler, uv - float2(0.0f, texel.y)).rgb * 0.125f;
+    color += source.sample(linearSampler, uv + texel).rgb * 0.0625f;
+    color += source.sample(linearSampler, uv - texel).rgb * 0.0625f;
+    color += source.sample(linearSampler, uv + float2(texel.x, -texel.y)).rgb * 0.0625f;
+    color += source.sample(linearSampler, uv + float2(-texel.x, texel.y)).rgb * 0.0625f;
+    if (bloom.threshold > 0.0f) {
+        const float brightness = max(color.r, max(color.g, color.b));
+        const float soft = clamp(brightness - bloom.threshold + bloom.knee,
+                                 0.0f, 2.0f * bloom.knee);
+        const float contribution = max(brightness - bloom.threshold,
+                                       soft * soft / max(4.0f * bloom.knee, 1.0e-5f));
+        color *= contribution / max(brightness, 1.0e-5f);
+    }
+    return float4(max(color, 0.0f), 1.0f);
+}
+
+struct TemporalOutput {
+    float4 color [[color(0)]];
+    float depth [[color(1)]];
+};
+
+fragment TemporalOutput aetherTemporalResolveFragment(
+    ViewportOutput input [[stage_in]],
+    constant AetherTemporalUniforms& temporal [[buffer(0)]],
+    texture2d<float> currentColor [[texture(0)]],
+    depth2d<float> currentDepth [[texture(1)]],
+    texture2d<float> historyColor [[texture(2)]],
+    texture2d<float> historyDepth [[texture(3)]],
+    sampler historySampler [[sampler(0)]]) {
+    const uint2 dimensions(currentColor.get_width(), currentColor.get_height());
+    const uint2 pixel = min(uint2(input.position.xy), dimensions - 1u);
+    const float4 current = currentColor.read(pixel);
+    const float depth = currentDepth.read(pixel);
+    TemporalOutput output{current, depth};
+    if (temporal.historyParameters.x < 0.5f || depth <= 0.0f)
+        return output;
+
+    const float2 uv = (float2(pixel) + 0.5f) / float2(dimensions);
+    const float2 ndc = float2(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f);
+    float4 world = temporal.inverseCurrentViewProjection * float4(ndc, depth, 1.0f);
+    world /= world.w;
+    const float4 previousClip = temporal.previousViewProjection * world;
+    if (previousClip.w <= 0.0f)
+        return output;
+    const float3 previousNdc = previousClip.xyz / previousClip.w;
+    const float2 previousUv = float2(previousNdc.x * 0.5f + 0.5f,
+                                     0.5f - previousNdc.y * 0.5f);
+    if (any(previousUv < 0.0f) || any(previousUv > 1.0f))
+        return output;
+    const float priorDepth = historyDepth.sample(historySampler, previousUv).r;
+    if (abs(priorDepth - previousNdc.z) > temporal.historyParameters.z)
+        return output;
+
+    float3 neighborhoodMinimum = current.rgb;
+    float3 neighborhoodMaximum = current.rgb;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            const int2 coordinate = clamp(int2(pixel) + int2(x, y), int2(0),
+                                          int2(dimensions) - 1);
+            const float3 value = currentColor.read(uint2(coordinate)).rgb;
+            neighborhoodMinimum = min(neighborhoodMinimum, value);
+            neighborhoodMaximum = max(neighborhoodMaximum, value);
+        }
+    }
+    const float3 history = clamp(historyColor.sample(historySampler, previousUv).rgb,
+                                 neighborhoodMinimum, neighborhoodMaximum);
+    output.color.rgb = mix(current.rgb, history, temporal.historyParameters.y);
+    return output;
 }

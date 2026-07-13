@@ -59,8 +59,12 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Bounded spot/point shadow projection, fixed-budget allocation, deformation-aware caster
   submission, exact source-light matching, dominant-axis point faces, and 3x3 PCF receiving.
 - [x] Directional cascade transition blending over the final ten percent of each split interval.
-- [ ] TAA, bloom, shadow diagnostics, live local-shadow drawable
-  validation, and golden-image thresholds.
+- [x] Camera-reprojected TAA with Halton jitter, depth rejection, neighborhood clipping, history
+  invalidation, and two-stage soft-knee HDR bloom.
+- [x] Two-frame offscreen MTK submission covering local shadows, temporal history, bloom, and
+  presentation under Metal API and shader validation.
+- [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
+  deterministic golden-image thresholds.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

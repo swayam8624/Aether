@@ -30,8 +30,21 @@ struct AetherFullscreenVertex {
 struct AetherPresentationUniforms {
     float exposureStops;
     AetherUInt mode;
-    AetherUInt padding0;
+    float bloomIntensity;
     AetherUInt padding1;
+};
+
+struct AetherBloomUniforms {
+    AetherFloat2 inverseSourceSize;
+    float threshold;
+    float knee;
+};
+
+struct AetherTemporalUniforms {
+    AetherFloat4x4 inverseCurrentViewProjection;
+    AetherFloat4x4 previousViewProjection;
+    // history valid, history weight, depth rejection threshold, reserved
+    AetherFloat4 historyParameters;
 };
 
 struct AetherMeshVertex {
@@ -166,6 +179,8 @@ struct AetherGaussianCounters {
 #ifndef __METAL_VERSION__
 static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherPresentationUniforms) == 16);
+static_assert(sizeof(AetherBloomUniforms) == 16);
+static_assert(sizeof(AetherTemporalUniforms) == 144);
 static_assert(sizeof(AetherMeshVertex) == 96);
 static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);

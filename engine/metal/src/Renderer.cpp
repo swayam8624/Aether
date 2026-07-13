@@ -36,6 +36,17 @@ struct DecodedImage final {
     std::vector<std::uint8_t> rgba;
 };
 
+float halton(std::uint64_t index, std::uint32_t base) {
+    float result = 0.0F;
+    float fraction = 1.0F;
+    while (index > 0) {
+        fraction /= static_cast<float>(base);
+        result += fraction * static_cast<float>(index % base);
+        index /= base;
+    }
+    return result;
+}
+
 Result<DecodedImage> decodeImage(std::span<const std::byte> encoded) {
     if (encoded.empty() ||
         encoded.size() > static_cast<std::size_t>(std::numeric_limits<CFIndex>::max()))
@@ -271,6 +282,9 @@ void Renderer::draw(MTK::View* view) noexcept {
         pool->release();
         return;
     }
+    const std::uint64_t jitterIndex = frameNumber_ % 8U + 1U;
+    const simd_float2 jitterPixels{halton(jitterIndex, 2U) - 0.5F,
+                                   halton(jitterIndex, 3U) - 0.5F};
     bool presentGaussians = false;
     if (gaussianPipeline_) {
         {
@@ -288,8 +302,9 @@ void Renderer::draw(MTK::View* view) noexcept {
                                     (2.0F * std::tan(camera.verticalFieldOfViewRadians * 0.5F));
                 AetherGaussianCamera gaussianCamera{};
                 gaussianCamera.worldToCamera = positiveZView;
-                gaussianCamera.focalCenter = {focal, focal, static_cast<float>(width) * 0.5F,
-                                              static_cast<float>(height) * 0.5F};
+                gaussianCamera.focalCenter = {
+                    focal, focal, static_cast<float>(width) * 0.5F + jitterPixels.x,
+                    static_cast<float>(height) * 0.5F + jitterPixels.y};
                 gaussianCamera.depthViewport = {
                     camera.nearPlane, camera.infiniteFarPlane ? 10'000.0F : camera.farPlane,
                     static_cast<float>(width), static_cast<float>(height)};
@@ -317,6 +332,14 @@ void Renderer::draw(MTK::View* view) noexcept {
     const float meshAspect = meshHeight > 0.0F ? meshWidth / meshHeight : 16.0F / 9.0F;
     const auto meshProjection = meshCamera.projectionMatrix(meshAspect);
     const auto meshView = meshCamera.viewMatrix(meshCameraTransform);
+    std::optional<simd_float4x4> jitteredMeshProjection;
+    if (meshProjection) {
+        jitteredMeshProjection = *meshProjection;
+        const simd_float2 jitterNdc{2.0F * jitterPixels.x / meshWidth,
+                                    -2.0F * jitterPixels.y / meshHeight};
+        jitteredMeshProjection->columns[2].x -= jitterNdc.x;
+        jitteredMeshProjection->columns[2].y -= jitterNdc.y;
+    }
     std::optional<scene::DirectionalShadowCascades> shadowCascades;
     std::optional<std::uint32_t> shadowLightIndex;
     AetherLocalShadowUniforms localShadowUniforms{};
@@ -536,6 +559,11 @@ void Renderer::draw(MTK::View* view) noexcept {
     encoder->setFragmentBytes(&scenePresentation, sizeof(scenePresentation), 0);
     if (presentGaussians)
         encoder->setFragmentTexture(gaussianColor_.get(), 0);
+    else
+        encoder->setFragmentTexture(fallbackWhiteTexture_.get(), 0);
+    encoder->setFragmentTexture(fallbackWhiteTexture_.get(), 1);
+    encoder->setFragmentTexture(fallbackWhiteTexture_.get(), 2);
+    encoder->setFragmentSamplerState(temporalSampler_.get(), 0);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
     if (!meshPrimitives_.empty() && pbrPipeline_ && reverseZDepthState_) {
@@ -544,9 +572,9 @@ void Renderer::draw(MTK::View* view) noexcept {
         const float height = meshHeight;
         const auto& projection = meshProjection;
         const auto& viewMatrix = meshView;
-        if (projection && viewMatrix) {
+        if (projection && jitteredMeshProjection && viewMatrix) {
             AetherFrameUniforms uniforms{};
-            uniforms.viewProjection = simd_mul(*projection, *viewMatrix);
+            uniforms.viewProjection = simd_mul(*jitteredMeshProjection, *viewMatrix);
             uniforms.view = *viewMatrix;
             uniforms.model = matrix_identity_float4x4;
             const simd_float3 cameraPosition = cameraController_.position();
@@ -704,6 +732,82 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
     encoder->endEncoding();
 
+    MTL::Texture* presentationSource = sceneHdrColor_.get();
+    if (temporalPipeline_ && temporalSampler_ && jitteredMeshProjection && meshView) {
+        const std::size_t outputIndex = static_cast<std::size_t>(frameNumber_ % 2U);
+        const std::size_t inputIndex = 1U - outputIndex;
+        const simd_float4x4 currentViewProjection =
+            simd_mul(*jitteredMeshProjection, *meshView);
+        float maximumMatrixDelta = 0.0F;
+        for (std::size_t column = 0; column < 4; ++column)
+            for (std::size_t row = 0; row < 4; ++row)
+                maximumMatrixDelta = std::max(
+                    maximumMatrixDelta,
+                    std::abs(currentViewProjection.columns[column][row] -
+                             previousViewProjection_.columns[column][row]));
+        const bool historyUsable = temporalHistoryValid_ && maximumMatrixDelta < 0.5F;
+        auto* temporalPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+        auto* temporalColor = temporalPass->colorAttachments()->object(0);
+        temporalColor->setTexture(temporalColorHistory_[outputIndex].get());
+        temporalColor->setLoadAction(MTL::LoadActionDontCare);
+        temporalColor->setStoreAction(MTL::StoreActionStore);
+        auto* temporalDepth = temporalPass->colorAttachments()->object(1);
+        temporalDepth->setTexture(temporalDepthHistory_[outputIndex].get());
+        temporalDepth->setLoadAction(MTL::LoadActionDontCare);
+        temporalDepth->setStoreAction(MTL::StoreActionStore);
+        auto* temporalEncoder = commandBuffer->renderCommandEncoder(temporalPass);
+        if (temporalEncoder) {
+            temporalEncoder->setLabel(
+                NS::String::string("Temporal Resolve Pass", NS::UTF8StringEncoding));
+            temporalEncoder->setRenderPipelineState(temporalPipeline_.get());
+            AetherTemporalUniforms temporal{};
+            temporal.inverseCurrentViewProjection = simd_inverse(currentViewProjection);
+            temporal.previousViewProjection = previousViewProjection_;
+            temporal.historyParameters = {historyUsable ? 1.0F : 0.0F, 0.9F, 0.002F, 0.0F};
+            temporalEncoder->setFragmentBytes(&temporal, sizeof(temporal), 0);
+            temporalEncoder->setFragmentTexture(sceneHdrColor_.get(), 0);
+            temporalEncoder->setFragmentTexture(sceneDepth_.get(), 1);
+            temporalEncoder->setFragmentTexture(temporalColorHistory_[inputIndex].get(), 2);
+            temporalEncoder->setFragmentTexture(temporalDepthHistory_[inputIndex].get(), 3);
+            temporalEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
+            temporalEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0),
+                                            NS::UInteger(3));
+            temporalEncoder->endEncoding();
+            presentationSource = temporalColorHistory_[outputIndex].get();
+            previousViewProjection_ = currentViewProjection;
+            temporalHistoryValid_ = true;
+        }
+    }
+    bool bloomReady = false;
+    if (bloomPipeline_ && temporalSampler_ && bloomHalf_ && bloomQuarter_) {
+        auto encodeBloomLevel = [&](MTL::Texture* source, MTL::Texture* destination,
+                                    float threshold, float knee, const char* label) {
+            auto* bloomPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+            auto* attachment = bloomPass->colorAttachments()->object(0);
+            attachment->setTexture(destination);
+            attachment->setLoadAction(MTL::LoadActionDontCare);
+            attachment->setStoreAction(MTL::StoreActionStore);
+            auto* bloomEncoder = commandBuffer->renderCommandEncoder(bloomPass);
+            if (!bloomEncoder) return false;
+            bloomEncoder->setLabel(NS::String::string(label, NS::UTF8StringEncoding));
+            bloomEncoder->setRenderPipelineState(bloomPipeline_.get());
+            AetherBloomUniforms bloom{{1.0F / static_cast<float>(source->width()),
+                                       1.0F / static_cast<float>(source->height())},
+                                      threshold, knee};
+            bloomEncoder->setFragmentBytes(&bloom, sizeof(bloom), 0);
+            bloomEncoder->setFragmentTexture(source, 0);
+            bloomEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
+            bloomEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0),
+                                         NS::UInteger(3));
+            bloomEncoder->endEncoding();
+            return true;
+        };
+        bloomReady = encodeBloomLevel(presentationSource, bloomHalf_.get(), 1.0F, 0.5F,
+                                      "Bloom Threshold Half") &&
+                     encodeBloomLevel(bloomHalf_.get(), bloomQuarter_.get(), 0.0F, 0.0F,
+                                      "Bloom Downsample Quarter");
+    }
+
     MTL::RenderCommandEncoder* presentationEncoder =
         commandBuffer->renderCommandEncoder(renderPass);
     if (!presentationEncoder) {
@@ -717,8 +821,14 @@ void Renderer::draw(MTK::View* view) noexcept {
     AetherPresentationUniforms presentation{};
     presentation.exposureStops = exposureStops_;
     presentation.mode = 2U;
+    presentation.bloomIntensity = bloomReady ? 0.08F : 0.0F;
     presentationEncoder->setFragmentBytes(&presentation, sizeof(presentation), 0);
-    presentationEncoder->setFragmentTexture(sceneHdrColor_.get(), 0);
+    presentationEncoder->setFragmentTexture(presentationSource, 0);
+    presentationEncoder->setFragmentTexture(bloomReady ? bloomHalf_.get()
+                                                        : fallbackWhiteTexture_.get(), 1);
+    presentationEncoder->setFragmentTexture(bloomReady ? bloomQuarter_.get()
+                                                        : fallbackWhiteTexture_.get(), 2);
+    presentationEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
     presentationEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0),
                                         NS::UInteger(3));
     presentationEncoder->endEncoding();
@@ -933,6 +1043,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     animationSeconds_ = 0.0F;
     animationPlaying_ = true;
     gaussianPipeline_.reset();
+    temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
                                               std::to_string(meshPrimitives_.size()) +
                                               " primitives and " +
@@ -947,11 +1058,15 @@ Result<void> Renderer::selectAnimation(std::size_t clipIndex, bool loop) {
     animationLoop_ = loop;
     animationSeconds_ = 0.0F;
     animationPlaying_ = true;
+    temporalHistoryValid_ = false;
     return {};
 }
 
 void Renderer::seekAnimation(float seconds) noexcept {
-    if (std::isfinite(seconds)) animationSeconds_ = std::max(0.0F, seconds);
+    if (std::isfinite(seconds)) {
+        animationSeconds_ = std::max(0.0F, seconds);
+        temporalHistoryValid_ = false;
+    }
 }
 
 std::size_t Renderer::animationClipCount() const noexcept {
@@ -971,6 +1086,7 @@ Result<void> Renderer::setLights(std::vector<scene::Light> lights) {
         if (auto valid = scene::validateLight(light); !valid)
             return std::unexpected(valid.error());
     lights_ = std::move(lights);
+    temporalHistoryValid_ = false;
     return {};
 }
 
@@ -1052,6 +1168,7 @@ Result<void> Renderer::setImageBasedLighting(const scene::ImageBasedLightingData
     environmentSampler_ = std::move(sampler);
     iblMaximumMip_ = static_cast<float>(data.prefilteredSpecular.size() - 1);
     iblIntensity_ = intensity;
+    temporalHistoryValid_ = false;
     return {};
 }
 
@@ -1073,6 +1190,7 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
+    temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded PLY scene with " +
                                               std::to_string(asset->gaussians.size()) +
                                               " Gaussians");
@@ -1103,6 +1221,7 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
+    temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded AETHER scene with " +
                                               std::to_string(asset->gaussians.size()) +
                                               " Gaussians");
@@ -1138,7 +1257,9 @@ Result<std::uint32_t> Renderer::pickGaussian(std::uint32_t x, std::uint32_t y) {
 Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Scene render target dimensions are zero");
-    if (sceneHdrColor_ && sceneDepth_ && sceneTargetWidth_ == width &&
+    if (sceneHdrColor_ && sceneDepth_ && bloomHalf_ && bloomQuarter_ && temporalColorHistory_[0] &&
+        temporalColorHistory_[1] && temporalDepthHistory_[0] && temporalDepthHistory_[1] &&
+        sceneTargetWidth_ == width &&
         sceneTargetHeight_ == height)
         return {};
     auto colorDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
@@ -1157,12 +1278,50 @@ Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t hei
     depthDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
     auto color = adopt(device_->newTexture(colorDescriptor.get()));
     auto depth = adopt(device_->newTexture(depthDescriptor.get()));
-    if (!color || !depth)
+    colorDescriptor->setWidth(std::max<std::uint32_t>(1U, width / 2U));
+    colorDescriptor->setHeight(std::max<std::uint32_t>(1U, height / 2U));
+    auto bloomHalf = adopt(device_->newTexture(colorDescriptor.get()));
+    colorDescriptor->setWidth(std::max<std::uint32_t>(1U, width / 4U));
+    colorDescriptor->setHeight(std::max<std::uint32_t>(1U, height / 4U));
+    auto bloomQuarter = adopt(device_->newTexture(colorDescriptor.get()));
+    colorDescriptor->setWidth(width);
+    colorDescriptor->setHeight(height);
+    auto historyDepthDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    historyDepthDescriptor->setTextureType(MTL::TextureType2D);
+    historyDepthDescriptor->setPixelFormat(MTL::PixelFormatR32Float);
+    historyDepthDescriptor->setWidth(width);
+    historyDepthDescriptor->setHeight(height);
+    historyDepthDescriptor->setStorageMode(MTL::StorageModePrivate);
+    historyDepthDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    std::array<MetalPtr<MTL::Texture>, 2> historyColor;
+    std::array<MetalPtr<MTL::Texture>, 2> historyDepth;
+    for (std::size_t index = 0; index < historyColor.size(); ++index) {
+        historyColor[index] = adopt(device_->newTexture(colorDescriptor.get()));
+        historyDepth[index] = adopt(device_->newTexture(historyDepthDescriptor.get()));
+    }
+    if (!color || !depth || !bloomHalf || !bloomQuarter || !historyColor[0] ||
+        !historyColor[1] || !historyDepth[0] ||
+        !historyDepth[1])
         return fail(ErrorCode::resourceExhausted, "Unable to allocate HDR scene targets");
     color->setLabel(NS::String::string("Scene HDR Color", NS::UTF8StringEncoding));
     depth->setLabel(NS::String::string("Scene Reverse-Z Depth", NS::UTF8StringEncoding));
     sceneHdrColor_ = std::move(color);
     sceneDepth_ = std::move(depth);
+    bloomHalf->setLabel(NS::String::string("Bloom Half Resolution", NS::UTF8StringEncoding));
+    bloomQuarter->setLabel(NS::String::string("Bloom Quarter Resolution", NS::UTF8StringEncoding));
+    bloomHalf_ = std::move(bloomHalf);
+    bloomQuarter_ = std::move(bloomQuarter);
+    for (std::size_t index = 0; index < temporalColorHistory_.size(); ++index) {
+        historyColor[index]->setLabel(NS::String::string(
+            index == 0 ? "Temporal Color History A" : "Temporal Color History B",
+            NS::UTF8StringEncoding));
+        historyDepth[index]->setLabel(NS::String::string(
+            index == 0 ? "Temporal Depth History A" : "Temporal Depth History B",
+            NS::UTF8StringEncoding));
+    }
+    temporalColorHistory_ = std::move(historyColor);
+    temporalDepthHistory_ = std::move(historyDepth);
+    temporalHistoryValid_ = false;
     sceneTargetWidth_ = width;
     sceneTargetHeight_ = height;
     return {};
@@ -1344,6 +1503,52 @@ Result<void> Renderer::buildViewportPipeline() {
         const std::string message = error ? error->localizedDescription()->utf8String()
                                           : "Unknown HDR pipeline compilation error";
         return fail(ErrorCode::metal, "Unable to create AETHER HDR background pipeline", message);
+    }
+
+    auto temporalFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherTemporalResolveFragment", NS::UTF8StringEncoding)));
+    if (!temporalFragment)
+        return fail(ErrorCode::metal, "Offline shader library is missing temporal resolve entry point");
+    auto temporalDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    temporalDescriptor->setLabel(
+        NS::String::string("AETHER Temporal Resolve Pipeline", NS::UTF8StringEncoding));
+    temporalDescriptor->setVertexFunction(vertex.get());
+    temporalDescriptor->setFragmentFunction(temporalFragment.get());
+    temporalDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    temporalDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Float);
+    if (binaryArchive_) temporalDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+    error = nullptr;
+    temporalPipeline_ = adopt(device_->newRenderPipelineState(temporalDescriptor.get(), &error));
+    if (!temporalPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown temporal pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create temporal resolve pipeline", message);
+    }
+    auto temporalSamplerDescriptor = adopt(MTL::SamplerDescriptor::alloc()->init());
+    temporalSamplerDescriptor->setMinFilter(MTL::SamplerMinMagFilterLinear);
+    temporalSamplerDescriptor->setMagFilter(MTL::SamplerMinMagFilterLinear);
+    temporalSamplerDescriptor->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+    temporalSamplerDescriptor->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+    temporalSampler_ = adopt(device_->newSamplerState(temporalSamplerDescriptor.get()));
+    if (!temporalSampler_)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate temporal sampler");
+    auto bloomFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherBloomDownsampleFragment", NS::UTF8StringEncoding)));
+    if (!bloomFragment)
+        return fail(ErrorCode::metal, "Offline shader library is missing bloom entry point");
+    auto bloomDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    bloomDescriptor->setLabel(
+        NS::String::string("AETHER Bloom Downsample Pipeline", NS::UTF8StringEncoding));
+    bloomDescriptor->setVertexFunction(vertex.get());
+    bloomDescriptor->setFragmentFunction(bloomFragment.get());
+    bloomDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    if (binaryArchive_) bloomDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+    error = nullptr;
+    bloomPipeline_ = adopt(device_->newRenderPipelineState(bloomDescriptor.get(), &error));
+    if (!bloomPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown bloom pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create bloom pipeline", message);
     }
 
     auto pbrVertex = adopt(
