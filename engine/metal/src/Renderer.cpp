@@ -431,6 +431,14 @@ void Renderer::draw(MTK::View* view) noexcept {
                 encoder->setFragmentTexture(specularEnvironmentTexture_.get(), 6);
                 encoder->setFragmentTexture(brdfLutTexture_.get(), 7);
                 encoder->setFragmentSamplerState(environmentSampler_.get(), 5);
+                AetherShadowUniforms shadowUniforms{};
+                for (auto& matrix : shadowUniforms.worldToShadow)
+                    matrix = matrix_identity_float4x4;
+                shadowUniforms.splitDepths = {10'000.0F, 10'000.0F, 10'000.0F, 10'000.0F};
+                shadowUniforms.biasNormalCascadeCount = {0.001F, 0.0F, 1.0F, 0.0F};
+                encoder->setFragmentBytes(&shadowUniforms, sizeof(shadowUniforms), 8);
+                encoder->setFragmentTexture(directionalShadowMap_.get(), 8);
+                encoder->setFragmentSamplerState(shadowComparisonSampler_.get(), 6);
                 encoder->setFrontFacingWinding(MTL::WindingCounterClockwise);
                 auto renderMaterialClass = [&](bool alphaBlend) {
                     encoder->setRenderPipelineState(alphaBlend ? pbrBlendPipeline_.get()
@@ -1192,6 +1200,54 @@ Result<void> Renderer::buildViewportPipeline() {
     if (!pbrVertex || !pbrFragment) {
         return fail(ErrorCode::metal, "Offline shader library is missing PBR entry points");
     }
+    auto shadowDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    shadowDescriptor->setLabel(
+        NS::String::string("AETHER Cascaded Shadow Pipeline", NS::UTF8StringEncoding));
+    shadowDescriptor->setVertexFunction(pbrVertex.get());
+    shadowDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
+    error = nullptr;
+    shadowPipeline_ = adopt(device_->newRenderPipelineState(shadowDescriptor.get(), &error));
+    if (!shadowPipeline_)
+        return fail(ErrorCode::metal, "Unable to create cascaded shadow pipeline");
+    auto shadowTextureDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    shadowTextureDescriptor->setTextureType(MTL::TextureType2DArray);
+    shadowTextureDescriptor->setPixelFormat(MTL::PixelFormatDepth32Float);
+    shadowTextureDescriptor->setWidth(shadowConfig_.resolution);
+    shadowTextureDescriptor->setHeight(shadowConfig_.resolution);
+    shadowTextureDescriptor->setArrayLength(shadowConfig_.cascadeCount);
+    shadowTextureDescriptor->setStorageMode(MTL::StorageModePrivate);
+    shadowTextureDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    directionalShadowMap_ = adopt(device_->newTexture(shadowTextureDescriptor.get()));
+    auto shadowSamplerDescriptor = adopt(MTL::SamplerDescriptor::alloc()->init());
+    shadowSamplerDescriptor->setCompareFunction(MTL::CompareFunctionLessEqual);
+    shadowSamplerDescriptor->setMinFilter(MTL::SamplerMinMagFilterLinear);
+    shadowSamplerDescriptor->setMagFilter(MTL::SamplerMinMagFilterLinear);
+    shadowSamplerDescriptor->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+    shadowSamplerDescriptor->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+    shadowComparisonSampler_ = adopt(device_->newSamplerState(shadowSamplerDescriptor.get()));
+    if (!directionalShadowMap_ || !shadowComparisonSampler_)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate cascaded shadow resources");
+    directionalShadowMap_->setLabel(
+        NS::String::string("Directional Shadow Cascades", NS::UTF8StringEncoding));
+    MTL::CommandBuffer* shadowClearBuffer = commandQueue_->commandBuffer();
+    if (!shadowClearBuffer)
+        return fail(ErrorCode::metal, "Unable to create shadow initialization command buffer");
+    for (std::uint32_t cascade = 0; cascade < shadowConfig_.cascadeCount; ++cascade) {
+        MTL::RenderPassDescriptor* clearPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+        clearPass->depthAttachment()->setTexture(directionalShadowMap_.get());
+        clearPass->depthAttachment()->setSlice(cascade);
+        clearPass->depthAttachment()->setLoadAction(MTL::LoadActionClear);
+        clearPass->depthAttachment()->setStoreAction(MTL::StoreActionStore);
+        clearPass->depthAttachment()->setClearDepth(1.0);
+        auto* clearEncoder = shadowClearBuffer->renderCommandEncoder(clearPass);
+        if (!clearEncoder)
+            return fail(ErrorCode::metal, "Unable to encode shadow initialization");
+        clearEncoder->setLabel(
+            NS::String::string("Shadow Cascade Clear", NS::UTF8StringEncoding));
+        clearEncoder->endEncoding();
+    }
+    shadowClearBuffer->commit();
+    shadowClearBuffer->waitUntilCompleted();
     auto pbrDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
     pbrDescriptor->setLabel(NS::String::string("AETHER PBR Pipeline", NS::UTF8StringEncoding));
     pbrDescriptor->setVertexFunction(pbrVertex.get());

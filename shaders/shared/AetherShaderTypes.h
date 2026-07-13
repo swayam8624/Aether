@@ -103,6 +103,12 @@ struct AetherIblUniforms {
     AetherUInt padding;
 };
 
+struct AetherShadowUniforms {
+    AetherFloat4x4 worldToShadow[4];
+    AetherFloat4 splitDepths;
+    AetherFloat4 biasNormalCascadeCount;
+};
+
 struct AetherMaterialUniforms {
     AetherFloat4 baseColor;
     AetherFloat4 emissiveMetallic;
@@ -157,6 +163,7 @@ static_assert(sizeof(AetherGpuLight) == 64);
 static_assert(sizeof(AetherLightCluster) == 8);
 static_assert(sizeof(AetherClusterUniforms) == 32);
 static_assert(sizeof(AetherIblUniforms) == 16);
+static_assert(sizeof(AetherShadowUniforms) == 288);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);
 static_assert(sizeof(AetherGaussianCamera) == 144);

@@ -116,7 +116,10 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  texturecube<float> irradianceMap [[texture(5)]],
                                  texturecube<float> specularEnvironment [[texture(6)]],
                                  texture2d<float> brdfLut [[texture(7)]],
-                                 sampler environmentSampler [[sampler(5)]]) {
+                                 sampler environmentSampler [[sampler(5)]],
+                                 constant AetherShadowUniforms& shadows [[buffer(8)]],
+                                 depth2d_array<float> shadowMap [[texture(8)]],
+                                 sampler shadowSampler [[sampler(6)]]) {
     const uint textureMask = material.textureFlags.x;
     float4 sampledBaseColor = material.baseColor;
     if ((textureMask & 1u) != 0)
@@ -192,6 +195,28 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
     const AetherLightCluster cluster =
         clusters[(clusterZ * rows + clusterY) * columns + clusterX];
     float3 direct = 0.0f;
+    uint cascade = 0u;
+    const uint cascadeCount = uint(shadows.biasNormalCascadeCount.z);
+    while (cascade + 1u < cascadeCount && input.viewDepth > shadows.splitDepths[cascade])
+        ++cascade;
+    const float4 shadowClip = shadows.worldToShadow[cascade] *
+                              float4(input.worldPosition + normal *
+                                     shadows.biasNormalCascadeCount.y, 1.0f);
+    const float3 shadowNdc = shadowClip.xyz / shadowClip.w;
+    const float2 shadowUv = float2(shadowNdc.x * 0.5f + 0.5f,
+                                   0.5f - shadowNdc.y * 0.5f);
+    float shadowVisibility = 1.0f;
+    if (all(shadowUv >= 0.0f) && all(shadowUv <= 1.0f) && shadowNdc.z >= 0.0f &&
+        shadowNdc.z <= 1.0f) {
+        shadowVisibility = 0.0f;
+        const float2 texel = 1.0f / float2(shadowMap.get_width(), shadowMap.get_height());
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+                shadowVisibility += shadowMap.sample_compare(
+                    shadowSampler, shadowUv + float2(x, y) * texel, cascade,
+                    shadowNdc.z - shadows.biasNormalCascadeCount.x);
+        shadowVisibility /= 9.0f;
+    }
     for (uint reference = 0u; reference < cluster.count; ++reference) {
         const AetherGpuLight gpuLight = lights[lightIndices[cluster.offset + reference]];
         const uint type = uint(gpuLight.directionType.w + 0.5f);
@@ -224,8 +249,9 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
         const float3 specular = (distribution * geometry * fresnel) /
                                 max(4.0f * nDotV * nDotL, 1.0e-4f);
         const float3 diffuse = (1.0f - fresnel) * (1.0f - metallic) * baseColor / M_PI_F;
+        const float visibility = type == 0u ? shadowVisibility : 1.0f;
         direct += (diffuse + specular) * gpuLight.colorIntensity.rgb *
-                  gpuLight.colorIntensity.w * attenuation * nDotL;
+                  gpuLight.colorIntensity.w * attenuation * nDotL * visibility;
     }
     float3 color = ambient + direct + emissive;
     return float4(color, sampledBaseColor.a);

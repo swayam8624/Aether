@@ -9,6 +9,7 @@
 #include <aether/scene/CameraController.hpp>
 #include <aether/scene/Lighting.hpp>
 #include <aether/scene/ImageBasedLighting.hpp>
+#include <aether/scene/Shadows.hpp>
 #include <shared/AetherShaderTypes.h>
 
 #include <Metal/Metal.hpp>
@@ -94,6 +95,7 @@ class Renderer final {
     MetalPtr<MTL::RenderPipelineState> sceneBackgroundPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrBlendPipeline_;
+    MetalPtr<MTL::RenderPipelineState> shadowPipeline_;
     MetalPtr<MTL::DepthStencilState> reverseZDepthState_;
     MetalPtr<MTL::DepthStencilState> reverseZReadOnlyDepthState_;
     MetalPtr<MTL::Texture> fallbackWhiteTexture_;
@@ -103,6 +105,9 @@ class Renderer final {
     MetalPtr<MTL::Texture> specularEnvironmentTexture_;
     MetalPtr<MTL::Texture> brdfLutTexture_;
     MetalPtr<MTL::SamplerState> environmentSampler_;
+    MetalPtr<MTL::Texture> directionalShadowMap_;
+    MetalPtr<MTL::SamplerState> shadowComparisonSampler_;
+    scene::DirectionalShadowConfig shadowConfig_;
     float iblMaximumMip_{};
     float iblIntensity_{1.0F};
     dispatch_semaphore_t frameSemaphore_{};

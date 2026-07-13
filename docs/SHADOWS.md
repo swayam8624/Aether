@@ -15,3 +15,8 @@ Tests verify cascade counts, increasing practical splits, exact final distance, 
 matrices, invalid lambda rejection, and the hard cascade-count bound. The Metal depth-array pass,
 deformation-aware caster vertex shader, receiver bias, cascade blending, and PCF sampling are the
 next implementation slice; this document does not claim those are complete yet.
+
+The renderer now owns a labeled four-slice Depth32 shadow array, comparison sampler, depth-only
+pipeline, receiver ABI, cascade selection, normal/depth bias fields, and 3x3 PCF implementation.
+Resources are initialized to fully lit depth and all bindings pass Metal API validation. Actual
+per-frame caster submission is still pending, so the roadmap does not yet claim rendered shadows.
