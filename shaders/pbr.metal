@@ -80,15 +80,6 @@ float geometrySchlickGgx(float nDotDirection, float roughness) {
     return nDotDirection / max(nDotDirection * (1.0f - k) + k, 1.0e-5f);
 }
 
-float3 acesApproximation(float3 color) {
-    constexpr float a = 2.51f;
-    constexpr float b = 0.03f;
-    constexpr float c = 2.43f;
-    constexpr float d = 0.59f;
-    constexpr float e = 0.14f;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0f, 1.0f);
-}
-
 float2 transformedUv(float2 uv, constant AetherMaterialUniforms& material, uint slot) {
     const float4 scaleOffset = material.uvScaleOffset[slot];
     const float2 cosineSine = material.uvRotation[slot].xy;
@@ -97,7 +88,7 @@ float2 transformedUv(float2 uv, constant AetherMaterialUniforms& material, uint 
                   cosineSine.y * scaled.x + cosineSine.x * scaled.y) + scaleOffset.zw;
 }
 
-fragment half4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
+fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  constant AetherFrameUniforms& frame [[buffer(1)]],
                                  constant AetherMaterialUniforms& material [[buffer(2)]],
                                  texture2d<float> baseColorTexture [[texture(0)]],
@@ -168,6 +159,5 @@ fragment half4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
     const float3 ambient = baseColor * (1.0f - metallic) * 0.025f * ambientOcclusion;
     float3 color =
         ambient + (diffuse + specular) * radiance * nDotL + emissive;
-    color *= exp2(frame.lightColorExposure.w);
-    return half4(half3(acesApproximation(color)), half(sampledBaseColor.a));
+    return float4(color, sampledBaseColor.a);
 }

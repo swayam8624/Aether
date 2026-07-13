@@ -44,7 +44,10 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Bounded glTF POSITION/NORMAL/TANGENT morph targets, mesh defaults, node overrides, GPU
   target-major delta buffers, and morph-before-skin vertex evaluation.
 - [x] Reverse-Z depth, directional GGX PBR, exposure, and ACES-style tone mapping.
-- [ ] HDR intermediate targets, clustered lights, IBL, shadows, TAA, bloom, and debug views.
+- [x] Resize-safe RGBA16F scene color and Depth32F reverse-Z targets, linear PBR/Gaussian
+  composition, dedicated ACES presentation pass, EV exposure control, and fully bound fallback
+  material resources validated through Metal's API layer.
+- [ ] Clustered lights, IBL, shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

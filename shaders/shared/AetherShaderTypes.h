@@ -27,6 +27,13 @@ struct AetherFullscreenVertex {
     AetherFloat2 uv;
 };
 
+struct AetherPresentationUniforms {
+    float exposureStops;
+    AetherUInt mode;
+    AetherUInt padding0;
+    AetherUInt padding1;
+};
+
 struct AetherMeshVertex {
     AetherFloat3 position;
     AetherFloat3 normal;
@@ -114,6 +121,7 @@ struct AetherGaussianCounters {
 
 #ifndef __METAL_VERSION__
 static_assert(sizeof(AetherFullscreenVertex) == 16);
+static_assert(sizeof(AetherPresentationUniforms) == 16);
 static_assert(sizeof(AetherMeshVertex) == 96);
 static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);

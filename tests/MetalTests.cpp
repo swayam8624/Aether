@@ -77,6 +77,19 @@ int main() {
         pool->release();
         return 1;
     }
+    (*renderer)->setExposureStops(100.0F);
+    if ((*renderer)->exposureStops() != 16.0F) {
+        std::cerr << "Renderer exposure upper clamp failed\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->setExposureStops(-100.0F);
+    if ((*renderer)->exposureStops() != -16.0F) {
+        std::cerr << "Renderer exposure lower clamp failed\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->setExposureStops(0.0F);
     if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_GLTF); !loaded) {
         std::cerr << loaded.error().describe() << '\n';
         pool->release();

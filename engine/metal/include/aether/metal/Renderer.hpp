@@ -55,6 +55,8 @@ class Renderer final {
     void setAnimationPlaying(bool playing) noexcept { animationPlaying_ = playing; }
     void seekAnimation(float seconds) noexcept;
     [[nodiscard]] std::size_t animationClipCount() const noexcept;
+    void setExposureStops(float stops) noexcept;
+    [[nodiscard]] float exposureStops() const noexcept { return exposureStops_; }
     /// Input: top-left-origin drawable pixel coordinate.
     /// Output: 1-based Gaussian source ID, or zero for background.
     [[nodiscard]] Result<std::uint32_t> pickGaussian(std::uint32_t x, std::uint32_t y);
@@ -74,6 +76,7 @@ class Renderer final {
     Renderer(MTL::Device* device, std::filesystem::path shaderLibraryPath);
     [[nodiscard]] Result<void> buildViewportPipeline();
     [[nodiscard]] Result<void> ensureGaussianTargets(std::uint32_t width, std::uint32_t height);
+    [[nodiscard]] Result<void> ensureSceneTargets(std::uint32_t width, std::uint32_t height);
     [[nodiscard]] Result<MetalPtr<MTL::Buffer>>
     uploadPrivateBuffer(const void* bytes, std::size_t size, const char* label);
     [[nodiscard]] static DeviceCapabilities inspect(MTL::Device* device);
@@ -83,10 +86,14 @@ class Renderer final {
     MetalPtr<MTL::Library> shaderLibrary_;
     MetalPtr<MTL::BinaryArchive> binaryArchive_;
     MetalPtr<MTL::RenderPipelineState> viewportPipeline_;
+    MetalPtr<MTL::RenderPipelineState> sceneBackgroundPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrBlendPipeline_;
     MetalPtr<MTL::DepthStencilState> reverseZDepthState_;
     MetalPtr<MTL::DepthStencilState> reverseZReadOnlyDepthState_;
+    MetalPtr<MTL::Texture> fallbackWhiteTexture_;
+    MetalPtr<MTL::Texture> fallbackNormalTexture_;
+    MetalPtr<MTL::SamplerState> fallbackSampler_;
     dispatch_semaphore_t frameSemaphore_{};
     DeviceCapabilities capabilities_;
     CGSize drawableSize_{};
@@ -136,10 +143,15 @@ class Renderer final {
     float animationSeconds_{};
     bool animationLoop_{true};
     bool animationPlaying_{true};
+    float exposureStops_{};
     std::unique_ptr<GaussianPipeline> gaussianPipeline_;
     MetalPtr<MTL::Texture> gaussianColor_;
     MetalPtr<MTL::Texture> gaussianDepth_;
     MetalPtr<MTL::Texture> gaussianIds_;
+    MetalPtr<MTL::Texture> sceneHdrColor_;
+    MetalPtr<MTL::Texture> sceneDepth_;
+    std::uint32_t sceneTargetWidth_{};
+    std::uint32_t sceneTargetHeight_{};
     std::uint32_t gaussianTargetWidth_{};
     std::uint32_t gaussianTargetHeight_{};
     std::filesystem::path shaderLibraryPath_;

@@ -5,6 +5,7 @@ struct AetherViewport: NSViewRepresentable {
     let scenePath: String?
     @Binding var selectedGaussianId: Int?
     let gaussianDebugMode: Int
+    let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
 
     func makeNSView(context: Context) -> AetherViewportView {
@@ -15,6 +16,7 @@ struct AetherViewport: NSViewRepresentable {
             selectedGaussianId = sourceId == 0 ? nil : Int(sourceId)
         }
         view.gaussianDebugMode = gaussianDebugMode
+        view.exposureStops = exposureStops
         return view
     }
 
@@ -25,6 +27,7 @@ struct AetherViewport: NSViewRepresentable {
             selectedGaussianId = sourceId == 0 ? nil : Int(sourceId)
         }
         nsView.gaussianDebugMode = gaussianDebugMode
+        nsView.exposureStops = exposureStops
         _ = nsView.rendererStatus
     }
 }

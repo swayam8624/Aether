@@ -250,14 +250,26 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
 
     commandBuffer->setLabel(NS::String::string("AETHER Frame", NS::UTF8StringEncoding));
+    MTL::Texture* drawableTexture = drawable->texture();
+    if (!drawableTexture || drawableTexture->width() > std::numeric_limits<std::uint32_t>::max() ||
+        drawableTexture->height() > std::numeric_limits<std::uint32_t>::max()) {
+        dispatch_semaphore_signal(frameSemaphore_);
+        pool->release();
+        return;
+    }
+    const auto targetWidth = static_cast<std::uint32_t>(drawableTexture->width());
+    const auto targetHeight = static_cast<std::uint32_t>(drawableTexture->height());
+    if (auto targets = ensureSceneTargets(targetWidth, targetHeight); !targets) {
+        Log::instance().write(LogLevel::error, targets.error().describe());
+        dispatch_semaphore_signal(frameSemaphore_);
+        pool->release();
+        return;
+    }
     bool presentGaussians = false;
     if (gaussianPipeline_) {
-        MTL::Texture* drawableTexture = drawable->texture();
-        if (drawableTexture &&
-            drawableTexture->width() <= std::numeric_limits<std::uint32_t>::max() &&
-            drawableTexture->height() <= std::numeric_limits<std::uint32_t>::max()) {
-            const auto width = static_cast<std::uint32_t>(drawableTexture->width());
-            const auto height = static_cast<std::uint32_t>(drawableTexture->height());
+        {
+            const auto width = targetWidth;
+            const auto height = targetHeight;
             auto targets = ensureGaussianTargets(width, height);
             scene::Camera camera;
             const scene::Transform cameraTransform = cameraController_.transform();
@@ -292,16 +304,28 @@ void Renderer::draw(MTK::View* view) noexcept {
             }
         }
     }
-    MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(renderPass);
+    MTL::RenderPassDescriptor* scenePass = MTL::RenderPassDescriptor::renderPassDescriptor();
+    auto* sceneColorAttachment = scenePass->colorAttachments()->object(0);
+    sceneColorAttachment->setTexture(sceneHdrColor_.get());
+    sceneColorAttachment->setLoadAction(MTL::LoadActionClear);
+    sceneColorAttachment->setStoreAction(MTL::StoreActionStore);
+    sceneColorAttachment->setClearColor(MTL::ClearColor::Make(0.0, 0.0, 0.0, 1.0));
+    auto* sceneDepthAttachment = scenePass->depthAttachment();
+    sceneDepthAttachment->setTexture(sceneDepth_.get());
+    sceneDepthAttachment->setLoadAction(MTL::LoadActionClear);
+    sceneDepthAttachment->setStoreAction(MTL::StoreActionStore);
+    sceneDepthAttachment->setClearDepth(0.0);
+    MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(scenePass);
     if (!encoder) {
         dispatch_semaphore_signal(frameSemaphore_);
         pool->release();
         return;
     }
-    encoder->setLabel(NS::String::string("Scene Main Pass", NS::UTF8StringEncoding));
-    encoder->setRenderPipelineState(viewportPipeline_.get());
-    const std::uint32_t presentationMode = presentGaussians ? 1U : 0U;
-    encoder->setFragmentBytes(&presentationMode, sizeof(presentationMode), 0);
+    encoder->setLabel(NS::String::string("Scene HDR Pass", NS::UTF8StringEncoding));
+    encoder->setRenderPipelineState(sceneBackgroundPipeline_.get());
+    AetherPresentationUniforms scenePresentation{};
+    scenePresentation.mode = presentGaussians ? 1U : 0U;
+    encoder->setFragmentBytes(&scenePresentation, sizeof(scenePresentation), 0);
     if (presentGaussians)
         encoder->setFragmentTexture(gaussianColor_.get(), 0);
     encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
@@ -435,6 +459,25 @@ void Renderer::draw(MTK::View* view) noexcept {
     }
     encoder->endEncoding();
 
+    MTL::RenderCommandEncoder* presentationEncoder =
+        commandBuffer->renderCommandEncoder(renderPass);
+    if (!presentationEncoder) {
+        dispatch_semaphore_signal(frameSemaphore_);
+        pool->release();
+        return;
+    }
+    presentationEncoder->setLabel(
+        NS::String::string("Presentation Tone Map Pass", NS::UTF8StringEncoding));
+    presentationEncoder->setRenderPipelineState(viewportPipeline_.get());
+    AetherPresentationUniforms presentation{};
+    presentation.exposureStops = exposureStops_;
+    presentation.mode = 2U;
+    presentationEncoder->setFragmentBytes(&presentation, sizeof(presentation), 0);
+    presentationEncoder->setFragmentTexture(sceneHdrColor_.get(), 0);
+    presentationEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0),
+                                        NS::UInteger(3));
+    presentationEncoder->endEncoding();
+
     dispatch_semaphore_t semaphore = frameSemaphore_;
     commandBuffer->addCompletedHandler([this, semaphore](MTL::CommandBuffer* completed) {
         const double gpuSeconds = completed->GPUEndTime() - completed->GPUStartTime();
@@ -524,6 +567,9 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     uploadedMaterials.reserve(loaded->materials.size());
     for (const auto& sourceMaterial : loaded->materials) {
         GpuMaterial material;
+        material.textures.fill(fallbackWhiteTexture_.get());
+        material.textures[2] = fallbackNormalTexture_.get();
+        material.samplers.fill(fallbackSampler_.get());
         material.material.baseColor = sourceMaterial.baseColor;
         material.material.emissiveMetallic = {sourceMaterial.emissive.x, sourceMaterial.emissive.y,
                                               sourceMaterial.emissive.z, sourceMaterial.metallic};
@@ -667,6 +713,10 @@ std::size_t Renderer::animationClipCount() const noexcept {
     return meshAnimationAsset_ ? meshAnimationAsset_->animations.size() : 0;
 }
 
+void Renderer::setExposureStops(float stops) noexcept {
+    if (std::isfinite(stops)) exposureStops_ = std::clamp(stops, -16.0F, 16.0F);
+}
+
 Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     auto asset = gaussian::PlyLoader::load(path);
     if (!asset)
@@ -747,6 +797,39 @@ Result<std::uint32_t> Renderer::pickGaussian(std::uint32_t x, std::uint32_t y) {
     return sourceId;
 }
 
+Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {
+    if (width == 0 || height == 0)
+        return fail(ErrorCode::invalidArgument, "Scene render target dimensions are zero");
+    if (sceneHdrColor_ && sceneDepth_ && sceneTargetWidth_ == width &&
+        sceneTargetHeight_ == height)
+        return {};
+    auto colorDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    colorDescriptor->setTextureType(MTL::TextureType2D);
+    colorDescriptor->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    colorDescriptor->setWidth(width);
+    colorDescriptor->setHeight(height);
+    colorDescriptor->setStorageMode(MTL::StorageModePrivate);
+    colorDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    auto depthDescriptor = adopt(MTL::TextureDescriptor::alloc()->init());
+    depthDescriptor->setTextureType(MTL::TextureType2D);
+    depthDescriptor->setPixelFormat(MTL::PixelFormatDepth32Float);
+    depthDescriptor->setWidth(width);
+    depthDescriptor->setHeight(height);
+    depthDescriptor->setStorageMode(MTL::StorageModePrivate);
+    depthDescriptor->setUsage(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead);
+    auto color = adopt(device_->newTexture(colorDescriptor.get()));
+    auto depth = adopt(device_->newTexture(depthDescriptor.get()));
+    if (!color || !depth)
+        return fail(ErrorCode::resourceExhausted, "Unable to allocate HDR scene targets");
+    color->setLabel(NS::String::string("Scene HDR Color", NS::UTF8StringEncoding));
+    depth->setLabel(NS::String::string("Scene Reverse-Z Depth", NS::UTF8StringEncoding));
+    sceneHdrColor_ = std::move(color);
+    sceneDepth_ = std::move(depth);
+    sceneTargetWidth_ = width;
+    sceneTargetHeight_ = height;
+    return {};
+}
+
 Result<void> Renderer::ensureGaussianTargets(std::uint32_t width, std::uint32_t height) {
     if (width == 0 || height == 0)
         return fail(ErrorCode::invalidArgument, "Gaussian render target dimensions are zero");
@@ -821,6 +904,28 @@ Result<void> Renderer::buildViewportPipeline() {
     }
     shaderLibrary_->setLabel(NS::String::string("AETHER Offline Library", NS::UTF8StringEncoding));
 
+    DecodedImage whiteFallback{1, 1, {255, 255, 255, 255}};
+    DecodedImage normalFallback{1, 1, {128, 128, 255, 255}};
+    auto white = uploadTexture(device_.get(), commandQueue_.get(), whiteFallback,
+                               MTL::PixelFormatRGBA8Unorm, "Fallback White Texture");
+    auto normal = uploadTexture(device_.get(), commandQueue_.get(), normalFallback,
+                                MTL::PixelFormatRGBA8Unorm, "Fallback Normal Texture");
+    auto fallbackSamplerDescriptor = adopt(MTL::SamplerDescriptor::alloc()->init());
+    fallbackSamplerDescriptor->setLabel(
+        NS::String::string("Fallback Material Sampler", NS::UTF8StringEncoding));
+    fallbackSamplerDescriptor->setMinFilter(MTL::SamplerMinMagFilterLinear);
+    fallbackSamplerDescriptor->setMagFilter(MTL::SamplerMinMagFilterLinear);
+    fallbackSamplerDescriptor->setMipFilter(MTL::SamplerMipFilterNotMipmapped);
+    fallbackSamplerDescriptor->setSAddressMode(MTL::SamplerAddressModeRepeat);
+    fallbackSamplerDescriptor->setTAddressMode(MTL::SamplerAddressModeRepeat);
+    auto fallbackSampler = adopt(device_->newSamplerState(fallbackSamplerDescriptor.get()));
+    if (!white || !normal || !fallbackSampler)
+        return fail(ErrorCode::resourceExhausted,
+                    "Unable to allocate required PBR fallback resources");
+    fallbackWhiteTexture_ = std::move(*white);
+    fallbackNormalTexture_ = std::move(*normal);
+    fallbackSampler_ = std::move(fallbackSampler);
+
     auto vertex = adopt(shaderLibrary_->newFunction(
         NS::String::string("aetherViewportVertex", NS::UTF8StringEncoding)));
     auto fragment = adopt(shaderLibrary_->newFunction(
@@ -877,6 +982,20 @@ Result<void> Renderer::buildViewportPipeline() {
                                           : "Unknown pipeline compilation error";
         return fail(ErrorCode::metal, "Unable to create AETHER viewport pipeline", message);
     }
+    descriptor->setLabel(
+        NS::String::string("AETHER HDR Background Pipeline", NS::UTF8StringEncoding));
+    descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    if (binaryArchive_) {
+        error = nullptr;
+        (void)binaryArchive_->addRenderPipelineFunctions(descriptor.get(), &error);
+    }
+    error = nullptr;
+    sceneBackgroundPipeline_ = adopt(device_->newRenderPipelineState(descriptor.get(), &error));
+    if (!sceneBackgroundPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown HDR pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create AETHER HDR background pipeline", message);
+    }
 
     auto pbrVertex = adopt(
         shaderLibrary_->newFunction(NS::String::string("aetherPbrVertex", NS::UTF8StringEncoding)));
@@ -889,7 +1008,7 @@ Result<void> Renderer::buildViewportPipeline() {
     pbrDescriptor->setLabel(NS::String::string("AETHER PBR Pipeline", NS::UTF8StringEncoding));
     pbrDescriptor->setVertexFunction(pbrVertex.get());
     pbrDescriptor->setFragmentFunction(pbrFragment.get());
-    pbrDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatBGRA8Unorm_sRGB);
+    pbrDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
     pbrDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
     if (binaryArchive_) {
         pbrDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));

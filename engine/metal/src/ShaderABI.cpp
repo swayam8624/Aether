@@ -3,6 +3,7 @@
 #include <cstddef>
 
 static_assert(sizeof(AetherFullscreenVertex) == 16);
+static_assert(sizeof(AetherPresentationUniforms) == 16);
 static_assert(offsetof(AetherFullscreenVertex, position) == 0);
 static_assert(offsetof(AetherFullscreenVertex, uv) == 8);
 static_assert(offsetof(AetherMeshVertex, position) == 0);

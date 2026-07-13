@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, nullable, copy) NSString* scenePath;
 @property(nonatomic, nullable, copy) void (^onGaussianPicked)(NSInteger sourceId);
 @property(nonatomic) NSInteger gaussianDebugMode;
+@property(nonatomic) float exposureStops;
 @end
 
 /// Writes a privacy-minimized diagnostics JSON file. Returns NO and populates `error` on failure.

@@ -50,6 +50,7 @@ struct ContentView: View {
     @State private var selection: Workspace? = .scene
     @State private var selectedGaussianId: Int?
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
+    @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
     @AppStorage("showRendererDiagnostics") private var showRendererDiagnostics = true
 
@@ -80,12 +81,28 @@ struct ContentView: View {
                 .frame(height: 42)
                 .background(.bar)
 
+                if selection == .lighting {
+                    HStack {
+                        Label("Exposure", systemImage: "sun.max")
+                        Slider(value: $exposureStops, in: -8...8, step: 0.1)
+                            .frame(maxWidth: 320)
+                        Text(String(format: "%+.1f EV", exposureStops))
+                            .font(.caption.monospacedDigit())
+                            .frame(width: 62, alignment: .trailing)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 38)
+                    .background(.bar)
+                }
+
                 if selection == .reconstruction {
                     ReconstructionWorkspace()
                 } else {
                     AetherViewport(scenePath: resolvedScenePath,
                                    selectedGaussianId: $selectedGaussianId,
-                                   gaussianDebugMode: gaussianDebugMode.rawValue)
+                                   gaussianDebugMode: gaussianDebugMode.rawValue,
+                                   exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
                             VStack(alignment: .leading, spacing: 4) {

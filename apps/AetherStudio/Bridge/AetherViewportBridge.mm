@@ -21,6 +21,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (void)clearCameraMovement;
 - (NSInteger)pickGaussianX:(NSUInteger)x y:(NSUInteger)y;
 - (void)setGaussianDebugMode:(NSInteger)mode;
+- (void)setExposureStops:(float)stops;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -148,6 +149,11 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     if (_renderer)
         _renderer->setGaussianDebugMode(static_cast<std::uint32_t>(MAX(0, mode)));
 }
+
+- (void)setExposureStops:(float)stops {
+    if (_renderer)
+        _renderer->setExposureStops(stops);
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -183,6 +189,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     AetherViewportDelegate* _rendererDelegate;
     NSString* _scenePath;
     NSInteger _gaussianDebugMode;
+    float _exposureStops;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -289,6 +296,15 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 - (void)setGaussianDebugMode:(NSInteger)value {
     _gaussianDebugMode = value;
     [_rendererDelegate setGaussianDebugMode:value];
+}
+
+- (float)exposureStops {
+    return _exposureStops;
+}
+
+- (void)setExposureStops:(float)value {
+    _exposureStops = std::clamp(value, -16.0F, 16.0F);
+    [_rendererDelegate setExposureStops:_exposureStops];
 }
 
 - (NSString*)scenePath {
