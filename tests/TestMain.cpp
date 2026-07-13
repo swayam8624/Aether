@@ -557,6 +557,65 @@ void testDirectionalShadows() {
            "Directional shadows enforce bounded cascade count");
 }
 
+void testLocalShadowProjections() {
+    aether::scene::Light spot;
+    spot.type = aether::scene::LightType::spot;
+    spot.position = {1.0F, 2.0F, 3.0F};
+    spot.direction = simd_normalize(simd_float3{-0.25F, -0.5F, -1.0F});
+    spot.range = 25.0F;
+    const auto spotProjection = aether::scene::buildSpotShadowProjection(spot);
+    expect(spotProjection.has_value(), "Spot shadow projection builds for a valid spot light");
+    if (spotProjection) {
+        const auto world = spot.position + spot.direction * 5.0F;
+        const auto clip = simd_mul(spotProjection->worldToShadowClip,
+                                   simd_float4{world.x, world.y, world.z, 1.0F});
+        const auto ndc = clip.xyz / clip.w;
+        expect(std::abs(ndc.x) < 1.0e-4F && std::abs(ndc.y) < 1.0e-4F &&
+                   ndc.z >= 0.0F && ndc.z <= 1.0F,
+               "Spot shadow axis maps to the Metal viewport center and depth range");
+        expect(std::isfinite(simd_determinant(spotProjection->worldToShadowClip)) &&
+                   std::abs(simd_determinant(spotProjection->worldToShadowClip)) > 1.0e-12F,
+               "Spot shadow matrix is finite and invertible");
+    }
+
+    aether::scene::Light point;
+    point.type = aether::scene::LightType::point;
+    point.position = {-2.0F, 0.5F, 4.0F};
+    point.range = 15.0F;
+    const auto pointProjection = aether::scene::buildPointShadowProjection(point);
+    expect(pointProjection.has_value(), "Point shadow projection builds for a valid point light");
+    if (pointProjection) {
+        constexpr std::array directions{
+            simd_float3{1, 0, 0}, simd_float3{-1, 0, 0}, simd_float3{0, 1, 0},
+            simd_float3{0, -1, 0}, simd_float3{0, 0, 1}, simd_float3{0, 0, -1}};
+        bool validFaces = true;
+        for (std::size_t face = 0; face < directions.size(); ++face) {
+            const auto& matrix = pointProjection->worldToShadowClip[face];
+            const auto world = point.position + directions[face] * 3.0F;
+            const auto clip = simd_mul(matrix, simd_float4{world.x, world.y, world.z, 1.0F});
+            const auto ndc = clip.xyz / clip.w;
+            validFaces = validFaces && std::isfinite(simd_determinant(matrix)) &&
+                         std::abs(simd_determinant(matrix)) > 1.0e-12F &&
+                         std::abs(ndc.x) < 1.0e-4F && std::abs(ndc.y) < 1.0e-4F &&
+                         ndc.z >= 0.0F && ndc.z <= 1.0F;
+        }
+        expect(validFaces,
+               "All point shadow faces are finite, invertible, centered, and Metal-depth valid");
+    }
+
+    aether::scene::LocalShadowConfig invalid;
+    invalid.resolution = 0;
+    expect(!aether::scene::buildSpotShadowProjection(spot, invalid).has_value(),
+           "Local shadows reject zero resolution");
+    invalid.resolution = 1024;
+    invalid.nearPlane = point.range;
+    expect(!aether::scene::buildPointShadowProjection(point, invalid).has_value(),
+           "Local shadows reject a near plane outside the light range");
+    expect(!aether::scene::buildSpotShadowProjection(point).has_value() &&
+               !aether::scene::buildPointShadowProjection(spot).has_value(),
+           "Local shadow builders reject the wrong light type");
+}
+
 void testSha256() {
     constexpr std::string_view value = "abc";
     const auto bytes = std::as_bytes(std::span(value.data(), value.size()));
@@ -741,6 +800,7 @@ int main() {
     testClusteredLighting();
     testImageBasedLighting();
     testDirectionalShadows();
+    testLocalShadowProjections();
     testSha256();
     testAetherPackage();
     testGaussianPly();

@@ -20,6 +20,27 @@ simd_float4x4 lookAt(simd_float3 eye, simd_float3 forward) {
         simd_float4{-simd_dot(right, eye), -simd_dot(up, eye), simd_dot(forward, eye), 1}};
 }
 
+simd_float4x4 lookAt(simd_float3 eye, simd_float3 forward, simd_float3 referenceUp) {
+    forward = simd_normalize(forward);
+    const simd_float3 right = simd_normalize(simd_cross(forward, referenceUp));
+    const simd_float3 up = simd_cross(right, forward);
+    return simd_float4x4{
+        simd_float4{right.x, up.x, -forward.x, 0},
+        simd_float4{right.y, up.y, -forward.y, 0},
+        simd_float4{right.z, up.z, -forward.z, 0},
+        simd_float4{-simd_dot(right, eye), -simd_dot(up, eye), simd_dot(forward, eye), 1}};
+}
+
+simd_float4x4 perspective(float verticalFieldOfView, float aspect, float nearDepth,
+                          float farDepth) {
+    const float y = 1.0F / std::tan(verticalFieldOfView * 0.5F);
+    const float x = y / aspect;
+    const float z = farDepth / (nearDepth - farDepth);
+    const float translation = nearDepth * farDepth / (nearDepth - farDepth);
+    return simd_float4x4{simd_float4{x, 0, 0, 0}, simd_float4{0, y, 0, 0},
+                         simd_float4{0, 0, z, -1}, simd_float4{0, 0, translation, 0}};
+}
+
 simd_float4x4 orthographic(float left, float right, float bottom, float top, float nearDepth,
                            float farDepth) {
     return simd_float4x4{
@@ -124,6 +145,50 @@ Result<DirectionalShadowCascades> buildDirectionalShadowCascades(
             return fail(ErrorCode::internal, "Directional shadow cascade matrix is not finite");
         result.worldToShadowClip.push_back(matrix);
         cascadeNear = cascadeFar;
+    }
+    return result;
+}
+
+Result<SpotShadowProjection> buildSpotShadowProjection(const Light& light,
+                                                        const LocalShadowConfig& config) {
+    if (light.type != LightType::spot)
+        return fail(ErrorCode::invalidArgument, "Spot shadow projection requires a spot light");
+    if (auto valid = validateLight(light); !valid) return std::unexpected(valid.error());
+    if (config.resolution == 0 || !std::isfinite(config.nearPlane) || config.nearPlane <= 0.0F ||
+        config.nearPlane >= light.range)
+        return fail(ErrorCode::invalidArgument, "Spot shadow configuration is invalid");
+    const auto view = lookAt(light.position, light.direction);
+    const auto projection = perspective(light.outerConeRadians * 2.0F, 1.0F,
+                                        config.nearPlane, light.range);
+    const auto matrix = simd_mul(projection, view);
+    if (!finiteMatrix(matrix))
+        return fail(ErrorCode::internal, "Spot shadow matrix is not finite");
+    return SpotShadowProjection{matrix, config.nearPlane, light.range};
+}
+
+Result<PointShadowProjection> buildPointShadowProjection(const Light& light,
+                                                          const LocalShadowConfig& config) {
+    if (light.type != LightType::point)
+        return fail(ErrorCode::invalidArgument, "Point shadow projection requires a point light");
+    if (auto valid = validateLight(light); !valid) return std::unexpected(valid.error());
+    if (config.resolution == 0 || !std::isfinite(config.nearPlane) || config.nearPlane <= 0.0F ||
+        config.nearPlane >= light.range)
+        return fail(ErrorCode::invalidArgument, "Point shadow configuration is invalid");
+    constexpr std::array directions{
+        simd_float3{1, 0, 0}, simd_float3{-1, 0, 0}, simd_float3{0, 1, 0},
+        simd_float3{0, -1, 0}, simd_float3{0, 0, 1}, simd_float3{0, 0, -1}};
+    constexpr std::array upVectors{
+        simd_float3{0, -1, 0}, simd_float3{0, -1, 0}, simd_float3{0, 0, 1},
+        simd_float3{0, 0, -1}, simd_float3{0, -1, 0}, simd_float3{0, -1, 0}};
+    const auto projection = perspective(1.57079632679F, 1.0F, config.nearPlane, light.range);
+    PointShadowProjection result;
+    result.nearPlane = config.nearPlane;
+    result.farPlane = light.range;
+    for (std::size_t face = 0; face < result.worldToShadowClip.size(); ++face) {
+        result.worldToShadowClip[face] =
+            simd_mul(projection, lookAt(light.position, directions[face], upVectors[face]));
+        if (!finiteMatrix(result.worldToShadowClip[face]))
+            return fail(ErrorCode::internal, "Point shadow matrix is not finite");
     }
     return result;
 }

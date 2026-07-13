@@ -2,9 +2,11 @@
 
 #include <aether/core/Error.hpp>
 #include <aether/scene/Camera.hpp>
+#include <aether/scene/Lighting.hpp>
 
 #include <simd/simd.h>
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -24,9 +26,33 @@ struct DirectionalShadowCascades final {
     std::vector<simd_float4x4> worldToShadowClip;
 };
 
+struct LocalShadowConfig final {
+    std::uint32_t resolution{1024};
+    float nearPlane{0.05F};
+};
+
+struct SpotShadowProjection final {
+    simd_float4x4 worldToShadowClip{matrix_identity_float4x4};
+    float nearPlane{};
+    float farPlane{};
+};
+
+struct PointShadowProjection final {
+    std::array<simd_float4x4, 6> worldToShadowClip{};
+    float nearPlane{};
+    float farPlane{};
+};
+
 /// Computes stable orthographic cascade matrices in Metal's [0,1] depth convention.
 [[nodiscard]] Result<DirectionalShadowCascades> buildDirectionalShadowCascades(
     const Camera& camera, const Transform& cameraWorldTransform, float aspectRatio,
     simd_float3 lightDirection, const DirectionalShadowConfig& config = {});
+
+[[nodiscard]] Result<SpotShadowProjection> buildSpotShadowProjection(
+    const Light& light, const LocalShadowConfig& config = {});
+
+/// Face order matches Metal cube textures: +X, -X, +Y, -Y, +Z, -Z.
+[[nodiscard]] Result<PointShadowProjection> buildPointShadowProjection(
+    const Light& light, const LocalShadowConfig& config = {});
 
 } // namespace aether::scene

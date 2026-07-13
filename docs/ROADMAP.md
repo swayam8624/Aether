@@ -56,7 +56,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   orthographic light matrices, Metal depth convention, and degeneracy validation.
 - [x] Four-slice directional shadow rendering with shared morph/skin bindings, alpha-mask cutouts,
   per-frame palette reuse, live cascade receivers, bias controls, and 3x3 comparison PCF.
-- [ ] Local shadows, cascade transition blending, TAA, bloom, and debug views.
+- [ ] Local shadows (validated spot/point projection contract complete; bounded GPU allocation,
+  rendering, and receiver sampling pending), cascade transition blending, TAA, bloom, and debug
+  views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer
