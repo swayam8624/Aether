@@ -108,6 +108,26 @@ Result<DecodedImage> decodeImage(std::span<const std::byte> encoded) {
     return result;
 }
 
+Result<std::string> sha256File(const std::filesystem::path& path) {
+    package::Sha256 hasher;
+    std::ifstream stream(path, std::ios::binary);
+    std::array<char, 64 * 1024> buffer{};
+    while (stream) {
+        stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = stream.gcount();
+        if (count > 0)
+            hasher.update(std::as_bytes(std::span(buffer.data(), static_cast<std::size_t>(count))));
+    }
+    if (!stream.eof())
+        return fail(ErrorCode::io, "Unable to hash file", path);
+    return package::Sha256::hex(hasher.finalize());
+}
+
+bool environmentFlagEnabled(const char* name) {
+    const char* value = std::getenv(name);
+    return value && value[0] != '\0' && std::string_view(value) != "0";
+}
+
 Result<MetalPtr<MTL::Texture>> uploadTexture(MTL::Device* device, MTL::CommandQueue* queue,
                                              const DecodedImage& image, MTL::PixelFormat format,
                                              const char* label) {
@@ -854,8 +874,9 @@ void Renderer::draw(MTK::View* view) noexcept {
                         uniforms.previousModel = instance.previousWorldTransform;
                         uniforms.normalTransform =
                             simd_transpose(simd_inverse(instance.worldTransform));
-                        uniforms.drawIds = {static_cast<std::uint32_t>(instanceIndex + 1U), 0U, 0U,
-                                            0U};
+                        uniforms.drawIds = {AETHER_MESH_ENTITY_ID_TAG |
+                                                static_cast<std::uint32_t>(instanceIndex + 1U),
+                                            0U, 0U, 0U};
                         encoder->setVertexBytes(&uniforms, sizeof(uniforms), 1);
                         encoder->setFragmentBytes(&uniforms, sizeof(uniforms), 1);
                         if (!bindDeformation(encoder, instanceIndex))
@@ -1069,6 +1090,31 @@ void Renderer::drawableSizeWillChange(CGSize size) noexcept {
 }
 
 Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
+    return loadGltfAsset(path, false);
+}
+
+Result<void> Renderer::attachDynamicGltf(const std::filesystem::path& path) {
+    if (!gaussianPipeline_)
+        return fail(ErrorCode::invalidArgument,
+                    "A dynamic glTF asset requires an active captured Gaussian scene");
+    return loadGltfAsset(path, true);
+}
+
+void Renderer::detachDynamicGltf() noexcept {
+    meshPrimitives_.clear();
+    meshInstances_.clear();
+    meshTextures_.clear();
+    meshMaterials_.clear();
+    meshAnimationAsset_.reset();
+    meshWorldTransforms_.clear();
+    previousMeshWorldTransforms_.clear();
+    selectedAnimation_.reset();
+    selectedMeshEntity_ = 0;
+    temporalHistoryValid_ = false;
+}
+
+Result<void> Renderer::loadGltfAsset(const std::filesystem::path& path,
+                                     bool preserveCapturedWorld) {
     auto loaded = mesh::GltfLoader::load(path);
     if (!loaded) {
         return std::unexpected(loaded.error());
@@ -1227,7 +1273,6 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
             static_cast<std::uint32_t>(primitive.morphTargets.size()),
             static_cast<std::uint32_t>(primitive.vertices.size())});
     }
-    meshPrimitives_ = std::move(uploaded);
     std::vector<GpuMeshInstance> instances;
     instances.reserve(loaded->instances.size());
     for (const auto& sourceInstance : loaded->instances) {
@@ -1249,37 +1294,44 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             sourceInstance.morphWeights,
                                             std::nullopt});
     }
+    mesh::MeshAsset animationAsset;
+    animationAsset.nodes = std::move(loaded->nodes);
+    animationAsset.animations = std::move(loaded->animations);
+    animationAsset.skins = std::move(loaded->skins);
+    std::vector<scene::Transform> initialTransforms;
+    initialTransforms.reserve(animationAsset.nodes.size());
+    for (const auto& node : animationAsset.nodes)
+        initialTransforms.push_back(node.localTransform);
+    auto initialWorlds = mesh::resolveWorldTransforms(animationAsset, initialTransforms);
+    if (!initialWorlds)
+        return std::unexpected(initialWorlds.error());
+    // Publish the fully validated asset as one transaction. Failed replacement leaves the
+    // previous dynamic asset and captured world untouched.
+    meshPrimitives_ = std::move(uploaded);
     meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);
     meshMaterials_ = std::move(uploadedMaterials);
-    meshAnimationAsset_.emplace();
-    meshAnimationAsset_->nodes = std::move(loaded->nodes);
-    meshAnimationAsset_->animations = std::move(loaded->animations);
-    meshAnimationAsset_->skins = std::move(loaded->skins);
-    std::vector<scene::Transform> initialTransforms;
-    initialTransforms.reserve(meshAnimationAsset_->nodes.size());
-    for (const auto& node : meshAnimationAsset_->nodes)
-        initialTransforms.push_back(node.localTransform);
-    auto initialWorlds = mesh::resolveWorldTransforms(*meshAnimationAsset_, initialTransforms);
-    if (!initialWorlds)
-        return std::unexpected(initialWorlds.error());
+    meshAnimationAsset_ = std::move(animationAsset);
     meshWorldTransforms_ = std::move(*initialWorlds);
     previousMeshWorldTransforms_ = meshWorldTransforms_;
     selectedAnimation_ =
         meshAnimationAsset_->animations.empty() ? std::nullopt : std::optional<std::size_t>{0};
     animationSeconds_ = 0.0F;
     animationPlaying_ = true;
-    gaussianPipeline_.reset();
-    proxyVertices_.reset();
-    proxyIndices_.reset();
-    proxyVertexCount_ = 0;
-    proxyIndexCount_ = 0;
+    if (!preserveCapturedWorld) {
+        gaussianPipeline_.reset();
+        proxyVertices_.reset();
+        proxyIndices_.reset();
+        proxyVertexCount_ = 0;
+        proxyIndexCount_ = 0;
+    }
     selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
-    Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
-                                              std::to_string(meshPrimitives_.size()) +
-                                              " primitives and " +
-                                              std::to_string(meshInstances_.size()) + " instances");
+    Log::instance().write(LogLevel::info,
+                          std::string(preserveCapturedWorld ? "Attached dynamic glTF with "
+                                                            : "Loaded glTF scene with ") +
+                              std::to_string(meshPrimitives_.size()) + " primitives and " +
+                              std::to_string(meshInstances_.size()) + " instances");
     return {};
 }
 
@@ -1638,6 +1690,9 @@ Result<std::uint32_t> Renderer::pickMesh(std::uint32_t x, std::uint32_t y) {
         return fail(ErrorCode::metal, "Mesh pick command buffer failed");
     std::uint32_t entityId{};
     std::memcpy(&entityId, readback->contents(), sizeof(entityId));
+    if ((entityId & AETHER_MESH_ENTITY_ID_TAG) == 0U)
+        return 0U;
+    entityId &= AETHER_MESH_ENTITY_ID_MASK;
     if (entityId > meshInstances_.size())
         return fail(ErrorCode::corruptData, "Mesh pick target contains an invalid entity ID");
     return entityId;
@@ -2165,29 +2220,32 @@ Result<void> Renderer::buildViewportPipeline() {
     }
     std::error_code filesystemError;
     std::filesystem::create_directories(cacheRoot, filesystemError);
-    package::Sha256 libraryHasher;
-    std::ifstream libraryStream(libraryPath, std::ios::binary);
-    std::array<char, 64 * 1024> hashBuffer{};
-    while (libraryStream) {
-        libraryStream.read(hashBuffer.data(), static_cast<std::streamsize>(hashBuffer.size()));
-        const auto count = libraryStream.gcount();
-        if (count > 0)
-            libraryHasher.update(
-                std::as_bytes(std::span(hashBuffer.data(), static_cast<std::size_t>(count))));
-    }
-    if (!libraryStream.eof())
-        return fail(ErrorCode::io, "Unable to hash offline Metal shader library", libraryPath);
-    const std::string libraryHash = package::Sha256::hex(libraryHasher.finalize());
-    const auto archivePath = cacheRoot / ("AetherPipelines-" + libraryHash + ".bin");
+    auto libraryHash = sha256File(libraryPath);
+    if (!libraryHash)
+        return std::unexpected(libraryHash.error());
+    const auto archivePath = cacheRoot / ("AetherPipelines-" + *libraryHash + ".bin");
+    const auto archiveHashPath = std::filesystem::path(archivePath.string() + ".sha256");
     auto archiveDescriptor = adopt(MTL::BinaryArchiveDescriptor::alloc()->init());
     NS::URL* archiveUrl =
         NS::URL::fileURLWithPath(NS::String::string(archivePath.c_str(), NS::UTF8StringEncoding));
-    if (std::filesystem::is_regular_file(archivePath)) {
+    bool archiveVerified = false;
+    if (!environmentFlagEnabled("MTL_DEBUG_LAYER") &&
+        !environmentFlagEnabled("MTL_SHADER_VALIDATION") &&
+        std::filesystem::is_regular_file(archivePath) &&
+        std::filesystem::is_regular_file(archiveHashPath)) {
+        std::ifstream sidecar(archiveHashPath);
+        std::string expectedHash;
+        sidecar >> expectedHash;
+        auto actualHash = sha256File(archivePath);
+        archiveVerified = actualHash && expectedHash == *actualHash;
+    }
+    if (archiveVerified) {
         archiveDescriptor->setUrl(archiveUrl);
     }
     binaryArchive_ = adopt(device_->newBinaryArchive(archiveDescriptor.get(), &error));
-    if (!binaryArchive_ && std::filesystem::is_regular_file(archivePath)) {
+    if (!binaryArchive_ && archiveVerified) {
         std::filesystem::remove(archivePath, filesystemError);
+        std::filesystem::remove(archiveHashPath, filesystemError);
         archiveDescriptor->setUrl(nullptr);
         error = nullptr;
         binaryArchive_ = adopt(device_->newBinaryArchive(archiveDescriptor.get(), &error));
@@ -2480,12 +2538,40 @@ Result<void> Renderer::buildViewportPipeline() {
     if (!reverseZReadOnlyDepthState_)
         return fail(ErrorCode::metal, "Unable to create read-only reverse-Z depth state");
     if (binaryArchive_) {
+        const std::string suffix = ".tmp-" + std::to_string(reinterpret_cast<std::uintptr_t>(this));
+        const auto temporaryArchive = std::filesystem::path(archivePath.string() + suffix);
+        const auto temporaryHash = std::filesystem::path(archiveHashPath.string() + suffix);
+        std::filesystem::remove(temporaryArchive, filesystemError);
+        std::filesystem::remove(temporaryHash, filesystemError);
+        NS::URL* temporaryUrl = NS::URL::fileURLWithPath(
+            NS::String::string(temporaryArchive.c_str(), NS::UTF8StringEncoding));
         error = nullptr;
-        if (!binaryArchive_->serializeToURL(archiveUrl, &error) && error) {
-            Log::instance().write(LogLevel::warning,
-                                  std::string("Pipeline archive serialization failed: ") +
-                                      error->localizedDescription()->utf8String());
+        if (!binaryArchive_->serializeToURL(temporaryUrl, &error)) {
+            Log::instance().write(
+                LogLevel::warning,
+                std::string("Pipeline archive serialization failed: ") +
+                    (error ? error->localizedDescription()->utf8String() : "unknown Metal error"));
+        } else {
+            auto serializedHash = sha256File(temporaryArchive);
+            std::ofstream sidecar(temporaryHash, std::ios::trunc);
+            if (serializedHash)
+                sidecar << *serializedHash << "  " << archivePath.filename().string() << '\n';
+            sidecar.close();
+            if (!serializedHash || !sidecar) {
+                Log::instance().write(LogLevel::warning,
+                                      "Unable to hash the serialized pipeline archive");
+            } else {
+                filesystemError.clear();
+                std::filesystem::rename(temporaryArchive, archivePath, filesystemError);
+                if (!filesystemError)
+                    std::filesystem::rename(temporaryHash, archiveHashPath, filesystemError);
+                if (filesystemError)
+                    Log::instance().write(LogLevel::warning,
+                                          "Unable to atomically publish the pipeline archive");
+            }
         }
+        std::filesystem::remove(temporaryArchive, filesystemError);
+        std::filesystem::remove(temporaryHash, filesystemError);
     }
     return {};
 }

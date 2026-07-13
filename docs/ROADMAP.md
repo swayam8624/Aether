@@ -138,8 +138,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   and motion G-buffer with named Metal passes and GPU-validated readback.
 - [x] Confidence-aware proxy/Gaussian depth composition with an occlusion golden that proves a
   foreground proxy suppresses a behind-surface Gaussian while preserving proxy motion/depth.
-- [ ] Concurrent dynamic PBR entities in captured scenes, proxy shadow receiving and transfer,
-  collision queries, particles, reflection probes, and navigation surfaces.
+- [x] One transactional, replaceable glTF attachment per captured scene with persistent Studio
+  document state, independent mesh/Gaussian ID namespaces, editable entities/materials, and
+  front/behind proxy depth goldens.
+- [ ] Multiple dynamic asset attachments, proxy shadow receiving and transfer, collision queries,
+  particles, reflection probes, and navigation surfaces.
 
 ## Phase 6 — Material-aware relighting
 

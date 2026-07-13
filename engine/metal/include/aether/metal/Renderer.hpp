@@ -93,6 +93,10 @@ class Renderer final {
     void draw(MTK::View* view) noexcept;
     void drawableSizeWillChange(CGSize size) noexcept;
     [[nodiscard]] Result<void> loadGltf(const std::filesystem::path& path);
+    /// Adds one glTF asset as editable dynamic entities without replacing the captured world.
+    /// The current release accepts one attached glTF asset per captured scene.
+    [[nodiscard]] Result<void> attachDynamicGltf(const std::filesystem::path& path);
+    void detachDynamicGltf() noexcept;
     [[nodiscard]] Result<void> loadPly(const std::filesystem::path& path);
     [[nodiscard]] Result<void> loadAether(const std::filesystem::path& path);
     [[nodiscard]] Result<void> selectAnimation(std::size_t clipIndex, bool loop = true);
@@ -176,6 +180,8 @@ class Renderer final {
 
   private:
     Renderer(MTL::Device* device, std::filesystem::path shaderLibraryPath);
+    [[nodiscard]] Result<void> loadGltfAsset(const std::filesystem::path& path,
+                                             bool preserveCapturedWorld);
     [[nodiscard]] Result<void> buildViewportPipeline();
     [[nodiscard]] Result<void> ensureGaussianTargets(std::uint32_t width, std::uint32_t height);
     [[nodiscard]] Result<void> ensureSceneTargets(std::uint32_t width, std::uint32_t height);

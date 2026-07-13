@@ -680,6 +680,61 @@ int main() {
         pool->release();
         return 1;
     }
+    if (!(*renderer)->attachDynamicGltf(AETHER_TEST_GLTF) ||
+        (*renderer)->attachDynamicGltf("/aether/missing-dynamic-mesh.glb") ||
+        (*renderer)->proxyMeshStatistics().triangles != 2U ||
+        (*renderer)->meshEntityNames().size() != 1U) {
+        std::cerr << "Dynamic glTF attachment did not preserve the captured world contract\n";
+        pool->release();
+        return 1;
+    }
+    aether::scene::Transform dynamicTransform;
+    dynamicTransform.translation = {0.0F, 0.0F, 2.30F};
+    if (!(*renderer)->setMeshEntityTransform(1U, dynamicTransform)) {
+        std::cerr << "Unable to place the dynamic mesh in front of the proxy\n";
+        pool->release();
+        return 1;
+    }
+    auto renderHybridCapture = [&](std::string_view artifact) -> bool {
+        const auto completedBeforeHybrid = (*renderer)->statistics().completedFrames;
+        (*renderer)->requestFrameCapture();
+        (*renderer)->draw(testView.get());
+        for (std::uint32_t attempt = 0;
+             attempt < 100 && (*renderer)->statistics().completedFrames <= completedBeforeHybrid;
+             ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if ((*renderer)->statistics().completedFrames <= completedBeforeHybrid)
+            return false;
+        auto capture = (*renderer)->consumeFrameCapture();
+        return capture && writeCaptureArtifact(*capture, artifact);
+    };
+    if (!renderHybridCapture("hybrid-mesh-front")) {
+        std::cerr << "Front-of-proxy dynamic mesh frame did not complete\n";
+        pool->release();
+        return 1;
+    }
+    const auto frontMeshId = (*renderer)->pickMesh(160U, 90U);
+    dynamicTransform.translation.z = 2.0F;
+    if (!frontMeshId || *frontMeshId != 1U ||
+        !(*renderer)->setMeshEntityTransform(1U, dynamicTransform) ||
+        !renderHybridCapture("hybrid-mesh-behind")) {
+        std::cerr << "Dynamic mesh was not selectable in front of the proxy\n";
+        pool->release();
+        return 1;
+    }
+    const auto behindMeshId = (*renderer)->pickMesh(160U, 90U);
+    if (!behindMeshId || *behindMeshId != 0U) {
+        std::cerr << "Proxy reverse-Z depth did not occlude the behind-surface dynamic mesh\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->detachDynamicGltf();
+    if (!(*renderer)->meshEntityNames().empty() ||
+        (*renderer)->proxyMeshStatistics().triangles != 2U) {
+        std::cerr << "Dynamic mesh detach damaged captured-world state\n";
+        pool->release();
+        return 1;
+    }
     constexpr std::size_t width = 9;
     constexpr std::size_t height = 9;
     auto color = makeTexture(device.get(), MTL::PixelFormatRGBA32Float, width, height);

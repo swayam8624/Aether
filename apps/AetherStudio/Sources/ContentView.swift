@@ -322,6 +322,7 @@ struct ContentView: View {
                     ReconstructionWorkspace()
                 } else {
                     AetherViewport(scenePath: resolvedScenePath,
+                                   dynamicMeshPath: resolvedDynamicMeshPath,
                                    selectedGaussianId: $selectedGaussianId,
                                    selectedMeshId: $selectedMeshId,
                                    selectedMeshTransform: $selectedMeshTransform,
@@ -451,6 +452,20 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button("Import Scene", systemImage: "square.and.arrow.down") { importScene() }
+                if isCapturedScene {
+                    Button(document.state.dynamicMeshPath == nil ? "Add Dynamic Mesh" :
+                               "Replace Dynamic Mesh",
+                           systemImage: "cube.badge.plus") { importDynamicMesh() }
+                    if document.state.dynamicMeshPath != nil {
+                        Button("Remove Dynamic Mesh", systemImage: "cube.badge.xmark") {
+                            document.state.dynamicMeshPath = nil
+                            document.state.entityTransformOverrides = [:]
+                            document.state.materialOverrides = [:]
+                            document.state.selection.meshEntity = nil
+                            document.state.selection.material = nil
+                        }
+                    }
+                }
                 Button("Undo", systemImage: "arrow.uturn.backward") { undoManager?.undo() }
                     .disabled(undoManager?.canUndo != true)
                 Button("Redo", systemImage: "arrow.uturn.forward") { undoManager?.redo() }
@@ -491,10 +506,26 @@ struct ContentView: View {
         }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         document.state.scenePath = url.path
+        document.state.dynamicMeshPath = nil
         document.state.displayName = url.deletingPathExtension().lastPathComponent
         document.state.entityTransformOverrides = [:]
         document.state.materialOverrides = [:]
         document.state.selection = AetherSelectionState()
+    }
+
+    private func importDynamicMesh() {
+        guard isCapturedScene else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = ["gltf", "glb"].compactMap { UTType(filenameExtension: $0) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        document.state.dynamicMeshPath = url.path
+        document.state.entityTransformOverrides = [:]
+        document.state.materialOverrides = [:]
+        document.state.selection.meshEntity = nil
+        document.state.selection.material = nil
+        undoManager?.setActionName("Attach Dynamic Mesh")
     }
 
     private var resolvedScenePath: String? {
@@ -505,10 +536,24 @@ struct ContentView: View {
         return projectURL?.deletingLastPathComponent().appendingPathComponent(scenePath).path
     }
 
+    private var resolvedDynamicMeshPath: String? {
+        guard let path = document.state.dynamicMeshPath else { return nil }
+        if NSString(string: path).isAbsolutePath { return path }
+        return projectURL?.deletingLastPathComponent().appendingPathComponent(path).path
+    }
+
+    private var isCapturedScene: Bool {
+        guard let scenePath = document.state.scenePath else { return false }
+        return ["aether", "ply"].contains(
+            URL(fileURLWithPath: scenePath).pathExtension.lowercased())
+    }
+
     private var viewportModeLabel: String {
         guard let scenePath = document.state.scenePath else { return "AETHER FOUNDATION" }
         switch URL(fileURLWithPath: scenePath).pathExtension.lowercased() {
-        case "ply", "aether": return "STANDARD GAUSSIAN GPU"
+        case "ply", "aether":
+            return document.state.dynamicMeshPath == nil ? "STANDARD GAUSSIAN GPU" :
+                "HYBRID GAUSSIAN / DYNAMIC PBR"
         case "gltf", "glb": return "MESH / PBR"
         default: return "AETHER VIEWPORT"
         }

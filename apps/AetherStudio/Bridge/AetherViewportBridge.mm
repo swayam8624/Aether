@@ -15,6 +15,8 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 @interface AetherViewportDelegate : NSObject <MTKViewDelegate>
 - (instancetype)initWithDevice:(id<MTLDevice>)device;
 - (NSArray<NSString*>*)loadSceneAtPath:(NSString*)path;
+- (nullable NSArray<NSString*>*)attachDynamicMeshAtPath:(NSString*)path;
+- (void)detachDynamicMesh;
 - (void)setCameraKey:(unichar)key active:(BOOL)active;
 - (void)addCameraLookX:(CGFloat)x y:(CGFloat)y;
 - (void)addCameraDolly:(CGFloat)amount;
@@ -39,8 +41,9 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (NSArray<NSNumber*>*)cameraState;
 - (BOOL)setCameraState:(NSArray<NSNumber*>*)values;
 - (BOOL)setPlaybackState:(NSArray<NSNumber*>*)values;
-- (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis distance:(float)distance
-                                          mode:(NSInteger)mode;
+- (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis
+                                     distance:(float)distance
+                                         mode:(NSInteger)mode;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -50,14 +53,18 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 }
 
 - (NSArray<NSNumber*>*)cameraState {
-    if (!_renderer) return @[];
+    if (!_renderer)
+        return @[];
     const auto camera = _renderer->cameraSnapshot();
-    return @[@(camera.position.x), @(camera.position.y), @(camera.position.z), @(camera.yaw),
-             @(camera.pitch), @(camera.verticalFieldOfViewRadians)];
+    return @[
+        @(camera.position.x), @(camera.position.y), @(camera.position.z), @(camera.yaw),
+        @(camera.pitch), @(camera.verticalFieldOfViewRadians)
+    ];
 }
 
 - (BOOL)setCameraState:(NSArray<NSNumber*>*)values {
-    if (!_renderer || values.count != 6) return NO;
+    if (!_renderer || values.count != 6)
+        return NO;
     aether::metal::CameraSnapshot camera;
     camera.position = {values[0].floatValue, values[1].floatValue, values[2].floatValue};
     camera.yaw = values[3].floatValue;
@@ -67,7 +74,8 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 }
 
 - (BOOL)setPlaybackState:(NSArray<NSNumber*>*)values {
-    if (!_renderer || values.count != 4) return NO;
+    if (!_renderer || values.count != 4)
+        return NO;
     const NSInteger clip = values[0].integerValue;
     const std::optional<std::size_t> clipIndex =
         clip < 0 ? std::nullopt : std::optional<std::size_t>{static_cast<std::size_t>(clip)};
@@ -139,6 +147,26 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     for (const auto& name : _renderer->meshEntityNames())
         [names addObject:[NSString stringWithUTF8String:name.c_str()]];
     return names;
+}
+
+- (nullable NSArray<NSString*>*)attachDynamicMeshAtPath:(NSString*)path {
+    if (!_renderer)
+        return nil;
+    const auto result = _renderer->attachDynamicGltf(path.fileSystemRepresentation);
+    if (!result) {
+        NSLog(@"AETHER dynamic mesh attach failed: %s", result.error().describe().c_str());
+        return nil;
+    }
+    NSMutableArray<NSString*>* names = [NSMutableArray array];
+    for (const auto& name : _renderer->meshEntityNames())
+        [names addObject:[NSString stringWithUTF8String:name.c_str()]];
+    NSLog(@"AETHER dynamic mesh attached: %@", path.lastPathComponent);
+    return names;
+}
+
+- (void)detachDynamicMesh {
+    if (_renderer)
+        _renderer->detachDynamicGltf();
 }
 
 - (void)setCameraKey:(unichar)key active:(BOOL)active {
@@ -235,10 +263,11 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     }
     const auto& transform = snapshot->worldTransform;
     const simd_float4 rotation = transform.rotation.vector;
-    return @[@(transform.translation.x), @(transform.translation.y), @(transform.translation.z),
-             @(rotation.x), @(rotation.y), @(rotation.z), @(rotation.w),
-             @(transform.scale.x), @(transform.scale.y), @(transform.scale.z),
-             @(snapshot->overridden)];
+    return @[
+        @(transform.translation.x), @(transform.translation.y), @(transform.translation.z),
+        @(rotation.x), @(rotation.y), @(rotation.z), @(rotation.w), @(transform.scale.x),
+        @(transform.scale.y), @(transform.scale.z), @(snapshot->overridden)
+    ];
 }
 
 - (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values {
@@ -267,26 +296,32 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 
 - (NSArray<NSString*>*)materialNames {
     NSMutableArray<NSString*>* names = [NSMutableArray array];
-    if (!_renderer) return names;
+    if (!_renderer)
+        return names;
     for (const auto& material : _renderer->materialSnapshots())
         [names addObject:[NSString stringWithUTF8String:material.name.c_str()]];
     return names;
 }
 
 - (NSArray<NSNumber*>*)materialForId:(NSInteger)materialId {
-    if (!_renderer || materialId <= 0) return nil;
+    if (!_renderer || materialId <= 0)
+        return nil;
     const auto materials = _renderer->materialSnapshots();
-    if (static_cast<std::size_t>(materialId) > materials.size()) return nil;
+    if (static_cast<std::size_t>(materialId) > materials.size())
+        return nil;
     const auto& material = materials[static_cast<std::size_t>(materialId - 1)];
-    return @[@(material.baseColor.x), @(material.baseColor.y), @(material.baseColor.z),
-             @(material.baseColor.w), @(material.emissive.x), @(material.emissive.y),
-             @(material.emissive.z), @(material.metallic), @(material.roughness),
-             @(material.normalScale), @(material.occlusionStrength), @(material.alphaCutoff),
-             @(material.overridden)];
+    return @[
+        @(material.baseColor.x), @(material.baseColor.y), @(material.baseColor.z),
+        @(material.baseColor.w), @(material.emissive.x), @(material.emissive.y),
+        @(material.emissive.z), @(material.metallic), @(material.roughness),
+        @(material.normalScale), @(material.occlusionStrength), @(material.alphaCutoff),
+        @(material.overridden)
+    ];
 }
 
 - (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values {
-    if (!_renderer || materialId <= 0 || values.count != 12) return NO;
+    if (!_renderer || materialId <= 0 || values.count != 12)
+        return NO;
     aether::metal::MaterialSnapshot material;
     material.id = static_cast<std::uint32_t>(materialId);
     material.baseColor = {values[0].floatValue, values[1].floatValue, values[2].floatValue,
@@ -298,25 +333,31 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     material.occlusionStrength = values[10].floatValue;
     material.alphaCutoff = values[11].floatValue;
     const auto result = _renderer->setMaterialOverride(material);
-    if (!result) NSLog(@"AETHER material override failed: %s", result.error().describe().c_str());
+    if (!result)
+        NSLog(@"AETHER material override failed: %s", result.error().describe().c_str());
     return result.has_value();
 }
 
 - (BOOL)clearMaterialForId:(NSInteger)materialId {
-    if (!_renderer || materialId <= 0) return NO;
+    if (!_renderer || materialId <= 0)
+        return NO;
     const auto result = _renderer->clearMaterialOverride(static_cast<std::uint32_t>(materialId));
-    if (!result) NSLog(@"AETHER material reset failed: %s", result.error().describe().c_str());
+    if (!result)
+        NSLog(@"AETHER material reset failed: %s", result.error().describe().c_str());
     return result.has_value();
 }
 
 - (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights {
-    if (!_renderer || lights.count == 0 || lights.count > 4096) return NO;
+    if (!_renderer || lights.count == 0 || lights.count > 4096)
+        return NO;
     std::vector<aether::scene::Light> replacements;
     replacements.reserve(lights.count);
     for (NSArray<NSNumber*>* values in lights) {
-        if (values.count != 14) return NO;
+        if (values.count != 14)
+            return NO;
         const NSInteger type = values[0].integerValue;
-        if (type < 0 || type > 2) return NO;
+        if (type < 0 || type > 2)
+            return NO;
         aether::scene::Light light;
         light.type = static_cast<aether::scene::LightType>(type);
         light.position = {values[1].floatValue, values[2].floatValue, values[3].floatValue};
@@ -329,53 +370,65 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
         replacements.push_back(light);
     }
     const auto result = _renderer->setLights(std::move(replacements));
-    if (!result) NSLog(@"AETHER light replacement failed: %s", result.error().describe().c_str());
+    if (!result)
+        NSLog(@"AETHER light replacement failed: %s", result.error().describe().c_str());
     return result.has_value();
 }
 
 - (BOOL)setSelectedMeshEntity:(NSInteger)entityId {
-    if (!_renderer || entityId < 0) return NO;
+    if (!_renderer || entityId < 0)
+        return NO;
     return _renderer->setSelectedMeshEntity(static_cast<std::uint32_t>(entityId)).has_value();
 }
 
 - (NSInteger)pickGizmoAxisX:(NSUInteger)x y:(NSUInteger)y {
-    if (!_renderer) return 0;
-    const auto result = _renderer->pickGizmoAxis(static_cast<std::uint32_t>(x),
-                                                 static_cast<std::uint32_t>(y));
+    if (!_renderer)
+        return 0;
+    const auto result =
+        _renderer->pickGizmoAxis(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
     return result ? static_cast<NSInteger>(*result) : 0;
 }
 
 - (NSArray<NSNumber*>*)translateSelectedAxis:(NSInteger)axis distance:(float)distance {
-    if (!_renderer || axis < 1 || axis > 3) return nil;
+    if (!_renderer || axis < 1 || axis > 3)
+        return nil;
     const auto result =
         _renderer->translateSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance);
-    if (!result) return nil;
+    if (!result)
+        return nil;
     const auto& transform = result->worldTransform;
     const simd_float4 rotation = transform.rotation.vector;
-    return @[@(result->id), @(transform.translation.x), @(transform.translation.y),
-             @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z),
-             @(rotation.w), @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)];
+    return @[
+        @(result->id), @(transform.translation.x), @(transform.translation.y),
+        @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z), @(rotation.w),
+        @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)
+    ];
 }
 
 - (void)setGizmoMode:(NSInteger)mode {
-    if (_renderer) _renderer->setGizmoMode(static_cast<std::uint32_t>(std::clamp(mode, 0L, 2L)));
+    if (_renderer)
+        _renderer->setGizmoMode(static_cast<std::uint32_t>(std::clamp(mode, 0L, 2L)));
 }
 
-- (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis distance:(float)distance
-                                          mode:(NSInteger)mode {
-    if (!_renderer || axis < 1 || axis > 3) return nil;
+- (NSArray<NSNumber*>*)manipulateSelectedAxis:(NSInteger)axis
+                                     distance:(float)distance
+                                         mode:(NSInteger)mode {
+    if (!_renderer || axis < 1 || axis > 3)
+        return nil;
     aether::Result<aether::metal::MeshEntitySnapshot> result =
         mode == 1 ? _renderer->rotateSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance)
-                  : mode == 2
-                        ? _renderer->scaleSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance)
-                        : _renderer->translateSelectedMeshPixels(static_cast<std::uint32_t>(axis),
-                                                                 distance);
-    if (!result) return nil;
+        : mode == 2
+            ? _renderer->scaleSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance)
+            : _renderer->translateSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance);
+    if (!result)
+        return nil;
     const auto& transform = result->worldTransform;
     const simd_float4 rotation = transform.rotation.vector;
-    return @[@(result->id), @(transform.translation.x), @(transform.translation.y),
-             @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z),
-             @(rotation.w), @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)];
+    return @[
+        @(result->id), @(transform.translation.x), @(transform.translation.y),
+        @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z), @(rotation.w),
+        @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)
+    ];
 }
 @end
 
@@ -411,6 +464,7 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     MTKView* _metalView;
     AetherViewportDelegate* _rendererDelegate;
     NSString* _scenePath;
+    NSString* _dynamicMeshPath;
     NSInteger _gaussianDebugMode;
     NSInteger _shadowDebugMode;
     NSInteger _shadowDebugSlice;
@@ -470,7 +524,8 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     NSString* characters = event.charactersIgnoringModifiers.lowercaseString;
     if (characters.length > 0) {
         [_rendererDelegate setCameraKey:[characters characterAtIndex:0] active:NO];
-        if (self.onCameraChanged) self.onCameraChanged([_rendererDelegate cameraState]);
+        if (self.onCameraChanged)
+            self.onCameraChanged([_rendererDelegate cameraState]);
     } else {
         [super keyUp:event];
     }
@@ -500,12 +555,16 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
         return;
     }
     const NSString* sceneExtension = _scenePath.pathExtension.lowercaseString;
-    const BOOL gaussian = [sceneExtension isEqualToString:@"ply"] ||
-                          [sceneExtension isEqualToString:@"aether"];
-    const NSInteger entityId = gaussian ? [_rendererDelegate pickGaussianX:x y:y]
-                                        : [_rendererDelegate pickMeshX:x y:y];
+    const BOOL gaussian =
+        [sceneExtension isEqualToString:@"ply"] || [sceneExtension isEqualToString:@"aether"];
+    NSInteger entityId = [_rendererDelegate pickMeshX:x y:y];
+    BOOL pickedGaussian = NO;
+    if (entityId == 0 && gaussian) {
+        entityId = [_rendererDelegate pickGaussianX:x y:y];
+        pickedGaussian = entityId != 0;
+    }
     if (self.onEntityPicked)
-        self.onEntityPicked(entityId, gaussian);
+        self.onEntityPicked(entityId, pickedGaussian);
 }
 
 - (void)mouseDragged:(NSEvent*)event {
@@ -520,8 +579,9 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
         distance = static_cast<float>(-event.deltaY);
     else
         distance = static_cast<float>(event.deltaX - event.deltaY) * 0.7F;
-    NSArray<NSNumber*>* values =
-        [_rendererDelegate manipulateSelectedAxis:_activeGizmoAxis distance:distance mode:_gizmoMode];
+    NSArray<NSNumber*>* values = [_rendererDelegate manipulateSelectedAxis:_activeGizmoAxis
+                                                                  distance:distance
+                                                                      mode:_gizmoMode];
     if (values.count == 11 && self.onMeshTransformEdited)
         self.onMeshTransformEdited(values[0].integerValue,
                                    [values subarrayWithRange:NSMakeRange(1, 10)]);
@@ -534,12 +594,14 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (void)rightMouseDragged:(NSEvent*)event {
     [_rendererDelegate addCameraLookX:event.deltaX y:event.deltaY];
-    if (self.onCameraChanged) self.onCameraChanged([_rendererDelegate cameraState]);
+    if (self.onCameraChanged)
+        self.onCameraChanged([_rendererDelegate cameraState]);
 }
 
 - (void)scrollWheel:(NSEvent*)event {
     [_rendererDelegate addCameraDolly:event.scrollingDeltaY];
-    if (self.onCameraChanged) self.onCameraChanged([_rendererDelegate cameraState]);
+    if (self.onCameraChanged)
+        self.onCameraChanged([_rendererDelegate cameraState]);
 }
 
 - (NSString*)rendererStatus {
@@ -563,12 +625,16 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     [_rendererDelegate setGaussianDebugMode:value];
 }
 
-- (NSInteger)shadowDebugMode { return _shadowDebugMode; }
+- (NSInteger)shadowDebugMode {
+    return _shadowDebugMode;
+}
 - (void)setShadowDebugMode:(NSInteger)value {
     _shadowDebugMode = std::clamp(value, 0L, 2L);
     [_rendererDelegate setShadowDebugMode:_shadowDebugMode slice:_shadowDebugSlice];
 }
-- (NSInteger)shadowDebugSlice { return _shadowDebugSlice; }
+- (NSInteger)shadowDebugSlice {
+    return _shadowDebugSlice;
+}
 - (void)setShadowDebugSlice:(NSInteger)value {
     _shadowDebugSlice = MAX(0, value);
     [_rendererDelegate setShadowDebugMode:_shadowDebugMode slice:_shadowDebugSlice];
@@ -592,10 +658,37 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
         return;
     }
     _scenePath = [scenePath copy];
+    _dynamicMeshPath = nil;
     if (_scenePath.length == 0) {
         return;
     }
     NSArray<NSString*>* names = [_rendererDelegate loadSceneAtPath:_scenePath];
+    if (self.onMeshEntitiesChanged)
+        self.onMeshEntitiesChanged(names);
+    if (self.onMaterialsChanged)
+        self.onMaterialsChanged([_rendererDelegate materialNames]);
+}
+
+- (NSString*)dynamicMeshPath {
+    return _dynamicMeshPath;
+}
+
+- (void)setDynamicMeshPath:(NSString*)dynamicMeshPath {
+    if ((_dynamicMeshPath == dynamicMeshPath) || [_dynamicMeshPath isEqualToString:dynamicMeshPath])
+        return;
+    if (dynamicMeshPath.length == 0) {
+        [_rendererDelegate detachDynamicMesh];
+        _dynamicMeshPath = nil;
+        if (self.onMeshEntitiesChanged)
+            self.onMeshEntitiesChanged(@[]);
+        if (self.onMaterialsChanged)
+            self.onMaterialsChanged(@[]);
+        return;
+    }
+    NSArray<NSString*>* names = [_rendererDelegate attachDynamicMeshAtPath:dynamicMeshPath];
+    if (!names)
+        return;
+    _dynamicMeshPath = [dynamicMeshPath copy];
     if (self.onMeshEntitiesChanged)
         self.onMeshEntitiesChanged(names);
     if (self.onMaterialsChanged)
@@ -634,17 +727,23 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     return _selectedMeshEntity;
 }
 
-- (NSInteger)gizmoMode { return _gizmoMode; }
+- (NSInteger)gizmoMode {
+    return _gizmoMode;
+}
 - (void)setGizmoMode:(NSInteger)value {
     _gizmoMode = std::clamp(value, 0L, 2L);
     [_rendererDelegate setGizmoMode:_gizmoMode];
 }
 
-- (NSArray<NSNumber*>*)cameraState { return [_rendererDelegate cameraState]; }
+- (NSArray<NSNumber*>*)cameraState {
+    return [_rendererDelegate cameraState];
+}
 - (void)setCameraState:(NSArray<NSNumber*>*)values {
     [_rendererDelegate setCameraState:values];
 }
-- (NSArray<NSNumber*>*)playbackState { return @[]; }
+- (NSArray<NSNumber*>*)playbackState {
+    return @[];
+}
 - (void)setPlaybackState:(NSArray<NSNumber*>*)values {
     [_rendererDelegate setPlaybackState:values];
 }

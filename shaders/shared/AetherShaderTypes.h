@@ -22,6 +22,9 @@ using AetherUInt2 = simd_uint2;
 using AetherUInt4 = simd_uint4;
 #endif
 
+#define AETHER_MESH_ENTITY_ID_TAG 0x40000000u
+#define AETHER_MESH_ENTITY_ID_MASK 0x3fffffffu
+
 struct AetherFullscreenVertex {
     AetherFloat2 position;
     AetherFloat2 uv;

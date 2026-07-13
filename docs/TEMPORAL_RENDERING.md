@@ -53,4 +53,7 @@ incorrect alpha, and presentation regressions.
 
 Pipeline binary archives are keyed by the SHA-256 of the complete offline `.metallib`. Shader or ABI
 changes therefore create a new archive instead of asking Metal to deserialize an incompatible cached
-pipeline. Validation runs cover both first creation and subsequent loading of the keyed archive.
+pipeline. Archives are published through uniquely named temporary files plus a SHA-256 sidecar; an
+unverified or torn cache is ignored. Metal API/GPU validation deliberately starts from an empty
+archive because Apple's validation layer can crash while deserializing an otherwise recoverable
+cache. Normal runs cover both first creation and verified subsequent loading.

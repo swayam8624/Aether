@@ -12,10 +12,20 @@ zero for background. Gaussian scenes retain their existing source-ID target. The
 bridge routes clicks by loaded scene type without exposing Metal objects to Swift, and Studio keeps
 mesh and Gaussian selections distinct.
 
+Hybrid scenes reserve bit 30 in the shared scene-ID attachment for dynamic mesh entities. The
+renderer validates and removes this tag in `pickMesh`; untagged Gaussian source IDs return mesh ID
+zero. Studio tests tagged mesh selection first and falls through to Gaussian picking only when no
+dynamic entity is visible. Proxy IDs remain in their own attachment.
+
 After a successful mesh load, the engine publishes an immutable name array ordered by those same
 1-based IDs. Names come from the retained glTF scene nodes with deterministic `Entity N` fallbacks.
 The Objective-C++ bridge converts that snapshot to native strings, Gaussian loads clear it, and the
 SwiftUI outliner can select an entity without owning or mutating the engine scene graph.
+
+Project schema v4 may persist one dynamic glTF/GLB path beside a captured scene. Attach and replace
+retain Gaussian and proxy GPU state, while removal clears only dynamic entity, material, and
+animation state. Asset publication is transactional after complete glTF validation and upload
+preparation.
 
 The offscreen Metal fixture verifies that the visible center selects mesh entity 1, a background
 corner selects zero, and the entity snapshot is non-empty under API and shader validation.
@@ -72,7 +82,7 @@ degeneracy and overflow. Every edit uses the normal validated transform override
 persisted immediately in the project. The GPU integration fixture renders the gizmo, reads the X
 axis ID, applies and resets a drag, and rejects invalid axes under API and shader validation.
 
-Schema-v3 project documents generalize scene persistence beyond asset edits. They retain viewport
+Schema-v4 project documents generalize scene persistence beyond asset edits. They retain viewport
 exposure and diagnostic modes, transform-tool mode, stable editor selections, animation playback
 state, and camera position/yaw/pitch/vertical FOV alongside transforms, materials, and lights.
 Camera restore validates finite values and the supported perspective range, clears active movement,

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AetherViewport: NSViewRepresentable {
     let scenePath: String?
+    let dynamicMeshPath: String?
     @Binding var selectedGaussianId: Int?
     @Binding var selectedMeshId: Int?
     @Binding var selectedMeshTransform: AetherTransformOverride?
@@ -24,6 +25,7 @@ struct AetherViewport: NSViewRepresentable {
 
     final class Coordinator {
         var scenePath: String?
+        var dynamicMeshPath: String?
         var selectedMeshId: Int?
         var appliedOverrides: [String: AetherTransformOverride] = [:]
         var selectedMaterialId: Int?
@@ -60,10 +62,12 @@ struct AetherViewport: NSViewRepresentable {
                                        verticalFieldOfViewRadians: values[5].floatValue)
         }
         view.scenePath = scenePath
+        view.dynamicMeshPath = dynamicMeshPath
         applyOverrides(transformOverrides, to: view, previous: [:])
         applyMaterialOverrides(materialOverrides, to: view, previous: [:])
         applyLights(lights, to: view)
         context.coordinator.scenePath = scenePath
+        context.coordinator.dynamicMeshPath = dynamicMeshPath
         context.coordinator.appliedOverrides = transformOverrides
         context.coordinator.appliedMaterials = materialOverrides
         context.coordinator.appliedLights = lights
@@ -111,6 +115,10 @@ struct AetherViewport: NSViewRepresentable {
             context.coordinator.appliedCamera = camera
             nsView.playbackState = playback.values
             context.coordinator.appliedPlayback = playback
+        }
+        if context.coordinator.dynamicMeshPath != dynamicMeshPath {
+            nsView.dynamicMeshPath = dynamicMeshPath
+            context.coordinator.dynamicMeshPath = dynamicMeshPath
         }
         if context.coordinator.appliedOverrides != transformOverrides {
             applyOverrides(transformOverrides, to: nsView,

@@ -6,6 +6,7 @@ enum SwiftDocumentTests {
         let state = AetherProjectState(
             displayName: "Fixture",
             scenePath: "Scenes/fixture.aether",
+            dynamicMeshPath: "Assets/sphere.glb",
             selectedWorkspace: "Lighting",
             entityTransformOverrides: ["1": AetherTransformOverride(values: [1, 2, 3, 0, 0, 0, 1,
                                                                               -1, 2, 3])],
@@ -55,8 +56,9 @@ enum SwiftDocumentTests {
             {"schemaVersion":2,"displayName":"Prior","lights":[]}
             """.utf8)
         let migrated2 = try JSONDecoder().decode(AetherProjectState.self, from: schema2)
-        guard migrated2.schemaVersion == 3 && migrated2.lights == [.defaultSun] else {
-            throw TestFailure("Schema-2 project did not migrate to schema 3")
+        guard migrated2.schemaVersion == 4 && migrated2.lights == [.defaultSun] &&
+              migrated2.dynamicMeshPath == nil else {
+            throw TestFailure("Schema-2 project did not migrate to schema 4")
         }
         let hostile = Data("""
             {"schemaVersion":3,"viewport":{"exposureStops":99,"gizmoMode":9,
@@ -74,7 +76,7 @@ enum SwiftDocumentTests {
               normalized.playback.animationClip == nil && normalized.playback.seconds == 0 &&
               normalized.selection == AetherSelectionState() &&
               normalized.camera == AetherCameraState() else {
-            throw TestFailure("Schema-3 hostile editor state was not normalized")
+            throw TestFailure("Schema-3 hostile editor state was not normalized during migration")
         }
         guard AetherProjectDocument.readableContentTypes == [.aetherProject] else {
             throw TestFailure("AETHER project content type is not registered")

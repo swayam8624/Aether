@@ -8,11 +8,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @property(nonatomic) NSInteger preferredFramesPerSecond;
 @property(nonatomic, nullable, copy) NSString* scenePath;
+@property(nonatomic, nullable, copy) NSString* dynamicMeshPath;
 @property(nonatomic, nullable, copy) void (^onEntityPicked)(NSInteger entityId, BOOL gaussian);
 @property(nonatomic, nullable, copy) void (^onMeshEntitiesChanged)(NSArray<NSString*>* names);
 @property(nonatomic, nullable, copy) void (^onMaterialsChanged)(NSArray<NSString*>* names);
-@property(nonatomic, nullable, copy) void (^onMeshTransformEdited)(NSInteger entityId,
-                                                                   NSArray<NSNumber*>* values);
+@property(nonatomic, nullable, copy) void (^onMeshTransformEdited)
+    (NSInteger entityId, NSArray<NSNumber*>* values);
 @property(nonatomic, nullable, copy) void (^onCameraChanged)(NSArray<NSNumber*>* values);
 @property(nonatomic) NSInteger selectedMeshEntity;
 @property(nonatomic) NSInteger gizmoMode;
