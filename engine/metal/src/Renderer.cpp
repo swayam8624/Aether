@@ -241,7 +241,9 @@ void Renderer::draw(MTK::View* view) noexcept {
             meshWorldTransforms_ = *worldTransforms;
             for (auto& instance : meshInstances_) {
                 if (instance.nodeIndex >= worldTransforms->size()) continue;
-                instance.worldTransform = (*worldTransforms)[instance.nodeIndex];
+                instance.worldTransform = instance.transformOverride
+                                              ? instance.transformOverride->matrix()
+                                              : (*worldTransforms)[instance.nodeIndex];
                 const auto localCenter = meshPrimitives_[instance.primitiveIndex].localBoundsCenter;
                 const auto transformed = simd_mul(
                     instance.worldTransform,
@@ -1071,7 +1073,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             {transformed.x, transformed.y, transformed.z},
                                             simd_determinant(sourceInstance.worldTransform) < 0.0F,
                                             sourceInstance.nodeIndex, sourceInstance.skinIndex,
-                                            sourceInstance.morphWeights});
+                                            sourceInstance.morphWeights, std::nullopt});
     }
     meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);
@@ -1344,6 +1346,57 @@ std::vector<std::string> Renderer::meshEntityNames() const {
         names.push_back(std::move(name));
     }
     return names;
+}
+
+Result<MeshEntitySnapshot> Renderer::meshEntitySnapshot(std::uint32_t entityId) const {
+    if (entityId == 0 || entityId > meshInstances_.size())
+        return fail(ErrorCode::invalidArgument, "Mesh entity ID is out of range");
+    const auto& instance = meshInstances_[entityId - 1U];
+    auto transform = scene::decomposeTransform(instance.worldTransform);
+    if (!transform)
+        return fail(transform.error().code, "Mesh entity world transform is not editable",
+                    transform.error().describe());
+    const auto names = meshEntityNames();
+    return MeshEntitySnapshot{entityId, names[entityId - 1U], *transform,
+                              instance.transformOverride.has_value()};
+}
+
+Result<void> Renderer::setMeshEntityTransform(std::uint32_t entityId,
+                                              const scene::Transform& transform) {
+    if (entityId == 0 || entityId > meshInstances_.size())
+        return fail(ErrorCode::invalidArgument, "Mesh entity ID is out of range");
+    const float rotationLength = simd_length(transform.rotation.vector);
+    if (!scene::isFinite(transform) || !scene::hasNonZeroScale(transform) ||
+        !std::isfinite(rotationLength) || rotationLength < 1.0e-6F)
+        return fail(ErrorCode::invalidArgument, "Mesh entity transform is invalid");
+    scene::Transform normalized = transform;
+    normalized.rotation = simd_normalize(normalized.rotation);
+    auto& instance = meshInstances_[entityId - 1U];
+    instance.transformOverride = normalized;
+    instance.worldTransform = normalized.matrix();
+    const auto localCenter = meshPrimitives_[instance.primitiveIndex].localBoundsCenter;
+    const auto transformed = simd_mul(
+        instance.worldTransform, simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
+    instance.worldBoundsCenter = transformed.xyz;
+    instance.mirrored = simd_determinant(instance.worldTransform) < 0.0F;
+    temporalHistoryValid_ = false;
+    return {};
+}
+
+Result<void> Renderer::clearMeshEntityTransform(std::uint32_t entityId) {
+    if (entityId == 0 || entityId > meshInstances_.size())
+        return fail(ErrorCode::invalidArgument, "Mesh entity ID is out of range");
+    auto& instance = meshInstances_[entityId - 1U];
+    instance.transformOverride.reset();
+    if (instance.nodeIndex < meshWorldTransforms_.size())
+        instance.worldTransform = meshWorldTransforms_[instance.nodeIndex];
+    const auto localCenter = meshPrimitives_[instance.primitiveIndex].localBoundsCenter;
+    const auto transformed = simd_mul(
+        instance.worldTransform, simd_float4{localCenter.x, localCenter.y, localCenter.z, 1.0F});
+    instance.worldBoundsCenter = transformed.xyz;
+    instance.mirrored = simd_determinant(instance.worldTransform) < 0.0F;
+    temporalHistoryValid_ = false;
+    return {};
 }
 
 Result<void> Renderer::ensureSceneTargets(std::uint32_t width, std::uint32_t height) {

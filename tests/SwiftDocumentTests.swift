@@ -6,7 +6,9 @@ enum SwiftDocumentTests {
         let state = AetherProjectState(
             displayName: "Fixture",
             scenePath: "Scenes/fixture.aether",
-            selectedWorkspace: "Lighting"
+            selectedWorkspace: "Lighting",
+            entityTransformOverrides: ["1": AetherTransformOverride(values: [1, 2, 3, 0, 0, 0, 1,
+                                                                              -1, 2, 3])]
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -14,6 +16,15 @@ enum SwiftDocumentTests {
         let decoded = try JSONDecoder().decode(AetherProjectState.self, from: data)
         guard decoded == state else {
             throw TestFailure("AETHER project state did not round-trip")
+        }
+        let legacy = Data("""
+            {"schemaVersion":1,"displayName":"Legacy","scenePath":"old.gltf",
+             "selectedWorkspace":"Scene"}
+            """.utf8)
+        let migrated = try JSONDecoder().decode(AetherProjectState.self, from: legacy)
+        guard migrated.schemaVersion == AetherProjectState.currentSchemaVersion &&
+              migrated.entityTransformOverrides.isEmpty else {
+            throw TestFailure("Schema-1 project did not migrate to empty transform overrides")
         }
         guard AetherProjectDocument.readableContentTypes == [.aetherProject] else {
             throw TestFailure("AETHER project content type is not registered")

@@ -23,6 +23,9 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (NSInteger)pickMeshX:(NSUInteger)x y:(NSUInteger)y;
 - (void)setGaussianDebugMode:(NSInteger)mode;
 - (void)setExposureStops:(float)stops;
+- (NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;
+- (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values;
+- (BOOL)clearMeshTransformForEntity:(NSInteger)entityId;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -171,6 +174,46 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (void)setExposureStops:(float)stops {
     if (_renderer)
         _renderer->setExposureStops(stops);
+}
+
+- (NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId {
+    if (!_renderer || entityId <= 0)
+        return nil;
+    const auto snapshot = _renderer->meshEntitySnapshot(static_cast<std::uint32_t>(entityId));
+    if (!snapshot) {
+        NSLog(@"AETHER entity snapshot failed: %s", snapshot.error().describe().c_str());
+        return nil;
+    }
+    const auto& transform = snapshot->worldTransform;
+    const simd_float4 rotation = transform.rotation.vector;
+    return @[@(transform.translation.x), @(transform.translation.y), @(transform.translation.z),
+             @(rotation.x), @(rotation.y), @(rotation.z), @(rotation.w),
+             @(transform.scale.x), @(transform.scale.y), @(transform.scale.z),
+             @(snapshot->overridden)];
+}
+
+- (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values {
+    if (!_renderer || entityId <= 0 || values.count != 10)
+        return NO;
+    aether::scene::Transform transform;
+    transform.translation = {values[0].floatValue, values[1].floatValue, values[2].floatValue};
+    transform.rotation = simd_quaternion(values[3].floatValue, values[4].floatValue,
+                                         values[5].floatValue, values[6].floatValue);
+    transform.scale = {values[7].floatValue, values[8].floatValue, values[9].floatValue};
+    const auto result =
+        _renderer->setMeshEntityTransform(static_cast<std::uint32_t>(entityId), transform);
+    if (!result)
+        NSLog(@"AETHER entity transform failed: %s", result.error().describe().c_str());
+    return result.has_value();
+}
+
+- (BOOL)clearMeshTransformForEntity:(NSInteger)entityId {
+    if (!_renderer || entityId <= 0)
+        return NO;
+    const auto result = _renderer->clearMeshEntityTransform(static_cast<std::uint32_t>(entityId));
+    if (!result)
+        NSLog(@"AETHER entity transform reset failed: %s", result.error().describe().c_str());
+    return result.has_value();
 }
 @end
 
@@ -345,5 +388,17 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     NSArray<NSString*>* names = [_rendererDelegate loadSceneAtPath:_scenePath];
     if (self.onMeshEntitiesChanged)
         self.onMeshEntitiesChanged(names);
+}
+
+- (NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId {
+    return [_rendererDelegate meshTransformForEntity:entityId];
+}
+
+- (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values {
+    return [_rendererDelegate setMeshTransformForEntity:entityId values:values];
+}
+
+- (BOOL)clearMeshTransformForEntity:(NSInteger)entityId {
+    return [_rendererDelegate clearMeshTransformForEntity:entityId];
 }
 @end

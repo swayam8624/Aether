@@ -48,6 +48,13 @@ struct FrameCapture final {
     std::vector<std::byte> bgra8;
 };
 
+struct MeshEntitySnapshot final {
+    std::uint32_t id{};
+    std::string name;
+    scene::Transform worldTransform;
+    bool overridden{};
+};
+
 class Renderer final {
   public:
     static Result<std::unique_ptr<Renderer>> create(MTL::Device* device,
@@ -78,6 +85,10 @@ class Renderer final {
     [[nodiscard]] Result<std::uint32_t> pickMesh(std::uint32_t x, std::uint32_t y);
     /// Immutable names ordered by their 1-based mesh entity IDs.
     [[nodiscard]] std::vector<std::string> meshEntityNames() const;
+    [[nodiscard]] Result<MeshEntitySnapshot> meshEntitySnapshot(std::uint32_t entityId) const;
+    [[nodiscard]] Result<void> setMeshEntityTransform(std::uint32_t entityId,
+                                                      const scene::Transform& transform);
+    [[nodiscard]] Result<void> clearMeshEntityTransform(std::uint32_t entityId);
     void setCameraMovement(scene::CameraMove movement, bool active) noexcept;
     void addCameraLookDelta(float horizontalPixels, float verticalPixels) noexcept;
     void addCameraDolly(float amount) noexcept;
@@ -161,6 +172,7 @@ class Renderer final {
         std::size_t nodeIndex{};
         std::optional<std::size_t> skinIndex;
         std::vector<float> morphWeights;
+        std::optional<scene::Transform> transformOverride;
     };
     struct GpuTexture {
         MetalPtr<MTL::Texture> srgb;

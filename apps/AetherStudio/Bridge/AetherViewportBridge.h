@@ -12,6 +12,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, nullable, copy) void (^onMeshEntitiesChanged)(NSArray<NSString*>* names);
 @property(nonatomic) NSInteger gaussianDebugMode;
 @property(nonatomic) float exposureStops;
+- (nullable NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;
+- (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values;
+- (BOOL)clearMeshTransformForEntity:(NSInteger)entityId;
 @end
 
 /// Writes a privacy-minimized diagnostics JSON file. Returns NO and populates `error` on failure.

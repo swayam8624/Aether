@@ -26,3 +26,16 @@ Editor transform ingress uses a shared affine-decomposition contract. It extract
 unit rotation, and signed scale from finite column-major matrices while preserving mirrored X scale,
 and rejects perspective, degenerate axes, and shear rather than approximating them. Unit tests cover
 mirrored rotation/non-uniform-scale round trips and hostile shear input.
+
+Each mesh instance can carry an optional editor-owned world-TRS override without mutating the
+imported glTF graph. Animation evaluation uses the override when present; reset resumes the current
+source/animated world transform. Applying or clearing an override recomputes bounds and mirrored
+winding and invalidates temporal history. Zero IDs, non-finite values, degenerate scale, and zero
+quaternions are structured errors, while accepted quaternions are normalized.
+
+The bridge exposes transforms as fixed ten-number snapshots (translation, quaternion, scale), never
+as Metal or C++ objects. Studio's outliner opens an editable numeric transform inspector and writes
+changes into schema-v2 `.aetherproject` overrides keyed by stable entity ID. Overrides are reapplied
+after scene load, removed overrides reset the engine entity, importing a different scene clears old
+IDs, and schema-v1 documents migrate with an empty override map. Project and renderer tests cover
+round-trip persistence, v1 migration, apply/read/reset, invalid IDs, and mirrored decomposition.

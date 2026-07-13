@@ -220,6 +220,29 @@ int main() {
         pool->release();
         return 1;
     }
+    auto entitySnapshot = (*renderer)->meshEntitySnapshot(1);
+    if (!entitySnapshot) {
+        std::cerr << "Renderer did not expose an editable mesh entity snapshot\n";
+        pool->release();
+        return 1;
+    }
+    auto editedTransform = entitySnapshot->worldTransform;
+    editedTransform.translation.x += 0.25F;
+    if (!(*renderer)->setMeshEntityTransform(1, editedTransform)) {
+        std::cerr << "Renderer rejected a valid mesh transform override\n";
+        pool->release();
+        return 1;
+    }
+    entitySnapshot = (*renderer)->meshEntitySnapshot(1);
+    if (!entitySnapshot || !entitySnapshot->overridden ||
+        std::abs(entitySnapshot->worldTransform.translation.x - editedTransform.translation.x) >
+            1.0e-5F ||
+        !(*renderer)->clearMeshEntityTransform(1) ||
+        (*renderer)->setMeshEntityTransform(0, editedTransform)) {
+        std::cerr << "Mesh transform override lifecycle is inconsistent\n";
+        pool->release();
+        return 1;
+    }
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

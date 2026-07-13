@@ -79,6 +79,40 @@ private struct MeshOutliner: View {
     }
 }
 
+private struct MeshTransformInspector: View {
+    @Binding var transform: AetherTransformOverride
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("TRANSFORM").font(.caption.bold())
+            vectorRow("Position", bindings: [binding(\.translationX), binding(\.translationY),
+                                               binding(\.translationZ)])
+            vectorRow("Quaternion", bindings: [binding(\.rotationX), binding(\.rotationY),
+                                                 binding(\.rotationZ), binding(\.rotationW)])
+            vectorRow("Scale", bindings: [binding(\.scaleX), binding(\.scaleY), binding(\.scaleZ)])
+        }
+        .frame(width: 300)
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<AetherTransformOverride, Float>) -> Binding<Float> {
+        Binding(get: { transform[keyPath: keyPath] },
+                set: { transform[keyPath: keyPath] = $0 })
+    }
+
+    private func vectorRow(_ label: String, bindings: [Binding<Float>]) -> some View {
+        HStack(spacing: 5) {
+            Text(label).font(.caption).frame(width: 68, alignment: .leading)
+            ForEach(bindings.indices, id: \.self) { index in
+                TextField("", value: bindings[index], format: .number.precision(.fractionLength(3)))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: bindings.count == 4 ? 48 : 66)
+            }
+        }
+    }
+}
+
 struct ContentView: View {
     @Binding var document: AetherProjectDocument
     let projectURL: URL?
@@ -86,6 +120,7 @@ struct ContentView: View {
     @State private var selectedGaussianId: Int?
     @State private var selectedMeshId: Int?
     @State private var meshEntityNames: [String] = []
+    @State private var selectedMeshTransform: AetherTransformOverride?
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
@@ -139,7 +174,9 @@ struct ContentView: View {
                     AetherViewport(scenePath: resolvedScenePath,
                                    selectedGaussianId: $selectedGaussianId,
                                    selectedMeshId: $selectedMeshId,
+                                   selectedMeshTransform: $selectedMeshTransform,
                                    meshEntityNames: $meshEntityNames,
+                                   transformOverrides: document.state.entityTransformOverrides,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
@@ -166,10 +203,19 @@ struct ContentView: View {
                         }
                         .overlay(alignment: .topTrailing) {
                             if !meshEntityNames.isEmpty {
-                                MeshOutliner(names: meshEntityNames, selectedId: $selectedMeshId)
-                                    .onChange(of: selectedMeshId) { _, _ in
-                                        selectedGaussianId = nil
+                                VStack(alignment: .trailing, spacing: 8) {
+                                    MeshOutliner(names: meshEntityNames, selectedId: $selectedMeshId)
+                                    if selectedMeshId != nil && selectedMeshTransform != nil {
+                                        MeshTransformInspector(transform: selectedTransformBinding)
+                                        Button("Reset Transform", systemImage: "arrow.counterclockwise") {
+                                            guard let selectedMeshId else { return }
+                                            document.state.entityTransformOverrides.removeValue(
+                                                forKey: String(selectedMeshId))
+                                            undoManager?.setActionName("Reset Entity Transform")
+                                        }
                                     }
+                                }
+                                .onChange(of: selectedMeshId) { _, _ in selectedGaussianId = nil }
                             }
                         }
                 }
@@ -183,6 +229,7 @@ struct ContentView: View {
             selectedGaussianId = nil
             selectedMeshId = nil
             meshEntityNames = []
+            selectedMeshTransform = nil
         }
         .onAppear {
             selection = Workspace(rawValue: document.state.selectedWorkspace) ?? .scene
@@ -214,6 +261,7 @@ struct ContentView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         document.state.scenePath = url.path
         document.state.displayName = url.deletingPathExtension().lastPathComponent
+        document.state.entityTransformOverrides = [:]
     }
 
     private var resolvedScenePath: String? {
@@ -231,5 +279,16 @@ struct ContentView: View {
         case "gltf", "glb": return "MESH / PBR"
         default: return "AETHER VIEWPORT"
         }
+    }
+
+    private var selectedTransformBinding: Binding<AetherTransformOverride> {
+        Binding(
+            get: { selectedMeshTransform ?? AetherTransformOverride() },
+            set: { value in
+                selectedMeshTransform = value
+                guard let selectedMeshId else { return }
+                document.state.entityTransformOverrides[String(selectedMeshId)] = value
+                undoManager?.setActionName("Edit Entity Transform")
+            })
     }
 }
