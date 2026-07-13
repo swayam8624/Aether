@@ -52,7 +52,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   range windows, spot cones, and multi-light GGX accumulation.
 - [x] Bounded deterministic HDR equirectangular sampling, cosine irradiance convolution, GGX
   prefilter mips, split-sum BRDF LUT, cube/LUT Metal uploads, neutral fallbacks, and PBR IBL.
-- [ ] Shadows, TAA, bloom, and debug views.
+- [x] Practical directional cascade splits, bounded world-frustum slicing, stable texel-snapped
+  orthographic light matrices, Metal depth convention, and degeneracy validation.
+- [ ] Cascaded shadow depth rendering/PCF, local shadows, TAA, bloom, and debug views.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 
 ## Phase 3 — Standard Gaussian renderer

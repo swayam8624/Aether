@@ -19,6 +19,7 @@
 #include <aether/scene/Scene.hpp>
 #include <aether/scene/Lighting.hpp>
 #include <aether/scene/ImageBasedLighting.hpp>
+#include <aether/scene/Shadows.hpp>
 
 #include <array>
 #include <bit>
@@ -516,6 +517,46 @@ void testImageBasedLighting() {
            "IBL preprocessing rejects non-finite HDR pixels");
 }
 
+void testDirectionalShadows() {
+    aether::scene::Camera camera;
+    camera.nearPlane = 0.1F;
+    camera.infiniteFarPlane = true;
+    aether::scene::DirectionalShadowConfig config;
+    config.cascadeCount = 4;
+    config.resolution = 1024;
+    config.maximumDistance = 100.0F;
+    config.splitLambda = 0.7F;
+    const auto cascades = aether::scene::buildDirectionalShadowCascades(
+        camera, aether::scene::Transform::identity(), 16.0F / 9.0F,
+        simd_float3{-0.4F, -1.0F, -0.6F}, config);
+    expect(cascades.has_value(), "Directional shadow cascades build for perspective camera");
+    if (cascades) {
+        expect(cascades->splitDepths.size() == 4 &&
+                   cascades->worldToShadowClip.size() == 4,
+               "Directional shadow output count matches configured cascades");
+        expect(std::ranges::is_sorted(cascades->splitDepths) &&
+                   cascades->splitDepths.front() > camera.nearPlane &&
+                   std::abs(cascades->splitDepths.back() - 100.0F) < 1.0e-4F,
+               "Practical cascade splits are increasing and reach shadow distance");
+        expect(std::ranges::all_of(cascades->worldToShadowClip, [](const auto& matrix) {
+                   return std::isfinite(simd_determinant(matrix)) &&
+                          std::abs(simd_determinant(matrix)) > 1.0e-12F;
+               }),
+               "Directional shadow matrices are finite and invertible");
+    }
+    config.splitLambda = -0.1F;
+    expect(!aether::scene::buildDirectionalShadowCascades(
+                camera, aether::scene::Transform::identity(), 1.0F,
+                simd_float3{0.0F, -1.0F, 0.0F}, config).has_value(),
+           "Directional shadows reject invalid split distribution");
+    config.splitLambda = 0.5F;
+    config.cascadeCount = 9;
+    expect(!aether::scene::buildDirectionalShadowCascades(
+                camera, aether::scene::Transform::identity(), 1.0F,
+                simd_float3{0.0F, -1.0F, 0.0F}, config).has_value(),
+           "Directional shadows enforce bounded cascade count");
+}
+
 void testSha256() {
     constexpr std::string_view value = "abc";
     const auto bytes = std::as_bytes(std::span(value.data(), value.size()));
@@ -699,6 +740,7 @@ int main() {
     testMeshAnimation();
     testClusteredLighting();
     testImageBasedLighting();
+    testDirectionalShadows();
     testSha256();
     testAetherPackage();
     testGaussianPly();
