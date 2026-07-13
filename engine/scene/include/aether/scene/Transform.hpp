@@ -1,5 +1,7 @@
 #pragma once
 
+#include <aether/core/Error.hpp>
+
 #include <simd/simd.h>
 
 namespace aether::scene {
@@ -23,5 +25,8 @@ struct Transform final {
 
 [[nodiscard]] bool isFinite(const Transform& transform) noexcept;
 [[nodiscard]] bool hasNonZeroScale(const Transform& transform, float epsilon = 1.0e-6F) noexcept;
+/// Decomposes a finite affine matrix into editor TRS, rejecting perspective, shear, and degeneracy.
+[[nodiscard]] Result<Transform> decomposeTransform(simd_float4x4 matrix,
+                                                   float tolerance = 1.0e-4F);
 
 } // namespace aether::scene

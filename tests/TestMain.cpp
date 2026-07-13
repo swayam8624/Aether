@@ -181,6 +181,29 @@ void testSceneTransforms() {
     expect(scene.destroyEntity(parent).has_value(), "Entity destruction succeeds");
     expect(!scene.valid(parent), "Stale entity generation is invalidated");
     expect(scene.worldMatrix(child).has_value(), "Destroying a parent safely orphans its child");
+
+    aether::scene::Transform mirrored;
+    mirrored.translation = {1.0F, -2.0F, 3.0F};
+    mirrored.rotation = simd_quaternion(0.7F, simd_normalize(simd_float3{1.0F, 2.0F, 3.0F}));
+    mirrored.scale = {-2.0F, 3.0F, 0.5F};
+    const auto decomposed = aether::scene::decomposeTransform(mirrored.matrix());
+    expect(decomposed.has_value(), "Mirrored affine transform decomposes into editor TRS");
+    if (decomposed) {
+        const auto rebuilt = decomposed->matrix();
+        float maximumDifference = 0.0F;
+        for (std::size_t column = 0; column < 4; ++column)
+            for (std::size_t row = 0; row < 4; ++row)
+                maximumDifference = std::max(
+                    maximumDifference,
+                    std::abs(rebuilt.columns[column][row] -
+                             mirrored.matrix().columns[column][row]));
+        expect(maximumDifference < 1.0e-4F,
+               "Decomposed mirrored transform round-trips without matrix drift");
+    }
+    auto sheared = matrix_identity_float4x4;
+    sheared.columns[1].x = 0.25F;
+    expect(!aether::scene::decomposeTransform(sheared).has_value(),
+           "Editor TRS decomposition rejects shear instead of corrupting it");
 }
 
 void testCameraProjection() {

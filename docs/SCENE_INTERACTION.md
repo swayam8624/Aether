@@ -21,3 +21,8 @@ The offscreen Metal fixture verifies that the visible center selects mesh entity
 corner selects zero, and the entity snapshot is non-empty under API and shader validation.
 Transform gizmos and editable inspectors remain separate work; selection IDs now provide their
 renderer-facing anchor.
+
+Editor transform ingress uses a shared affine-decomposition contract. It extracts translation,
+unit rotation, and signed scale from finite column-major matrices while preserving mirrored X scale,
+and rejects perspective, degenerate axes, and shear rather than approximating them. Unit tests cover
+mirrored rotation/non-uniform-scale round trips and hostile shear input.

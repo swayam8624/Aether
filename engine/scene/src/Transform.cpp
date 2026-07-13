@@ -1,6 +1,7 @@
 #include <aether/scene/Transform.hpp>
 
 #include <cmath>
+#include <algorithm>
 
 namespace aether::scene {
 
@@ -29,6 +30,42 @@ bool isFinite(const Transform& transform) noexcept {
 bool hasNonZeroScale(const Transform& transform, float epsilon) noexcept {
     return std::abs(transform.scale.x) > epsilon && std::abs(transform.scale.y) > epsilon &&
            std::abs(transform.scale.z) > epsilon;
+}
+
+Result<Transform> decomposeTransform(simd_float4x4 matrix, float tolerance) {
+    if (!std::isfinite(tolerance) || tolerance <= 0.0F)
+        return fail(ErrorCode::invalidArgument, "Transform decomposition tolerance is invalid");
+    for (const auto column : matrix.columns)
+        for (std::size_t row = 0; row < 4; ++row)
+            if (!std::isfinite(column[row]))
+                return fail(ErrorCode::invalidArgument, "Transform matrix is not finite");
+    if (std::abs(matrix.columns[0].w) > tolerance ||
+        std::abs(matrix.columns[1].w) > tolerance ||
+        std::abs(matrix.columns[2].w) > tolerance ||
+        std::abs(matrix.columns[3].w - 1.0F) > tolerance)
+        return fail(ErrorCode::unsupported, "Transform matrix contains perspective");
+
+    simd_float3 basisX = matrix.columns[0].xyz;
+    simd_float3 basisY = matrix.columns[1].xyz;
+    simd_float3 basisZ = matrix.columns[2].xyz;
+    simd_float3 scale{simd_length(basisX), simd_length(basisY), simd_length(basisZ)};
+    if (scale.x <= tolerance || scale.y <= tolerance || scale.z <= tolerance)
+        return fail(ErrorCode::invalidArgument, "Transform matrix has degenerate scale");
+    if (simd_dot(simd_cross(basisX, basisY), basisZ) < 0.0F) scale.x = -scale.x;
+    basisX /= scale.x;
+    basisY /= scale.y;
+    basisZ /= scale.z;
+    const float orthogonality = std::max({std::abs(simd_dot(basisX, basisY)),
+                                          std::abs(simd_dot(basisX, basisZ)),
+                                          std::abs(simd_dot(basisY, basisZ))});
+    if (orthogonality > tolerance)
+        return fail(ErrorCode::unsupported, "Transform matrix contains shear");
+    const simd_float3x3 rotationMatrix{basisX, basisY, basisZ};
+    Transform result;
+    result.translation = matrix.columns[3].xyz;
+    result.rotation = simd_normalize(simd_quaternion(rotationMatrix));
+    result.scale = scale;
+    return result;
 }
 
 } // namespace aether::scene
