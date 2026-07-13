@@ -52,3 +52,11 @@ payloads, presents base RGBA, emissive, metallic, roughness, normal-scale, occlu
 cutoff controls, and stores only changed factors in the schema-v2 project. Persisted overrides are
 reapplied after load, reset restores the imported factors, and importing a new scene clears stale
 material IDs. Legacy projects migrate with an empty material override map.
+
+Lighting is a project-owned, ordered, non-empty list with a hard 4096-light editor/GPU ceiling.
+The renderer supports validated indexed edit, add, remove, and atomic whole-list replacement;
+removing the final light is rejected. Studio persists directional, point, and spot type, position,
+range, direction, linear color, intensity, and cone angles, with native add/remove and type-specific
+controls in the Lighting workspace. Legacy documents receive the same default sun as a fresh
+renderer, and every accepted mutation invalidates temporal history and rebuilds clustered lists on
+the next frame.

@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSArray<NSNumber*>*)materialForId:(NSInteger)materialId;
 - (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values;
 - (BOOL)clearMaterialForId:(NSInteger)materialId;
+- (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights;
 @end
 
 /// Writes a privacy-minimized diagnostics JSON file. Returns NO and populates `error` on failure.

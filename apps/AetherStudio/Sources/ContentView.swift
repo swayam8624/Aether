@@ -166,6 +166,64 @@ private struct MaterialInspector: View {
     }
 }
 
+private struct LightInspector: View {
+    @Binding var selectedId: Int
+    let count: Int
+    @Binding var light: AetherLightState
+    let add: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("LIGHTS").font(.caption.bold())
+                Spacer()
+                Button(action: add) { Image(systemName: "plus") }
+                Button(action: remove) { Image(systemName: "minus") }.disabled(count <= 1)
+            }
+            Picker("Light", selection: $selectedId) {
+                ForEach(1...max(count, 1), id: \.self) { id in Text("Light #\(id)").tag(id) }
+            }
+            Picker("Type", selection: $light.type) {
+                Text("Directional").tag(0); Text("Point").tag(1); Text("Spot").tag(2)
+            }
+            vectorRow("Position", [binding(\.positionX), binding(\.positionY), binding(\.positionZ)])
+            vectorRow("Direction", [binding(\.directionX), binding(\.directionY),
+                                     binding(\.directionZ)])
+            vectorRow("Color", [binding(\.colorRed), binding(\.colorGreen), binding(\.colorBlue)])
+            slider("Intensity", binding(\.intensity), 0...100)
+            if light.type != 0 { slider("Range", binding(\.range), 0.05...100) }
+            if light.type == 2 {
+                slider("Inner Cone", binding(\.innerConeRadians), 0.01...1.5)
+                slider("Outer Cone", binding(\.outerConeRadians), 0.02...1.56)
+            }
+        }
+        .frame(width: 320).padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<AetherLightState, Float>) -> Binding<Float> {
+        Binding(get: { light[keyPath: keyPath] }, set: { light[keyPath: keyPath] = $0 })
+    }
+    private func vectorRow(_ label: String, _ values: [Binding<Float>]) -> some View {
+        HStack(spacing: 4) {
+            Text(label).font(.caption).frame(width: 68, alignment: .leading)
+            ForEach(values.indices, id: \.self) { index in
+                TextField("", value: values[index], format: .number.precision(.fractionLength(3)))
+                    .textFieldStyle(.roundedBorder).frame(width: 68)
+            }
+        }
+    }
+    private func slider(_ label: String, _ value: Binding<Float>, _ range: ClosedRange<Float>) -> some View {
+        HStack {
+            Text(label).font(.caption).frame(width: 68, alignment: .leading)
+            Slider(value: value, in: range)
+            Text(value.wrappedValue.formatted(.number.precision(.fractionLength(2))))
+                .font(.caption2.monospacedDigit()).frame(width: 42)
+        }
+    }
+}
+
 struct ContentView: View {
     @Binding var document: AetherProjectDocument
     let projectURL: URL?
@@ -177,6 +235,7 @@ struct ContentView: View {
     @State private var materialNames: [String] = []
     @State private var selectedMaterialId: Int?
     @State private var selectedMaterial: AetherMaterialOverride?
+    @State private var selectedLightId = 1
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
@@ -237,6 +296,7 @@ struct ContentView: View {
                                    materialNames: $materialNames,
                                    transformOverrides: document.state.entityTransformOverrides,
                                    materialOverrides: document.state.materialOverrides,
+                                   lights: document.state.lights,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
@@ -262,7 +322,14 @@ struct ContentView: View {
                         }
                         }
                         .overlay(alignment: .topTrailing) {
-                            if selection == .materials && !materialNames.isEmpty {
+                            if selection == .lighting {
+                                LightInspector(selectedId: $selectedLightId,
+                                               count: document.state.lights.count,
+                                               light: selectedLightBinding,
+                                               add: addLight,
+                                               remove: removeSelectedLight)
+                                    .padding(12)
+                            } else if selection == .materials && !materialNames.isEmpty {
                                 VStack(alignment: .trailing, spacing: 8) {
                                     MaterialInspector(names: materialNames,
                                                       selectedId: $selectedMaterialId,
@@ -380,5 +447,35 @@ struct ContentView: View {
                 document.state.materialOverrides[String(selectedMaterialId)] = value
                 undoManager?.setActionName("Edit Material")
             })
+    }
+
+    private var selectedLightBinding: Binding<AetherLightState> {
+        Binding(
+            get: {
+                guard document.state.lights.indices.contains(selectedLightId - 1) else {
+                    return .defaultSun
+                }
+                return document.state.lights[selectedLightId - 1]
+            },
+            set: { value in
+                guard document.state.lights.indices.contains(selectedLightId - 1) else { return }
+                document.state.lights[selectedLightId - 1] = value
+                undoManager?.setActionName("Edit Light")
+            })
+    }
+
+    private func addLight() {
+        guard document.state.lights.count < 4096 else { return }
+        document.state.lights.append(.defaultPoint)
+        selectedLightId = document.state.lights.count
+        undoManager?.setActionName("Add Light")
+    }
+
+    private func removeSelectedLight() {
+        guard document.state.lights.count > 1,
+              document.state.lights.indices.contains(selectedLightId - 1) else { return }
+        document.state.lights.remove(at: selectedLightId - 1)
+        selectedLightId = min(selectedLightId, document.state.lights.count)
+        undoManager?.setActionName("Remove Light")
     }
 }

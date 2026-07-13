@@ -75,9 +75,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   persistence, reset behavior, and schema-v1 migration.
 - [x] Engine-owned material snapshots, bounded factor overrides/reset, SwiftUI material inspector,
   and project-persisted material overrides.
+- [x] Bounded directional/point/spot light mutation API and project-persisted SwiftUI light editor
+  with add/remove and type-specific controls.
 - [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
-- [ ] Light inspector, viewport transform gizmos, and generalized scene serialization.
+- [ ] Viewport transform gizmos and generalized scene serialization.
 
 ## Phase 3 — Standard Gaussian renderer
 

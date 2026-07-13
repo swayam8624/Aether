@@ -1136,12 +1136,42 @@ void Renderer::setExposureStops(float stops) noexcept {
 Result<void> Renderer::setLights(std::vector<scene::Light> lights) {
     if (lights.empty())
         return fail(ErrorCode::invalidArgument, "Renderer requires at least one light");
-    if (lights.size() > std::numeric_limits<std::uint32_t>::max())
-        return fail(ErrorCode::resourceExhausted, "Light count exceeds GPU representation");
+    constexpr std::size_t maximumLights = 4096;
+    if (lights.size() > maximumLights)
+        return fail(ErrorCode::resourceExhausted, "Light count exceeds the editor/GPU budget");
     for (const auto& light : lights)
         if (auto valid = scene::validateLight(light); !valid)
             return std::unexpected(valid.error());
     lights_ = std::move(lights);
+    temporalHistoryValid_ = false;
+    return {};
+}
+
+Result<void> Renderer::setLight(std::uint32_t lightId, const scene::Light& light) {
+    if (lightId == 0 || lightId > lights_.size())
+        return fail(ErrorCode::invalidArgument, "Light ID is out of range");
+    if (auto valid = scene::validateLight(light); !valid) return std::unexpected(valid.error());
+    lights_[lightId - 1U] = light;
+    temporalHistoryValid_ = false;
+    return {};
+}
+
+Result<std::uint32_t> Renderer::addLight(const scene::Light& light) {
+    constexpr std::size_t maximumLights = 4096;
+    if (lights_.size() >= maximumLights)
+        return fail(ErrorCode::resourceExhausted, "Light count exceeds the editor/GPU budget");
+    if (auto valid = scene::validateLight(light); !valid) return std::unexpected(valid.error());
+    lights_.push_back(light);
+    temporalHistoryValid_ = false;
+    return static_cast<std::uint32_t>(lights_.size());
+}
+
+Result<void> Renderer::removeLight(std::uint32_t lightId) {
+    if (lightId == 0 || lightId > lights_.size())
+        return fail(ErrorCode::invalidArgument, "Light ID is out of range");
+    if (lights_.size() == 1)
+        return fail(ErrorCode::invalidArgument, "Renderer requires at least one light");
+    lights_.erase(lights_.begin() + static_cast<std::ptrdiff_t>(lightId - 1U));
     temporalHistoryValid_ = false;
     return {};
 }

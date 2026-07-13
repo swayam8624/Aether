@@ -88,6 +88,10 @@ class Renderer final {
     [[nodiscard]] std::size_t animationClipCount() const noexcept;
     void setExposureStops(float stops) noexcept;
     [[nodiscard]] Result<void> setLights(std::vector<scene::Light> lights);
+    [[nodiscard]] const std::vector<scene::Light>& lights() const noexcept { return lights_; }
+    [[nodiscard]] Result<void> setLight(std::uint32_t lightId, const scene::Light& light);
+    [[nodiscard]] Result<std::uint32_t> addLight(const scene::Light& light);
+    [[nodiscard]] Result<void> removeLight(std::uint32_t lightId);
     [[nodiscard]] Result<void> setImageBasedLighting(
         const scene::ImageBasedLightingData& data, float intensity = 1.0F);
     [[nodiscard]] float exposureStops() const noexcept { return exposureStops_; }

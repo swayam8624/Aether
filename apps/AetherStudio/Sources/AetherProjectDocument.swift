@@ -14,24 +14,27 @@ struct AetherProjectState: Codable, Equatable {
     var selectedWorkspace = "Scene"
     var entityTransformOverrides: [String: AetherTransformOverride] = [:]
     var materialOverrides: [String: AetherMaterialOverride] = [:]
+    var lights: [AetherLightState] = [.defaultSun]
 
     init(schemaVersion: Int = currentSchemaVersion,
          displayName: String = "Untitled AETHER Project",
          scenePath: String? = nil,
          selectedWorkspace: String = "Scene",
          entityTransformOverrides: [String: AetherTransformOverride] = [:],
-         materialOverrides: [String: AetherMaterialOverride] = [:]) {
+         materialOverrides: [String: AetherMaterialOverride] = [:],
+         lights: [AetherLightState] = [.defaultSun]) {
         self.schemaVersion = schemaVersion
         self.displayName = displayName
         self.scenePath = scenePath
         self.selectedWorkspace = selectedWorkspace
         self.entityTransformOverrides = entityTransformOverrides
         self.materialOverrides = materialOverrides
+        self.lights = lights
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, displayName, scenePath, selectedWorkspace, entityTransformOverrides,
-             materialOverrides
+             materialOverrides, lights
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +55,34 @@ struct AetherProjectState: Codable, Equatable {
                                        forKey: .entityTransformOverrides) ?? [:]
         materialOverrides = try values.decodeIfPresent([String: AetherMaterialOverride].self,
                                                         forKey: .materialOverrides) ?? [:]
+        lights = try values.decodeIfPresent([AetherLightState].self, forKey: .lights) ?? [.defaultSun]
+        if lights.isEmpty { lights = [.defaultSun] }
+    }
+}
+
+struct AetherLightState: Codable, Equatable {
+    static let defaultSun = AetherLightState(type: 0, positionX: 0, positionY: 0, positionZ: 0,
+                                             range: 10, directionX: -0.4, directionY: -1,
+                                             directionZ: -0.6, colorRed: 1, colorGreen: 0.95,
+                                             colorBlue: 0.85, intensity: 4,
+                                             innerConeRadians: 0.35, outerConeRadians: 0.55)
+    static let defaultPoint = AetherLightState(type: 1, positionX: 0, positionY: 2, positionZ: 0,
+                                               range: 10, directionX: 0, directionY: -1,
+                                               directionZ: 0, colorRed: 1, colorGreen: 1,
+                                               colorBlue: 1, intensity: 10,
+                                               innerConeRadians: 0.35, outerConeRadians: 0.55)
+
+    var type: Int
+    var positionX, positionY, positionZ: Float
+    var range: Float
+    var directionX, directionY, directionZ: Float
+    var colorRed, colorGreen, colorBlue: Float
+    var intensity: Float
+    var innerConeRadians, outerConeRadians: Float
+
+    var values: [Float] {
+        [Float(type), positionX, positionY, positionZ, range, directionX, directionY, directionZ,
+         colorRed, colorGreen, colorBlue, intensity, innerConeRadians, outerConeRadians]
     }
 }
 

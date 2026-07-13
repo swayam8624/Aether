@@ -30,6 +30,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (NSArray<NSNumber*>*)materialForId:(NSInteger)materialId;
 - (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values;
 - (BOOL)clearMaterialForId:(NSInteger)materialId;
+- (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -263,6 +264,30 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     if (!result) NSLog(@"AETHER material reset failed: %s", result.error().describe().c_str());
     return result.has_value();
 }
+
+- (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights {
+    if (!_renderer || lights.count == 0 || lights.count > 4096) return NO;
+    std::vector<aether::scene::Light> replacements;
+    replacements.reserve(lights.count);
+    for (NSArray<NSNumber*>* values in lights) {
+        if (values.count != 14) return NO;
+        const NSInteger type = values[0].integerValue;
+        if (type < 0 || type > 2) return NO;
+        aether::scene::Light light;
+        light.type = static_cast<aether::scene::LightType>(type);
+        light.position = {values[1].floatValue, values[2].floatValue, values[3].floatValue};
+        light.range = values[4].floatValue;
+        light.direction = {values[5].floatValue, values[6].floatValue, values[7].floatValue};
+        light.color = {values[8].floatValue, values[9].floatValue, values[10].floatValue};
+        light.intensity = values[11].floatValue;
+        light.innerConeRadians = values[12].floatValue;
+        light.outerConeRadians = values[13].floatValue;
+        replacements.push_back(light);
+    }
+    const auto result = _renderer->setLights(std::move(replacements));
+    if (!result) NSLog(@"AETHER light replacement failed: %s", result.error().describe().c_str());
+    return result.has_value();
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -462,5 +487,9 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (BOOL)clearMaterialForId:(NSInteger)materialId {
     return [_rendererDelegate clearMaterialForId:materialId];
+}
+
+- (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights {
+    return [_rendererDelegate replaceLights:lights];
 }
 @end

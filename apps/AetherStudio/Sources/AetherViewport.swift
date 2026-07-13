@@ -12,6 +12,7 @@ struct AetherViewport: NSViewRepresentable {
     @Binding var materialNames: [String]
     let transformOverrides: [String: AetherTransformOverride]
     let materialOverrides: [String: AetherMaterialOverride]
+    let lights: [AetherLightState]
     let gaussianDebugMode: Int
     let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
@@ -22,6 +23,7 @@ struct AetherViewport: NSViewRepresentable {
         var appliedOverrides: [String: AetherTransformOverride] = [:]
         var selectedMaterialId: Int?
         var appliedMaterials: [String: AetherMaterialOverride] = [:]
+        var appliedLights: [AetherLightState] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -39,9 +41,11 @@ struct AetherViewport: NSViewRepresentable {
         view.scenePath = scenePath
         applyOverrides(transformOverrides, to: view, previous: [:])
         applyMaterialOverrides(materialOverrides, to: view, previous: [:])
+        applyLights(lights, to: view)
         context.coordinator.scenePath = scenePath
         context.coordinator.appliedOverrides = transformOverrides
         context.coordinator.appliedMaterials = materialOverrides
+        context.coordinator.appliedLights = lights
         view.gaussianDebugMode = gaussianDebugMode
         view.exposureStops = exposureStops
         return view
@@ -78,6 +82,10 @@ struct AetherViewport: NSViewRepresentable {
                 let snapshot = readMaterial(nsView, materialId: selectedMaterialId)
                 DispatchQueue.main.async { selectedMaterial = snapshot }
             }
+        }
+        if context.coordinator.appliedLights != lights {
+            applyLights(lights, to: nsView)
+            context.coordinator.appliedLights = lights
         }
         if context.coordinator.selectedMeshId != selectedMeshId {
             context.coordinator.selectedMeshId = selectedMeshId
@@ -134,5 +142,10 @@ struct AetherViewport: NSViewRepresentable {
             _ = view.setMaterialForId(materialId,
                                       values: material.values.map { NSNumber(value: $0) })
         }
+    }
+
+    private func applyLights(_ lights: [AetherLightState], to view: AetherViewportView) {
+        let payload = lights.map { light in light.values.map { NSNumber(value: $0) } }
+        _ = view.replaceLights(payload)
     }
 }

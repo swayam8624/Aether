@@ -105,6 +105,23 @@ int main() {
         pool->release();
         return 1;
     }
+    auto editedLight = (*renderer)->lights().front();
+    editedLight.intensity = 3.0F;
+    if (!(*renderer)->setLight(1, editedLight) || (*renderer)->setLight(0, editedLight) ||
+        !(*renderer)->setLight(1, pointLight)) {
+        std::cerr << "Renderer indexed light edit validation failed\n";
+        pool->release();
+        return 1;
+    }
+    aether::scene::Light extraLight;
+    extraLight.type = aether::scene::LightType::directional;
+    auto addedLight = (*renderer)->addLight(extraLight);
+    if (!addedLight || *addedLight != 3 || !(*renderer)->removeLight(3) ||
+        (*renderer)->removeLight(0)) {
+        std::cerr << "Renderer light add/remove lifecycle failed\n";
+        pool->release();
+        return 1;
+    }
     aether::scene::ImageBasedLightingData tinyIbl;
     tinyIbl.irradiance.size = 1;
     tinyIbl.irradiance.linearRgb.assign(6, simd_float3{0.1F, 0.1F, 0.1F});
