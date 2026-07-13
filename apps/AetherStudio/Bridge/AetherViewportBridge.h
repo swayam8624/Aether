@@ -15,6 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
                                                                    NSArray<NSNumber*>* values);
 @property(nonatomic) NSInteger selectedMeshEntity;
 @property(nonatomic) NSInteger gaussianDebugMode;
+@property(nonatomic) NSInteger shadowDebugMode;
+@property(nonatomic) NSInteger shadowDebugSlice;
 @property(nonatomic) float exposureStops;
 - (nullable NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;
 - (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values;

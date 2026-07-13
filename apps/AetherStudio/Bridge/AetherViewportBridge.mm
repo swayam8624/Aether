@@ -22,6 +22,7 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (NSInteger)pickGaussianX:(NSUInteger)x y:(NSUInteger)y;
 - (NSInteger)pickMeshX:(NSUInteger)x y:(NSUInteger)y;
 - (void)setGaussianDebugMode:(NSInteger)mode;
+- (void)setShadowDebugMode:(NSInteger)mode slice:(NSInteger)slice;
 - (void)setExposureStops:(float)stops;
 - (NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;
 - (BOOL)setMeshTransformForEntity:(NSInteger)entityId values:(NSArray<NSNumber*>*)values;
@@ -177,6 +178,12 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (void)setGaussianDebugMode:(NSInteger)mode {
     if (_renderer)
         _renderer->setGaussianDebugMode(static_cast<std::uint32_t>(MAX(0, mode)));
+}
+
+- (void)setShadowDebugMode:(NSInteger)mode slice:(NSInteger)slice {
+    if (_renderer)
+        _renderer->setShadowDebugMode(static_cast<std::uint32_t>(MAX(0, mode)),
+                                      static_cast<std::uint32_t>(MAX(0, slice)));
 }
 
 - (void)setExposureStops:(float)stops {
@@ -350,6 +357,8 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     AetherViewportDelegate* _rendererDelegate;
     NSString* _scenePath;
     NSInteger _gaussianDebugMode;
+    NSInteger _shadowDebugMode;
+    NSInteger _shadowDebugSlice;
     float _exposureStops;
     NSInteger _selectedMeshEntity;
     NSInteger _activeGizmoAxis;
@@ -493,6 +502,17 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 - (void)setGaussianDebugMode:(NSInteger)value {
     _gaussianDebugMode = value;
     [_rendererDelegate setGaussianDebugMode:value];
+}
+
+- (NSInteger)shadowDebugMode { return _shadowDebugMode; }
+- (void)setShadowDebugMode:(NSInteger)value {
+    _shadowDebugMode = std::clamp(value, 0L, 2L);
+    [_rendererDelegate setShadowDebugMode:_shadowDebugMode slice:_shadowDebugSlice];
+}
+- (NSInteger)shadowDebugSlice { return _shadowDebugSlice; }
+- (void)setShadowDebugSlice:(NSInteger)value {
+    _shadowDebugSlice = MAX(0, value);
+    [_rendererDelegate setShadowDebugMode:_shadowDebugMode slice:_shadowDebugSlice];
 }
 
 - (float)exposureStops {

@@ -893,14 +893,17 @@ void Renderer::draw(MTK::View* view) noexcept {
     presentationEncoder->setRenderPipelineState(viewportPipeline_.get());
     AetherPresentationUniforms presentation{};
     presentation.exposureStops = exposureStops_;
-    presentation.mode = 2U;
+    presentation.mode = shadowDebugMode_ == 0 ? 2U : 2U + shadowDebugMode_;
     presentation.bloomIntensity = bloomReady ? 0.08F : 0.0F;
+    presentation.padding1 = shadowDebugSlice_;
     presentationEncoder->setFragmentBytes(&presentation, sizeof(presentation), 0);
     presentationEncoder->setFragmentTexture(presentationSource, 0);
     presentationEncoder->setFragmentTexture(bloomReady ? bloomHalf_.get()
                                                         : fallbackWhiteTexture_.get(), 1);
     presentationEncoder->setFragmentTexture(bloomReady ? bloomQuarter_.get()
                                                         : fallbackWhiteTexture_.get(), 2);
+    presentationEncoder->setFragmentTexture(directionalShadowMap_.get(), 3);
+    presentationEncoder->setFragmentTexture(localShadowMap_.get(), 4);
     presentationEncoder->setFragmentSamplerState(temporalSampler_.get(), 0);
     presentationEncoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0),
                                         NS::UInteger(3));

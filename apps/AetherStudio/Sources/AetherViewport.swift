@@ -14,6 +14,8 @@ struct AetherViewport: NSViewRepresentable {
     let materialOverrides: [String: AetherMaterialOverride]
     let lights: [AetherLightState]
     let gaussianDebugMode: Int
+    let shadowDebugMode: Int
+    let shadowDebugSlice: Int
     let exposureStops: Float
     @AppStorage("preferredFramesPerSecond") private var preferredFramesPerSecond = 60
 
@@ -53,6 +55,8 @@ struct AetherViewport: NSViewRepresentable {
         context.coordinator.appliedMaterials = materialOverrides
         context.coordinator.appliedLights = lights
         view.gaussianDebugMode = gaussianDebugMode
+        view.shadowDebugMode = shadowDebugMode
+        view.shadowDebugSlice = shadowDebugSlice
         view.exposureStops = exposureStops
         return view
     }
@@ -111,6 +115,8 @@ struct AetherViewport: NSViewRepresentable {
             DispatchQueue.main.async { selectedMaterial = snapshot }
         }
         nsView.gaussianDebugMode = gaussianDebugMode
+        nsView.shadowDebugMode = shadowDebugMode
+        nsView.shadowDebugSlice = shadowDebugSlice
         nsView.exposureStops = exposureStops
         _ = nsView.rendererStatus
     }

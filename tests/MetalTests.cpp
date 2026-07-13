@@ -340,6 +340,23 @@ int main() {
         pool->release();
         return 1;
     }
+    for (const auto [mode, slice] :
+         {std::pair<std::uint32_t, std::uint32_t>{1U, 3U}, {2U, 11U}}) {
+        (*renderer)->setShadowDebugMode(mode, slice);
+        const auto completedBeforeDiagnostic = (*renderer)->statistics().completedFrames;
+        (*renderer)->draw(testView.get());
+        for (std::uint32_t attempt = 0;
+             attempt < 100 &&
+             (*renderer)->statistics().completedFrames <= completedBeforeDiagnostic;
+             ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if ((*renderer)->statistics().completedFrames <= completedBeforeDiagnostic) {
+            std::cerr << "Shadow diagnostic frame did not complete\n";
+            pool->release();
+            return 1;
+        }
+    }
+    (*renderer)->setShadowDebugMode(0U, 0U);
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

@@ -44,6 +44,20 @@ private enum GaussianDebugMode: Int, CaseIterable, Identifiable {
     }
 }
 
+private enum ShadowDebugMode: Int, CaseIterable, Identifiable {
+    case disabled
+    case directional
+    case local
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .disabled: "Final Image"
+        case .directional: "Directional Shadow"
+        case .local: "Local Shadow"
+        }
+    }
+}
+
 private struct MeshOutliner: View {
     let names: [String]
     @Binding var selectedId: Int?
@@ -237,6 +251,8 @@ struct ContentView: View {
     @State private var selectedMaterial: AetherMaterialOverride?
     @State private var selectedLightId = 1
     @State private var gaussianDebugMode: GaussianDebugMode = .appearance
+    @State private var shadowDebugMode: ShadowDebugMode = .disabled
+    @State private var shadowDebugSlice = 0
     @State private var exposureStops: Float = 0
     @Environment(\.undoManager) private var undoManager
     @AppStorage("showRendererDiagnostics") private var showRendererDiagnostics = true
@@ -298,6 +314,8 @@ struct ContentView: View {
                                    materialOverrides: document.state.materialOverrides,
                                    lights: document.state.lights,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
+                                   shadowDebugMode: shadowDebugMode.rawValue,
+                                   shadowDebugSlice: shadowDebugSlice,
                                    exposureStops: exposureStops)
                         .overlay(alignment: .topLeading) {
                         if showRendererDiagnostics {
@@ -392,6 +410,17 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                Picker("Shadow View", selection: $shadowDebugMode) {
+                    ForEach(ShadowDebugMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                if shadowDebugMode != .disabled {
+                    Stepper("Slice \(shadowDebugSlice)", value: $shadowDebugSlice,
+                            in: 0...(shadowDebugMode == .directional ? 3 : 11))
+                        .fixedSize()
+                }
             }
         }
     }

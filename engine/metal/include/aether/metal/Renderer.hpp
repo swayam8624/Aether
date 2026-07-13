@@ -16,6 +16,7 @@
 #include <MetalKit/MetalKit.hpp>
 
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <dispatch/dispatch.h>
@@ -122,6 +123,10 @@ class Renderer final {
     void clearCameraMovement() noexcept;
     void setGaussianDebugMode(std::uint32_t mode) noexcept {
         gaussianDebugMode_ = mode <= 4 ? mode : 0;
+    }
+    void setShadowDebugMode(std::uint32_t mode, std::uint32_t slice) noexcept {
+        shadowDebugMode_ = mode <= 2 ? mode : 0;
+        shadowDebugSlice_ = mode == 1 ? std::min(slice, 3U) : std::min(slice, 11U);
     }
     [[nodiscard]] const DeviceCapabilities& capabilities() const noexcept {
         return capabilities_;
@@ -253,6 +258,8 @@ class Renderer final {
     std::filesystem::path shaderLibraryPath_;
     scene::CameraController cameraController_;
     std::uint32_t gaussianDebugMode_{};
+    std::uint32_t shadowDebugMode_{};
+    std::uint32_t shadowDebugSlice_{};
     std::uint32_t selectedMeshEntity_{};
     Clock::TimePoint previousFrameTime_ = Clock::now();
 };

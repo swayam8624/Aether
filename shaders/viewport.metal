@@ -30,11 +30,25 @@ fragment float4 aetherViewportFragment(ViewportOutput input [[stage_in]],
                                        texture2d<float> sourceColor [[texture(0)]],
                                        texture2d<float> bloomHalf [[texture(1)]],
                                        texture2d<float> bloomQuarter [[texture(2)]],
+                                       depth2d_array<float> directionalShadows [[texture(3)]],
+                                       depth2d_array<float> localShadows [[texture(4)]],
                                        sampler linearSampler [[sampler(0)]]) {
     const float3 background = float3(0.025f + input.uv.x * 0.02f);
     if (presentation.mode == 0u)
         return float4(background, 1.0f);
     const uint2 pixel = uint2(input.position.xy);
+    if (presentation.mode == 3u) {
+        const uint2 dimensions(directionalShadows.get_width(), directionalShadows.get_height());
+        const uint2 shadowPixel = min(uint2(input.uv * float2(dimensions)), dimensions - 1u);
+        const float depth = directionalShadows.read(shadowPixel, presentation.padding1);
+        return float4(float3(depth), 1.0f);
+    }
+    if (presentation.mode == 4u) {
+        const uint2 dimensions(localShadows.get_width(), localShadows.get_height());
+        const uint2 shadowPixel = min(uint2(input.uv * float2(dimensions)), dimensions - 1u);
+        const float depth = localShadows.read(shadowPixel, presentation.padding1);
+        return float4(float3(depth), 1.0f);
+    }
     const float4 source = sourceColor.read(pixel);
     if (presentation.mode == 2u) {
         const float2 uv = (float2(pixel) + 0.5f) /

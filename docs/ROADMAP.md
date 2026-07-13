@@ -83,7 +83,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   readback validation.
 - [x] Previous-pose joint palettes and morph weights evaluated in morph-before-skin order for
   deforming motion vectors.
-- [ ] Gaussian temporal depth, shadow diagnostics, and
+- [x] Selectable directional-cascade and local-light shadow-map diagnostics in Studio.
+- [ ] Gaussian temporal depth and
   isolated PBR/shadow/Gaussian golden fixtures.
 - [ ] Rotation/scale gizmo modes and generalized scene serialization.
 
