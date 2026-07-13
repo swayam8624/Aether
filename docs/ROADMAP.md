@@ -107,7 +107,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Degree 0–3 GraphDECO-order spherical-harmonic appearance in CPU and Metal paths.
 - [x] Real GPU ID-target Gaussian picking bridged into SwiftUI source-ID selection.
 - [x] SwiftUI-selectable depth, source-ID, tile-occupancy, and accumulated-opacity GPU views.
-- [ ] Research/debug visualizations for ellipsoids, clusters, SH bands, and sort order.
+- [x] GPU visualizations for dominant-contributor SH degree and normalized per-tile sort rank.
+- [ ] Research/debug visualizations for ellipsoid geometry and future hierarchy clusters.
 
 ## Phase 4 — Fully local reconstruction
 

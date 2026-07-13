@@ -155,7 +155,9 @@ kernel void aetherGaussianProject(device const AetherGaussianGpu* gaussians [[bu
     output.color = float4(
         aetherEvaluateSphericalHarmonics(gaussians[index], camera.cameraWorldPosition.xyz), 1.0f);
     output.tileBounds = uint4(minimumTile, maximumTile);
-    output.sourceCountValid = uint4(index, overlap, 1, 0);
+    const uint restCount = uint(max(gaussian.logScaleRestCount.w, 0.0f));
+    const uint shDegree = restCount >= 45u ? 3u : restCount >= 24u ? 2u : restCount >= 9u ? 1u : 0u;
+    output.sourceCountValid = uint4(index, overlap, 1, shDegree);
     projected[index] = output;
     tileCounts[index] = overlap;
     atomic_fetch_add_explicit(&counters[0], 1, memory_order_relaxed);
@@ -439,6 +441,8 @@ kernel void aetherGaussianComposite(
     float depth = INFINITY;
     float dominant = 0.0f;
     uint sourceId = 0;
+    uint dominantShDegree = 0;
+    float dominantSortRank = 0.0f;
     if (range.x != 0xffffffffu) {
         for (uint entry = range.x; entry < range.y; ++entry) {
             const AetherProjectedGaussian gaussian = projected[sortedValues[entry]];
@@ -459,6 +463,10 @@ kernel void aetherGaussianComposite(
             if (contribution > dominant) {
                 dominant = contribution;
                 sourceId = gaussian.sourceCountValid.x + 1;
+                dominantShDegree = gaussian.sourceCountValid.w;
+                dominantSortRank = range.y - range.x <= 1u
+                                       ? 0.0f
+                                       : float(entry - range.x) / float(range.y - range.x - 1u);
             }
             if (opacity > 0.999f) {
                 atomic_fetch_add_explicit(&counters[3], 1, memory_order_relaxed);
@@ -492,6 +500,26 @@ kernel void aetherGaussianComposite(
         opacity = 1.0f;
     } else if (debugMode == 4) {
         color = opacity;
+        opacity = 1.0f;
+    } else if (debugMode == 5) {
+        if (sourceId == 0u)
+            color = float3(0.0f);
+        else if (dominantShDegree == 0u)
+            color = float3(0.15f, 0.25f, 1.0f);
+        else if (dominantShDegree == 1u)
+            color = float3(0.1f, 0.9f, 0.35f);
+        else if (dominantShDegree == 2u)
+            color = float3(1.0f, 0.75f, 0.1f);
+        else
+            color = float3(1.0f, 0.15f, 0.1f);
+        opacity = 1.0f;
+    } else if (debugMode == 6) {
+        const float rank = dominantSortRank;
+        color = sourceId == 0u
+                    ? float3(0.0f)
+                    : clamp(float3(1.5f - abs(4.0f * rank - 3.0f),
+                                   1.5f - abs(4.0f * rank - 2.0f),
+                                   1.5f - abs(4.0f * rank - 1.0f)), 0.0f, 1.0f);
         opacity = 1.0f;
     }
     colorTarget.write(float4(color, opacity), pixel);

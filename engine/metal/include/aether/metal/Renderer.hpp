@@ -138,7 +138,7 @@ class Renderer final {
     [[nodiscard]] CameraSnapshot cameraSnapshot() const noexcept;
     [[nodiscard]] Result<void> setCameraSnapshot(const CameraSnapshot& camera);
     void setGaussianDebugMode(std::uint32_t mode) noexcept {
-        gaussianDebugMode_ = mode <= 4 ? mode : 0;
+        gaussianDebugMode_ = mode <= 6 ? mode : 0;
     }
     void setShadowDebugMode(std::uint32_t mode, std::uint32_t slice) noexcept {
         shadowDebugMode_ = mode <= 2 ? mode : 0;

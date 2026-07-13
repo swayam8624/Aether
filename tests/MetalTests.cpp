@@ -704,6 +704,28 @@ int main() {
         pool->release();
         return 1;
     }
+    for (const std::uint32_t debugMode : {5U, 6U}) {
+        camera.debugOptions.x = debugMode;
+        MTL::CommandBuffer* visualizationCommand = queue->commandBuffer();
+        if (!visualizationCommand ||
+            !(*gaussianPipeline)
+                 ->encode(visualizationCommand, camera, color.get(), depth.get(), ids.get())) {
+            std::cerr << "Unable to encode Gaussian representation visualization\n";
+            pool->release();
+            return 1;
+        }
+        visualizationCommand->commit();
+        visualizationCommand->waitUntilCompleted();
+        color->getBytes(colorPixels.data(), width * sizeof(simd_float4), region, 0);
+        const simd_float4 visualization = colorPixels[center];
+        const bool expected = debugMode == 5U ? visualization.y > 0.8F
+                                              : visualization.z > 0.4F;
+        if (visualization.w != 1.0F || !expected) {
+            std::cerr << "Gaussian SH-band/sort-rank visualization is incorrect\n";
+            pool->release();
+            return 1;
+        }
+    }
     camera.debugOptions.x = 0;
 
     auto multiBlockAsset = *gaussianAsset;

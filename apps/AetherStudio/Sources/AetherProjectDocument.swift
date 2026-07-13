@@ -76,7 +76,7 @@ struct AetherProjectState: Codable, Equatable {
         viewport.exposureStops = viewport.exposureStops.isFinite
             ? min(16, max(-16, viewport.exposureStops)) : 0
         viewport.gizmoMode = min(2, max(0, viewport.gizmoMode))
-        viewport.gaussianDebugMode = min(4, max(0, viewport.gaussianDebugMode))
+        viewport.gaussianDebugMode = min(6, max(0, viewport.gaussianDebugMode))
         viewport.shadowDebugMode = min(2, max(0, viewport.shadowDebugMode))
         viewport.shadowDebugSlice = min(viewport.shadowDebugMode == 1 ? 3 : 11,
                                         max(0, viewport.shadowDebugSlice))

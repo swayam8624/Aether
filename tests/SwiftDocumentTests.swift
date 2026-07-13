@@ -68,7 +68,7 @@ enum SwiftDocumentTests {
             """.utf8)
         let normalized = try JSONDecoder().decode(AetherProjectState.self, from: hostile)
         guard normalized.viewport.exposureStops == 16 && normalized.viewport.gizmoMode == 2 &&
-              normalized.viewport.gaussianDebugMode == 4 &&
+              normalized.viewport.gaussianDebugMode == 6 &&
               normalized.viewport.shadowDebugMode == 2 &&
               normalized.viewport.shadowDebugSlice == 11 &&
               normalized.playback.animationClip == nil && normalized.playback.seconds == 0 &&

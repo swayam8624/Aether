@@ -31,6 +31,8 @@ private enum GaussianDebugMode: Int, CaseIterable, Identifiable {
     case sourceIds
     case tileOccupancy
     case opacity
+    case shBands
+    case sortRank
 
     var id: Int { rawValue }
     var label: String {
@@ -40,6 +42,8 @@ private enum GaussianDebugMode: Int, CaseIterable, Identifiable {
         case .sourceIds: "Source IDs"
         case .tileOccupancy: "Tile Occupancy"
         case .opacity: "Opacity"
+        case .shBands: "SH Bands"
+        case .sortRank: "Sort Rank"
         }
     }
 }
