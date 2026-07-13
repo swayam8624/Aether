@@ -354,6 +354,15 @@ void Renderer::draw(MTK::View* view) noexcept {
             uniforms.lightDirectionIntensity = {-0.4F, -1.0F, -0.6F, 4.0F};
             uniforms.lightColorExposure = {1.0F, 0.95F, 0.85F, 0.0F};
             {
+                std::optional<scene::DirectionalShadowCascades> shadowCascades;
+                for (const auto& light : lights_) {
+                    if (light.type != scene::LightType::directional) continue;
+                    auto built = scene::buildDirectionalShadowCascades(
+                        camera, cameraTransform, aspect, light.direction, shadowConfig_);
+                    if (built) shadowCascades = std::move(*built);
+                    else Log::instance().write(LogLevel::error, built.error().describe());
+                    break;
+                }
                 scene::ClusterGridConfig clusterConfig;
                 clusterConfig.nearDepth = camera.nearPlane;
                 clusterConfig.farDepth = camera.infiniteFarPlane ? 10'000.0F : camera.farPlane;
@@ -432,10 +441,18 @@ void Renderer::draw(MTK::View* view) noexcept {
                 encoder->setFragmentTexture(brdfLutTexture_.get(), 7);
                 encoder->setFragmentSamplerState(environmentSampler_.get(), 5);
                 AetherShadowUniforms shadowUniforms{};
-                for (auto& matrix : shadowUniforms.worldToShadow)
-                    matrix = matrix_identity_float4x4;
+                for (auto& matrix : shadowUniforms.worldToShadow) matrix = matrix_identity_float4x4;
                 shadowUniforms.splitDepths = {10'000.0F, 10'000.0F, 10'000.0F, 10'000.0F};
-                shadowUniforms.biasNormalCascadeCount = {0.001F, 0.0F, 1.0F, 0.0F};
+                std::uint32_t activeCascades = 1;
+                if (shadowCascades) {
+                    activeCascades = static_cast<std::uint32_t>(shadowCascades->splitDepths.size());
+                    for (std::size_t index = 0; index < shadowCascades->worldToShadowClip.size(); ++index) {
+                        shadowUniforms.worldToShadow[index] = shadowCascades->worldToShadowClip[index];
+                        shadowUniforms.splitDepths[index] = shadowCascades->splitDepths[index];
+                    }
+                }
+                shadowUniforms.biasNormalCascadeCount = {0.001F, 0.01F,
+                                                         static_cast<float>(activeCascades), 0.0F};
                 encoder->setFragmentBytes(&shadowUniforms, sizeof(shadowUniforms), 8);
                 encoder->setFragmentTexture(directionalShadowMap_.get(), 8);
                 encoder->setFragmentSamplerState(shadowComparisonSampler_.get(), 6);
