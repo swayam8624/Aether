@@ -8,7 +8,7 @@ brush=${5:?missing Brush mock}
 proxy=${6:?missing proxy mock}
 rm ${output}/proxy/proxy.json
 ${reconstruct} ${dataset} --output ${output} --colmap ${colmap} --brush ${brush} \
-  --proxy ${proxy} --seed 42 --steps 10 --json >/dev/null
+  --proxy ${proxy} --seed 42 --steps 10 --checkpoint-every 5 --json >/dev/null
 [[ -f ${output}/proxy/proxy.ply ]]
 [[ -f ${output}/proxy/proxy.json ]]
 [[ -f ${output}/proxy-generation.complete ]]

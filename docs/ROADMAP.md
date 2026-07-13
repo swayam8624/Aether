@@ -125,7 +125,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Pinned Open3D 0.19 proxy tool with bounded COLMAP parsing, deterministic Poisson reconstruction,
   cleanup/decimation budgets, atomic hashed provenance, locked environment, and isolated tests.
 - [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
-- [ ] Checkpoint recovery and training comparison views.
+- [x] Strict Brush milestone validation, torn-checkpoint fallback, geometry-state resume, stable final
+  export, and explicit optimizer-state limitation in provenance.
+- [ ] Training comparison views.
 
 ## Phase 5 — Hybrid worlds
 

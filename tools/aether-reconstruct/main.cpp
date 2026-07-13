@@ -1,4 +1,5 @@
 #include <aether/core/Error.hpp>
+#include <aether/gaussian/PlyLoader.hpp>
 #include <aether/package/Sha256.hpp>
 #include <aether/reconstruction/SparseModelValidator.hpp>
 
@@ -18,10 +19,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +49,7 @@ struct Options final {
     std::filesystem::path proxyConfig;
     std::uint32_t seed{42};
     std::uint32_t steps{30'000};
+    std::uint32_t checkpointEvery{5'000};
     bool json{};
     bool dryRun{};
 };
@@ -62,6 +66,45 @@ struct InputImage final {
     std::uintmax_t bytes{};
     std::string sha256;
 };
+
+struct CheckpointRecovery final {
+    std::filesystem::path path;
+    std::uint32_t iteration{};
+    std::size_t rejectedNewerCheckpoints{};
+};
+
+aether::Result<InputImage> hashInputImage(const std::filesystem::path& path,
+                                          const std::filesystem::path& root);
+
+void hashText(aether::package::Sha256& hash, std::string_view text) {
+    hash.update(
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(text.data()), text.size()));
+    constexpr std::array separator{std::byte{0}};
+    hash.update(separator);
+}
+
+aether::Result<std::string> jobFingerprint(const Options& options,
+                                           const std::vector<InputImage>& inputs) {
+    aether::package::Sha256 hash;
+    hashText(hash, "aether-reconstruction-resume-v1");
+    hashText(hash, std::to_string(options.seed));
+    hashText(hash, std::to_string(options.steps));
+    hashText(hash, std::to_string(options.checkpointEvery));
+    for (const auto& input : inputs) {
+        hashText(hash, input.path.generic_string());
+        hashText(hash, std::to_string(input.bytes));
+        hashText(hash, input.sha256);
+    }
+    if (!options.proxyConfig.empty()) {
+        auto config = hashInputImage(options.proxyConfig, options.proxyConfig.parent_path());
+        if (!config)
+            return std::unexpected(config.error());
+        hashText(hash, config->sha256);
+    } else {
+        hashText(hash, "default-proxy-config-v1");
+    }
+    return aether::package::Sha256::hex(hash.finalize());
+}
 
 std::string escapeJson(std::string_view value) {
     std::string result;
@@ -101,7 +144,7 @@ int usage() {
     std::cout << "Usage: aether-reconstruct <dataset> --output <job-directory> "
                  "[--trainer brush] [--colmap PATH] [--brush PATH] [--proxy PATH] "
                  "[--proxy-config FILE] [--seed 42] "
-                 "[--steps 30000] [--dry-run] [--json]\n";
+                 "[--steps 30000] [--checkpoint-every 5000] [--dry-run] [--json]\n";
     return 0;
 }
 
@@ -152,7 +195,7 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
         };
         if (argument == "--output" || argument == "--colmap" || argument == "--brush" ||
             argument == "--proxy" || argument == "--proxy-config" || argument == "--trainer" ||
-            argument == "--seed" || argument == "--steps") {
+            argument == "--seed" || argument == "--steps" || argument == "--checkpoint-every") {
             auto supplied = value();
             if (!supplied)
                 return std::nullopt;
@@ -169,7 +212,8 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
             else if (argument == "--trainer" && *supplied != "brush") {
                 exitCode = fail("Only the pinned Brush adapter is supported", options.json);
                 return std::nullopt;
-            } else if (argument == "--seed" || argument == "--steps") {
+            } else if (argument == "--seed" || argument == "--steps" ||
+                       argument == "--checkpoint-every") {
                 auto number = parsePositive(*supplied);
                 if (!number) {
                     exitCode = fail("Seed/step value is invalid", options.json);
@@ -177,8 +221,10 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
                 }
                 if (argument == "--seed")
                     options.seed = *number;
-                else
+                else if (argument == "--steps")
                     options.steps = *number;
+                else
+                    options.checkpointEvery = *number;
             }
         } else if (!argument.empty() && argument.front() == '-') {
             exitCode = fail("Unknown option: " + std::string(argument), options.json);
@@ -195,6 +241,126 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
         return std::nullopt;
     }
     return options;
+}
+
+std::string checkpointName(std::uint32_t iteration, std::uint32_t totalSteps) {
+    const auto digits = std::to_string(totalSteps).size();
+    std::ostringstream name;
+    name << "checkpoint_" << std::setw(static_cast<int>(digits)) << std::setfill('0') << iteration
+         << ".ply";
+    return name.str();
+}
+
+std::optional<std::uint32_t> checkpointIteration(const std::filesystem::path& path,
+                                                 std::uint32_t maximumIteration) {
+    const std::string name = path.filename().string();
+    constexpr std::string_view prefix = "checkpoint_";
+    constexpr std::string_view suffix = ".ply";
+    if (!name.starts_with(prefix) || !name.ends_with(suffix))
+        return std::nullopt;
+    const std::string_view digits(name.data() + prefix.size(),
+                                  name.size() - prefix.size() - suffix.size());
+    std::uint32_t iteration{};
+    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), iteration);
+    if (digits.empty() || parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() ||
+        iteration == 0 || iteration > maximumIteration)
+        return std::nullopt;
+    return iteration;
+}
+
+aether::Result<std::optional<CheckpointRecovery>>
+findLatestCheckpoint(const std::filesystem::path& directory, std::uint32_t maximumIteration) {
+    std::error_code error;
+    if (!std::filesystem::exists(directory, error))
+        return std::optional<CheckpointRecovery>{};
+    std::vector<std::pair<std::uint32_t, std::filesystem::path>> candidates;
+    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+        if (!entry.is_regular_file())
+            continue;
+        if (auto iteration = checkpointIteration(entry.path(), maximumIteration))
+            candidates.emplace_back(*iteration, entry.path());
+    }
+    if (error)
+        return aether::fail(aether::ErrorCode::io, "Unable to enumerate Brush checkpoints",
+                            error.message());
+    std::ranges::sort(candidates, std::greater{}, &decltype(candidates)::value_type::first);
+    std::size_t rejected = 0;
+    for (const auto& [iteration, path] : candidates) {
+        auto validated = aether::gaussian::PlyLoader::load(path);
+        if (validated)
+            return std::optional<CheckpointRecovery>{CheckpointRecovery{path, iteration, rejected}};
+        ++rejected;
+    }
+    return std::optional<CheckpointRecovery>{};
+}
+
+aether::Result<void> atomicCopy(const std::filesystem::path& source,
+                                const std::filesystem::path& destination) {
+    const auto temporary = destination.string() + ".tmp";
+    std::ifstream input(source, std::ios::binary);
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    std::array<char, 1U * 1024U * 1024U> buffer{};
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        if (input.gcount() > 0)
+            output.write(buffer.data(), input.gcount());
+    }
+    output.close();
+    if (!input.eof() || !output) {
+        std::filesystem::remove(temporary);
+        return aether::fail(aether::ErrorCode::io, "Unable to copy Brush checkpoint",
+                            source.string());
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, destination, error);
+    if (error) {
+        std::filesystem::remove(temporary);
+        return aether::fail(aether::ErrorCode::io, "Unable to finalize Brush checkpoint copy",
+                            error.message());
+    }
+    return {};
+}
+
+aether::Result<void> ensureResumeKey(const std::filesystem::path& outputDirectory,
+                                     std::string_view fingerprint) {
+    const auto path = outputDirectory / "resume-key.txt";
+    std::error_code error;
+    if (std::filesystem::exists(path, error)) {
+        std::ifstream stream(path);
+        std::string existing;
+        std::string extra;
+        if (!std::getline(stream, existing) || existing.size() != 64 || std::getline(stream, extra))
+            return aether::fail(aether::ErrorCode::corruptData,
+                                "Reconstruction resume key is malformed", path.string());
+        if (existing != fingerprint)
+            return aether::fail(
+                aether::ErrorCode::unsupported,
+                "Reconstruction inputs or settings changed; choose a new job directory");
+        return {};
+    }
+    if (error)
+        return aether::fail(aether::ErrorCode::io, "Unable to inspect reconstruction resume key",
+                            error.message());
+    if (std::filesystem::exists(outputDirectory / "job.json"))
+        return aether::fail(aether::ErrorCode::unsupported,
+                            "Existing reconstruction job predates safe resume fingerprints; choose "
+                            "a new job directory");
+    const auto temporary = path.string() + ".tmp";
+    std::ofstream stream(temporary, std::ios::trunc);
+    stream << fingerprint << '\n';
+    stream.close();
+    if (!stream) {
+        std::filesystem::remove(temporary);
+        return aether::fail(aether::ErrorCode::io, "Unable to write reconstruction resume key",
+                            path.string());
+    }
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        std::filesystem::remove(temporary);
+        return aether::fail(aether::ErrorCode::io, "Unable to finalize reconstruction resume key",
+                            error.message());
+    }
+    return {};
 }
 
 aether::Result<void> writeMarker(const std::filesystem::path& path) {
@@ -289,7 +455,8 @@ writeCoverageReport(const std::filesystem::path& path,
 aether::Result<void> writeManifest(const Options& options, const std::filesystem::path& images,
                                    const std::vector<InputImage>& inputImages,
                                    const std::vector<Stage>& stages, std::string_view status,
-                                   const aether::reconstruction::SparseCoverageReport* coverage) {
+                                   const aether::reconstruction::SparseCoverageReport* coverage,
+                                   const CheckpointRecovery* recovery, std::string_view resumeKey) {
     const auto path = options.output / "job.json";
     const auto temporary = path.string() + ".tmp";
     std::ofstream stream(temporary, std::ios::trunc);
@@ -297,6 +464,8 @@ aether::Result<void> writeManifest(const Options& options, const std::filesystem
            << escapeJson(options.dataset.string()) << "\",\n  \"images\":\""
            << escapeJson(images.string()) << "\",\n  \"imageCount\":" << inputImages.size()
            << ",\n  \"seed\":" << options.seed << ",\n  \"steps\":" << options.steps
+           << ",\n  \"checkpointEvery\":" << std::min(options.checkpointEvery, options.steps)
+           << ",\n  \"resumeKey\":\"" << resumeKey << '"'
            << ",\n  \"dependencies\":{\n    \"colmap\":{\"version\":\"3.13.0\","
               "\"commit\":\"0b31f98133b470eae62811b557dc2bcff1e4f9a5\"},\n"
               "    \"brush\":{\"version\":\"0.3.0\","
@@ -324,6 +493,11 @@ aether::Result<void> writeManifest(const Options& options, const std::filesystem
         stream << ",\n  \"sparseCoverage\":";
         writeCoverageJson(stream, *coverage);
     }
+    if (recovery)
+        stream << ",\n  \"checkpointRecovery\":{\"iteration\":" << recovery->iteration
+               << ",\"source\":\"" << escapeJson(recovery->path.string())
+               << "\",\"rejectedNewerCheckpoints\":" << recovery->rejectedNewerCheckpoints
+               << ",\"optimizerStateRestored\":false}";
     stream << "\n}\n";
     stream.close();
     if (!stream) {
@@ -429,6 +603,10 @@ int main(int argc, char** argv) {
         inputImages.push_back(std::move(*input));
     }
     const std::size_t imageCount = inputImages.size();
+    auto fingerprintResult = jobFingerprint(*options, inputImages);
+    if (!fingerprintResult)
+        return fail(fingerprintResult.error().describe(), options->json, 3);
+    const std::string resumeKey = std::move(*fingerprintResult);
 
     const auto database = options->output / "database.db";
     const auto sparse = options->output / "sparse";
@@ -439,12 +617,35 @@ int main(int argc, char** argv) {
     const auto proxyMesh = proxyDirectory / "proxy.ply";
     const std::string seed = std::to_string(options->seed);
     const std::string steps = std::to_string(options->steps);
+    const std::uint32_t checkpointInterval = std::min(options->checkpointEvery, options->steps);
+    const auto finalCheckpoint = exports / checkpointName(options->steps, options->steps);
+    auto checkpointResult = findLatestCheckpoint(exports, options->steps);
+    if (!checkpointResult)
+        return fail(checkpointResult.error().describe(), options->json, 3);
+    std::optional<CheckpointRecovery> checkpointRecovery = std::move(*checkpointResult);
     std::vector<std::string> proxyArguments{
         options->proxy, (sparseText / "points3D.txt").string(),   "--output", proxyMesh.string(),
         "--report",     (proxyDirectory / "proxy.json").string(), "--json"};
     if (!options->proxyConfig.empty()) {
         proxyArguments.emplace_back("--config");
         proxyArguments.push_back(options->proxyConfig.string());
+    }
+    std::vector<std::string> brushArguments{options->brush,
+                                            dense.string(),
+                                            "--with-viewer=false",
+                                            "--seed",
+                                            seed,
+                                            "--total-steps",
+                                            steps,
+                                            "--export-every",
+                                            std::to_string(checkpointInterval),
+                                            "--export-path",
+                                            exports.string(),
+                                            "--export-name",
+                                            "checkpoint_{iter}.ply"};
+    if (checkpointRecovery) {
+        brushArguments.emplace_back("--start-iter");
+        brushArguments.push_back(std::to_string(checkpointRecovery->iteration));
     }
     std::vector<Stage> stages{
         {"feature-extraction",
@@ -470,11 +671,7 @@ int main(int argc, char** argv) {
          {options->colmap, "image_undistorter", "--image_path", images.string(), "--input_path",
           (sparse / "0").string(), "--output_path", dense.string(), "--output_type", "COLMAP"},
          dense / "sparse"},
-        {"brush-training",
-         {options->brush, dense.string(), "--with-viewer=false", "--seed", seed, "--total-steps",
-          steps, "--export-every", steps, "--export-path", exports.string(), "--export-name",
-          "base-gaussians.ply"},
-         exports / "base-gaussians.ply"},
+        {"brush-training", std::move(brushArguments), finalCheckpoint},
     };
 
     if (options->dryRun) {
@@ -503,7 +700,11 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(proxyDirectory, filesystemError);
     if (filesystemError)
         return fail("Unable to create reconstruction job directories", options->json, 3);
-    if (auto manifest = writeManifest(*options, images, inputImages, stages, "running", nullptr);
+    if (auto keyed = ensureResumeKey(options->output, resumeKey); !keyed)
+        return fail(keyed.error().describe(), options->json, 3);
+    if (auto manifest =
+            writeManifest(*options, images, inputImages, stages, "running", nullptr,
+                          checkpointRecovery ? &*checkpointRecovery : nullptr, resumeKey);
         !manifest)
         return fail(manifest.error().describe(), options->json, 3);
     if (auto verified =
@@ -528,6 +729,11 @@ int main(int argc, char** argv) {
             std::filesystem::exists(stage.expectedOutput) &&
             (stage.requiredCompanion.empty() || std::filesystem::exists(stage.requiredCompanion));
         if (!complete) {
+            if (stage.name == "brush-training" && checkpointRecovery) {
+                if (auto restored = atomicCopy(checkpointRecovery->path, dense / "init.ply");
+                    !restored)
+                    return fail(restored.error().describe(), options->json, 4);
+            }
             if (auto result = runStage(stage, options->output / "logs" / (stage.name + ".log"));
                 !result)
                 return fail(result.error().describe(), options->json, 4);
@@ -555,7 +761,8 @@ int main(int argc, char** argv) {
                 for (const auto& issue : sparseCoverage->issues)
                     message += " · " + issue;
                 (void)writeManifest(*options, images, inputImages, stages, "coverage-failed",
-                                    &*sparseCoverage);
+                                    &*sparseCoverage,
+                                    checkpointRecovery ? &*checkpointRecovery : nullptr, resumeKey);
                 std::filesystem::remove(marker);
                 std::filesystem::remove(coverageMarker);
                 return fail(message, options->json, 5);
@@ -567,8 +774,16 @@ int main(int argc, char** argv) {
             if (auto markerResult = writeMarker(marker); !markerResult)
                 return fail(markerResult.error().describe(), options->json, 4);
     }
-    if (auto manifest = writeManifest(*options, images, inputImages, stages, "complete",
-                                      sparseCoverage ? &*sparseCoverage : nullptr);
+    if (auto validated = aether::gaussian::PlyLoader::load(finalCheckpoint); !validated)
+        return fail("Brush final checkpoint failed strict 3DGS validation: " +
+                        validated.error().describe(),
+                    options->json, 4);
+    if (auto copied = atomicCopy(finalCheckpoint, exports / "base-gaussians.ply"); !copied)
+        return fail(copied.error().describe(), options->json, 4);
+    if (auto manifest =
+            writeManifest(*options, images, inputImages, stages, "complete",
+                          sparseCoverage ? &*sparseCoverage : nullptr,
+                          checkpointRecovery ? &*checkpointRecovery : nullptr, resumeKey);
         !manifest)
         return fail(manifest.error().describe(), options->json, 4);
     if (options->json)

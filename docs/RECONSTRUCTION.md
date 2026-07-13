@@ -35,12 +35,23 @@ The adapter runs Brush in CLI mode using the pinned v0.3.0 interface:
 
 ```bash
 brush <COLMAP-dataset> --with-viewer=false --seed 42 \
-  --total-steps 30000 --export-every 30000 \
-  --export-path <job>/exports --export-name base-gaussians.ply
+  --total-steps 30000 --export-every 5000 \
+  --export-path <job>/exports --export-name 'checkpoint_{iter}.ply'
 ```
+
+Completed milestones remain in `exports/`. On resume, AETHER scans newest-first, strictly parses each
+candidate through its bounded 3DGS PLY importer, skips torn/corrupt newer files, atomically restores
+the latest valid snapshot as `dense/init.ply`, and passes Brush the matching `--start-iter`. The final
+validated milestone is atomically copied to the stable `base-gaussians.ply` interface. Brush 0.3.0
+does not serialize optimizer moments, so the schema-v3 manifest explicitly records
+`optimizerStateRestored: false`; this is geometry-state recovery, not bit-exact optimizer recovery.
+Before trusting any marker or checkpoint, AETHER compares `resume-key.txt` against a fingerprint of
+the sorted input paths/sizes/hashes, seed, training/checkpoint budgets, and proxy configuration.
+Changed inputs or settings require a new job directory; legacy jobs without a fingerprint are not
+silently adopted.
 
 COLMAP 3.13.0 is selected because it provides a deterministic `random_seed` option. AETHER's job
 manifest preserves the seed, full argument vectors, pinned identities, sorted input sizes/SHA-256
-hashes, expected outputs, sparse-coverage evidence, stage logs, and resume markers. It verifies both
-executable versions before starting. `--dry-run --json` validates inputs and emits every external
+hashes, expected outputs, sparse-coverage evidence, stage logs, and resume markers. It verifies all
+external-tool versions before starting. `--dry-run --json` validates inputs and emits every external
 command without launching a tool.

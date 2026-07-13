@@ -89,7 +89,7 @@ if(TARGET aether-reconstruct)
             --colmap "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
             --brush "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
             --proxy "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh"
-            --seed 42 --steps 10 --json)
+            --seed 42 --steps 10 --checkpoint-every 5 --json)
     add_test(NAME AetherReconstructionCoverageGate
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-coverage-gate.zsh"
             $<TARGET_FILE:aether-reconstruct>
@@ -108,4 +108,24 @@ if(TARGET aether-reconstruct)
             "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh")
     set_tests_properties(AetherReconstructionProxyResume PROPERTIES
         DEPENDS AetherReconstructionAdapter)
+    add_test(NAME AetherBrushCheckpointRecovery
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-brush-checkpoint-recovery.zsh"
+            $<TARGET_FILE:aether-reconstruct>
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-reconstruction"
+            "${AETHER_RECONSTRUCTION_TEST_JOB}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh")
+    set_tests_properties(AetherBrushCheckpointRecovery PROPERTIES
+        DEPENDS AetherReconstructionProxyResume)
+    add_test(NAME AetherReconstructionResumeIdentity
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-resume-key.zsh"
+            $<TARGET_FILE:aether-reconstruct>
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-reconstruction"
+            "${AETHER_RECONSTRUCTION_TEST_JOB}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-colmap.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-brush.zsh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mock-proxy.zsh")
+    set_tests_properties(AetherReconstructionResumeIdentity PROPERTIES
+        DEPENDS AetherBrushCheckpointRecovery)
 endif()
