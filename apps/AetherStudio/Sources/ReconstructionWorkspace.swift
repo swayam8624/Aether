@@ -34,6 +34,7 @@ private final class ReconstructionModel: ObservableObject {
     @Published var colmapURL: URL?
     @Published var brushURL: URL?
     @Published var report: CaptureReport?
+    @Published var coverageReport: SparseCoverageReport?
     @Published var state: State = .idle
     @Published var transcript = ""
     @Published var completedStages = 0
@@ -44,11 +45,15 @@ private final class ReconstructionModel: ObservableObject {
         datasetURL = url
         outputURL = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent)-aether-job")
         report = nil
+        coverageReport = nil
         state = .idle
     }
 
     func chooseOutput() {
-        outputURL = chooseDirectory(title: "Choose Reconstruction Job Directory")
+        guard let url = chooseDirectory(title: "Choose Reconstruction Job Directory") else { return }
+        outputURL = url
+        coverageReport = nil
+        Task { coverageReport = await readCoverageReport(from: url) }
     }
 
     func chooseCOLMAP() { colmapURL = chooseExecutable(title: "Choose COLMAP 3.13.0") }
@@ -91,6 +96,7 @@ private final class ReconstructionModel: ObservableObject {
         task.standardError = output
         process = task
         transcript = ""
+        coverageReport = nil
         completedStages = 0
         state = .running
         Task {
@@ -100,11 +106,14 @@ private final class ReconstructionModel: ObservableObject {
                 let data = await Task.detached { output.fileHandleForReading.readDataToEndOfFile() }.value
                 task.waitUntilExit()
                 transcript = String(decoding: data, as: UTF8.self)
+                coverageReport = await readCoverageReport(from: outputURL)
                 process = nil
                 if task.terminationReason == .uncaughtSignal || task.terminationStatus == 130 {
                     state = .cancelled
                 } else if task.terminationStatus == 0 {
                     state = .complete
+                } else if coverageReport?.passed == false {
+                    state = .failed("Sparse pose coverage is not sufficient for training.")
                 } else {
                     state = .failed("Reconstruction exited with code \(task.terminationStatus). See the job logs.")
                 }
@@ -116,6 +125,14 @@ private final class ReconstructionModel: ObservableObject {
     }
 
     func cancel() { process?.interrupt() }
+
+    private func readCoverageReport(from outputURL: URL) async -> SparseCoverageReport? {
+        let reportURL = outputURL.appendingPathComponent("pose-coverage.json")
+        return await Task.detached(priority: .utility) {
+            guard let data = try? Data(contentsOf: reportURL) else { return nil }
+            return try? JSONDecoder().decode(SparseCoverageReport.self, from: data)
+        }.value
+    }
 
     private func monitorMarkers(in outputURL: URL, process: Process) async {
         let stages = ["feature-extraction", "feature-matching", "sparse-mapping",
@@ -187,6 +204,7 @@ struct ReconstructionWorkspace: View {
                 }
 
                 if let report = model.report { reportView(report) }
+                if let coverage = model.coverageReport { coverageView(coverage) }
                 if !model.transcript.isEmpty {
                     GroupBox("Process result") {
                         Text(model.transcript).font(.caption.monospaced()).textSelection(.enabled)
@@ -236,6 +254,32 @@ struct ReconstructionWorkspace: View {
                         .foregroundStyle(issue.severity == "error" ? .red : .orange)
                 }
                 if report.issues.isEmpty { Label("No blocking errors or quality warnings", systemImage: "checkmark.circle") }
+            }.padding(6)
+        }
+    }
+
+    private func coverageView(_ report: SparseCoverageReport) -> some View {
+        GroupBox("Sparse pose coverage") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 24) {
+                    LabeledContent("Registered", value: "\(report.registeredImages)/\(report.inputImages)")
+                    LabeledContent("Registration", value: report.registrationRatio.formatted(.percent.precision(.fractionLength(1))))
+                    LabeledContent("Tracked points", value: report.trackedPoints.formatted())
+                    LabeledContent("Mean track", value: report.meanTrackLength.formatted(.number.precision(.fractionLength(1))))
+                }
+                HStack(spacing: 24) {
+                    LabeledContent("Connected images", value: "\(report.connectedImages)/\(report.registeredImages)")
+                    LabeledContent("Graph coverage", value: report.connectedImageRatio.formatted(.percent.precision(.fractionLength(1))))
+                    LabeledContent("Baseline", value: report.baselineDiagonal.formatted(.number.precision(.significantDigits(4))))
+                    LabeledContent("View diversity", value: report.maximumViewAngleDegrees.formatted(.number.precision(.fractionLength(1))) + "°")
+                }
+                ForEach(report.issues, id: \.self) { issue in
+                    Label(issue, systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+                }
+                if report.passed {
+                    Label("Pose and overlap checks passed", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
             }.padding(6)
         }
     }

@@ -5,6 +5,7 @@ set(AETHER_STUDIO_SOURCES
     Sources/AetherStudioApp.swift
     Sources/ContentView.swift
     Sources/AetherViewport.swift
+    Sources/ReconstructionReport.swift
     Sources/ReconstructionWorkspace.swift
     Bridge/AetherCaptureBridge.mm
     Bridge/AetherViewportBridge.mm

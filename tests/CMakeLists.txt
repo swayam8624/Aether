@@ -39,6 +39,7 @@ if(TARGET AetherMetal AND TARGET AetherShaders)
     add_executable(AetherSwiftTests
         SwiftDocumentTests.swift
         ${PROJECT_SOURCE_DIR}/apps/AetherStudio/Sources/AetherProjectDocument.swift
+        ${PROJECT_SOURCE_DIR}/apps/AetherStudio/Sources/ReconstructionReport.swift
     )
     target_link_libraries(AetherSwiftTests PRIVATE "-framework SwiftUI" "-framework UniformTypeIdentifiers")
     add_test(NAME AetherSwiftTests COMMAND AetherSwiftTests)

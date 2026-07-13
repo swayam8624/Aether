@@ -23,6 +23,9 @@ command—while stdout/stderr go to separate stage logs. Completion markers are 
 only after the process exits successfully and its expected output exists. SIGINT and SIGTERM are
 forwarded to the active child.
 
+Studio treats pose validation as an explicit progress stage and renders the persisted registration,
+track, overlap, baseline, view-angle, and issue evidence for both completed and rejected jobs.
+
 The adapter runs Brush in CLI mode using the pinned v0.3.0 interface:
 
 ```bash

@@ -79,6 +79,18 @@ enum SwiftDocumentTests {
         guard AetherProjectDocument.readableContentTypes == [.aetherProject] else {
             throw TestFailure("AETHER project content type is not registered")
         }
+        let coverageData = Data("""
+            {"passed":false,"inputImages":10,"registeredImages":6,
+             "registrationRatio":0.6,"trackedPoints":12,"meanTrackLength":2.5,
+             "connectedImages":4,"connectedImageRatio":0.6666667,
+             "baselineDiagonal":1.25,"maximumViewAngleDegrees":8.5,
+             "issues":["Image overlap graph is fragmented"]}
+            """.utf8)
+        let coverage = try JSONDecoder().decode(SparseCoverageReport.self, from: coverageData)
+        guard !coverage.passed && coverage.registeredImages == 6 &&
+              coverage.issues == ["Image overlap graph is fragmented"] else {
+            throw TestFailure("Sparse coverage evidence did not decode for Studio")
+        }
         print("AETHER Swift document tests passed")
     }
 }
