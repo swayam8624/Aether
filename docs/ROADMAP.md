@@ -58,7 +58,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   per-frame palette reuse, live cascade receivers, bias controls, and 3x3 comparison PCF.
 - [x] Bounded spot/point shadow projection, fixed-budget allocation, deformation-aware caster
   submission, exact source-light matching, dominant-axis point faces, and 3x3 PCF receiving.
-- [ ] Cascade transition blending, TAA, bloom, shadow diagnostics, live local-shadow drawable
+- [x] Directional cascade transition blending over the final ten percent of each split interval.
+- [ ] TAA, bloom, shadow diagnostics, live local-shadow drawable
   validation, and golden-image thresholds.
 - [ ] Picking, outliner, inspectors, gizmos, and scene persistence.
 

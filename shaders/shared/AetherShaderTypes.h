@@ -107,6 +107,8 @@ struct AetherShadowUniforms {
     AetherFloat4x4 worldToShadow[4];
     AetherFloat4 splitDepths;
     AetherFloat4 biasNormalCascadeCount;
+    // transition fraction, reserved
+    AetherFloat4 transitionParameters;
 };
 
 #define AETHER_LOCAL_SHADOW_SLICE_COUNT 16
@@ -174,7 +176,7 @@ static_assert(sizeof(AetherGpuLight) == 64);
 static_assert(sizeof(AetherLightCluster) == 8);
 static_assert(sizeof(AetherClusterUniforms) == 32);
 static_assert(sizeof(AetherIblUniforms) == 16);
-static_assert(sizeof(AetherShadowUniforms) == 288);
+static_assert(sizeof(AetherShadowUniforms) == 304);
 static_assert(sizeof(AetherLocalShadowUniforms) == 1136);
 static_assert(sizeof(AetherMaterialUniforms) == 224);
 static_assert(sizeof(AetherGaussianGpu) == 256);

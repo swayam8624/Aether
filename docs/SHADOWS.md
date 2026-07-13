@@ -45,7 +45,8 @@ Mirrored winding, double-sided materials, transformed base-color UVs, and alpha 
 visible material path.
 
 The receiver uses the same live cascade matrices and split depths, selects by camera-space depth,
-and shadows only the directional light that owns the cascade set. Static, skinned, and morphed
+shadows only the directional light that owns the cascade set, and cross-fades PCF visibility over
+the final ten percent of each cascade interval to suppress hard split seams. Static, skinned, and morphed
 fixtures have each run under `MTL_DEBUG_LAYER=1` without binding or draw validation errors. Cascade
-transition blending, slope-scaled raster bias tuning, live local-shadow drawable validation, and
-golden-image quality thresholds remain open.
+slope-scaled raster bias tuning, live local-shadow drawable validation, and golden-image quality
+thresholds remain open.

@@ -95,6 +95,28 @@ float2 transformedUv(float2 uv, constant AetherMaterialUniforms& material, uint 
                   cosineSine.y * scaled.x + cosineSine.x * scaled.y) + scaleOffset.zw;
 }
 
+float directionalShadowVisibility(float3 worldPosition, float3 normal, uint cascade,
+                                  constant AetherShadowUniforms& shadows,
+                                  depth2d_array<float> shadowMap, sampler shadowSampler) {
+    const float4 shadowClip = shadows.worldToShadow[cascade] *
+                              float4(worldPosition + normal *
+                                     shadows.biasNormalCascadeCount.y, 1.0f);
+    const float3 shadowNdc = shadowClip.xyz / shadowClip.w;
+    const float2 shadowUv = float2(shadowNdc.x * 0.5f + 0.5f,
+                                   0.5f - shadowNdc.y * 0.5f);
+    if (any(shadowUv < 0.0f) || any(shadowUv > 1.0f) || shadowNdc.z < 0.0f ||
+        shadowNdc.z > 1.0f)
+        return 1.0f;
+    float visibility = 0.0f;
+    const float2 texel = 1.0f / float2(shadowMap.get_width(), shadowMap.get_height());
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+            visibility += shadowMap.sample_compare(
+                shadowSampler, shadowUv + float2(x, y) * texel, cascade,
+                shadowNdc.z - shadows.biasNormalCascadeCount.x);
+    return visibility / 9.0f;
+}
+
 fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
                                  constant AetherFrameUniforms& frame [[buffer(1)]],
                                  constant AetherMaterialUniforms& material [[buffer(2)]],
@@ -201,23 +223,20 @@ fragment float4 aetherPbrFragment(PbrVertexOutput input [[stage_in]],
     const uint cascadeCount = uint(shadows.biasNormalCascadeCount.z);
     while (cascade + 1u < cascadeCount && input.viewDepth > shadows.splitDepths[cascade])
         ++cascade;
-    const float4 shadowClip = shadows.worldToShadow[cascade] *
-                              float4(input.worldPosition + normal *
-                                     shadows.biasNormalCascadeCount.y, 1.0f);
-    const float3 shadowNdc = shadowClip.xyz / shadowClip.w;
-    const float2 shadowUv = float2(shadowNdc.x * 0.5f + 0.5f,
-                                   0.5f - shadowNdc.y * 0.5f);
-    float shadowVisibility = 1.0f;
-    if (all(shadowUv >= 0.0f) && all(shadowUv <= 1.0f) && shadowNdc.z >= 0.0f &&
-        shadowNdc.z <= 1.0f) {
-        shadowVisibility = 0.0f;
-        const float2 texel = 1.0f / float2(shadowMap.get_width(), shadowMap.get_height());
-        for (int y = -1; y <= 1; ++y)
-            for (int x = -1; x <= 1; ++x)
-                shadowVisibility += shadowMap.sample_compare(
-                    shadowSampler, shadowUv + float2(x, y) * texel, cascade,
-                    shadowNdc.z - shadows.biasNormalCascadeCount.x);
-        shadowVisibility /= 9.0f;
+    float shadowVisibility = directionalShadowVisibility(
+        input.worldPosition, normal, cascade, shadows, shadowMap, shadowSampler);
+    if (cascade + 1u < cascadeCount) {
+        const float intervalStart = cascade == 0u ? nearDepth : shadows.splitDepths[cascade - 1u];
+        const float intervalLength = shadows.splitDepths[cascade] - intervalStart;
+        const float transitionWidth = intervalLength * shadows.transitionParameters.x;
+        const float blend = saturate((input.viewDepth -
+                                      (shadows.splitDepths[cascade] - transitionWidth)) /
+                                     max(transitionWidth, 1.0e-5f));
+        if (blend > 0.0f) {
+            const float nextVisibility = directionalShadowVisibility(
+                input.worldPosition, normal, cascade + 1u, shadows, shadowMap, shadowSampler);
+            shadowVisibility = mix(shadowVisibility, nextVisibility, blend);
+        }
     }
     for (uint reference = 0u; reference < cluster.count; ++reference) {
         const uint sourceLightIndex = lightIndices[cluster.offset + reference];

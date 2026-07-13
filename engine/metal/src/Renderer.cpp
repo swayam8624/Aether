@@ -645,6 +645,7 @@ void Renderer::draw(MTK::View* view) noexcept {
                 shadowUniforms.biasNormalCascadeCount = {0.001F, 0.01F,
                                                          static_cast<float>(activeCascades),
                                                          static_cast<float>(shadowLightIndex.value_or(0))};
+                shadowUniforms.transitionParameters = {0.1F, 0.0F, 0.0F, 0.0F};
                 encoder->setFragmentBytes(&shadowUniforms, sizeof(shadowUniforms), 8);
                 encoder->setFragmentTexture(directionalShadowMap_.get(), 8);
                 encoder->setFragmentSamplerState(shadowComparisonSampler_.get(), 6);

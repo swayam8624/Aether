@@ -25,7 +25,7 @@ static_assert(sizeof(AetherGpuLight) == 64);
 static_assert(sizeof(AetherLightCluster) == 8);
 static_assert(sizeof(AetherClusterUniforms) == 32);
 static_assert(sizeof(AetherIblUniforms) == 16);
-static_assert(sizeof(AetherShadowUniforms) == 288);
+static_assert(sizeof(AetherShadowUniforms) == 304);
 static_assert(sizeof(AetherLocalShadowUniforms) == 1136);
 static_assert(offsetof(AetherMaterialUniforms, textureFlags) == 48);
 static_assert(offsetof(AetherMaterialUniforms, uvScaleOffset) == 64);
