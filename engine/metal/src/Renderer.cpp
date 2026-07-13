@@ -743,6 +743,21 @@ void Renderer::draw(MTK::View* view) noexcept {
             }
         }
     }
+    if (selectedMeshEntity_ > 0 && selectedMeshEntity_ <= meshInstances_.size() &&
+        gizmoPipeline_ && jitteredMeshProjection && meshView) {
+        const auto origin = meshInstances_[selectedMeshEntity_ - 1U].worldTransform.columns[3].xyz;
+        const float distance = simd_length(cameraController_.position() - origin);
+        AetherGizmoUniforms gizmo{};
+        gizmo.viewProjection = simd_mul(*jitteredMeshProjection, *meshView);
+        gizmo.originScale = {origin.x, origin.y, origin.z,
+                             std::clamp(distance * 0.15F, 0.1F, 2.0F)};
+        gizmo.viewport = {meshWidth, meshHeight, 1.0F / meshWidth, 1.0F / meshHeight};
+        encoder->setRenderPipelineState(gizmoPipeline_.get());
+        encoder->setDepthStencilState(reverseZReadOnlyDepthState_.get());
+        encoder->setCullMode(MTL::CullModeNone);
+        encoder->setVertexBytes(&gizmo, sizeof(gizmo), 0);
+        encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(18));
+    }
     encoder->endEncoding();
 
     MTL::Texture* presentationSource = sceneHdrColor_.get();
@@ -1099,6 +1114,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     animationSeconds_ = 0.0F;
     animationPlaying_ = true;
     gaussianPipeline_.reset();
+    selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded glTF scene with " +
                                               std::to_string(meshPrimitives_.size()) +
@@ -1276,6 +1292,7 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
+    selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded PLY scene with " +
                                               std::to_string(asset->gaussians.size()) +
@@ -1307,6 +1324,7 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     meshTextures_.clear();
     meshMaterials_.clear();
     gaussianPipeline_ = std::move(*pipeline);
+    selectedMeshEntity_ = 0;
     temporalHistoryValid_ = false;
     Log::instance().write(LogLevel::info, "Loaded AETHER scene with " +
                                               std::to_string(asset->gaussians.size()) +
@@ -1431,6 +1449,69 @@ Result<void> Renderer::clearMeshEntityTransform(std::uint32_t entityId) {
     instance.mirrored = simd_determinant(instance.worldTransform) < 0.0F;
     temporalHistoryValid_ = false;
     return {};
+}
+
+Result<void> Renderer::setSelectedMeshEntity(std::uint32_t entityId) {
+    if (entityId > meshInstances_.size())
+        return fail(ErrorCode::invalidArgument, "Selected mesh entity ID is out of range");
+    selectedMeshEntity_ = entityId;
+    return {};
+}
+
+Result<std::uint32_t> Renderer::pickGizmoAxis(std::uint32_t x, std::uint32_t y) {
+    if (!sceneIds_ || x >= sceneTargetWidth_ || y >= sceneTargetHeight_)
+        return fail(ErrorCode::invalidArgument, "Gizmo pick coordinate is outside the viewport");
+    constexpr std::size_t readbackBytesPerRow = 256;
+    auto readback = adopt(device_->newBuffer(readbackBytesPerRow, MTL::ResourceStorageModeShared));
+    MTL::CommandBuffer* commandBuffer = commandQueue_->commandBuffer();
+    MTL::BlitCommandEncoder* blit = commandBuffer ? commandBuffer->blitCommandEncoder() : nullptr;
+    if (!readback || !commandBuffer || !blit)
+        return fail(ErrorCode::metal, "Unable to allocate gizmo pick readback");
+    blit->setLabel(NS::String::string("Translation Gizmo Pick", NS::UTF8StringEncoding));
+    blit->copyFromTexture(sceneIds_.get(), 0, 0, MTL::Origin::Make(x, y, 0),
+                          MTL::Size::Make(1, 1, 1), readback.get(), 0, readbackBytesPerRow,
+                          readbackBytesPerRow);
+    blit->endEncoding();
+    commandBuffer->commit();
+    commandBuffer->waitUntilCompleted();
+    if (commandBuffer->status() == MTL::CommandBufferStatusError)
+        return fail(ErrorCode::metal, "Gizmo pick command buffer failed");
+    std::uint32_t encoded{};
+    std::memcpy(&encoded, readback->contents(), sizeof(encoded));
+    if ((encoded & 0x80000000U) == 0) return 0U;
+    const std::uint32_t axis = encoded & 0x7fffffffU;
+    if (axis < 1U || axis > 3U)
+        return fail(ErrorCode::corruptData, "Gizmo target contains an invalid axis ID");
+    return axis;
+}
+
+Result<MeshEntitySnapshot> Renderer::translateSelectedMesh(std::uint32_t axis,
+                                                           float worldDistance) {
+    if (selectedMeshEntity_ == 0 || selectedMeshEntity_ > meshInstances_.size())
+        return fail(ErrorCode::invalidArgument, "No mesh entity is selected");
+    if (axis < 1U || axis > 3U || !std::isfinite(worldDistance))
+        return fail(ErrorCode::invalidArgument, "Translation gizmo delta is invalid");
+    auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
+    if (!snapshot) return std::unexpected(snapshot.error());
+    snapshot->worldTransform.translation[axis - 1U] += worldDistance;
+    if (auto updated = setMeshEntityTransform(selectedMeshEntity_, snapshot->worldTransform); !updated)
+        return std::unexpected(updated.error());
+    return meshEntitySnapshot(selectedMeshEntity_);
+}
+
+Result<MeshEntitySnapshot> Renderer::translateSelectedMeshPixels(std::uint32_t axis,
+                                                                 float pixelDistance) {
+    if (!std::isfinite(pixelDistance) || sceneTargetHeight_ == 0)
+        return fail(ErrorCode::invalidArgument, "Translation gizmo pixel delta is invalid");
+    auto snapshot = meshEntitySnapshot(selectedMeshEntity_);
+    if (!snapshot) return std::unexpected(snapshot.error());
+    const float cameraDistance = simd_length(cameraController_.position() -
+                                             snapshot->worldTransform.translation);
+    scene::Camera camera;
+    const float worldPerPixel =
+        2.0F * cameraDistance * std::tan(camera.verticalFieldOfViewRadians * 0.5F) /
+        static_cast<float>(sceneTargetHeight_);
+    return translateSelectedMesh(axis, pixelDistance * worldPerPixel);
 }
 
 std::vector<MaterialSnapshot> Renderer::materialSnapshots() const {
@@ -1819,6 +1900,28 @@ Result<void> Renderer::buildViewportPipeline() {
         const std::string message = error ? error->localizedDescription()->utf8String()
                                           : "Unknown bloom pipeline compilation error";
         return fail(ErrorCode::metal, "Unable to create bloom pipeline", message);
+    }
+    auto gizmoVertex = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherGizmoVertex", NS::UTF8StringEncoding)));
+    auto gizmoFragment = adopt(shaderLibrary_->newFunction(
+        NS::String::string("aetherGizmoFragment", NS::UTF8StringEncoding)));
+    if (!gizmoVertex || !gizmoFragment)
+        return fail(ErrorCode::metal, "Offline shader library is missing gizmo entry points");
+    auto gizmoDescriptor = adopt(MTL::RenderPipelineDescriptor::alloc()->init());
+    gizmoDescriptor->setLabel(
+        NS::String::string("AETHER Translation Gizmo Pipeline", NS::UTF8StringEncoding));
+    gizmoDescriptor->setVertexFunction(gizmoVertex.get());
+    gizmoDescriptor->setFragmentFunction(gizmoFragment.get());
+    gizmoDescriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+    gizmoDescriptor->colorAttachments()->object(1)->setPixelFormat(MTL::PixelFormatR32Uint);
+    gizmoDescriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatDepth32Float);
+    if (binaryArchive_) gizmoDescriptor->setBinaryArchives(NS::Array::array(binaryArchive_.get()));
+    error = nullptr;
+    gizmoPipeline_ = adopt(device_->newRenderPipelineState(gizmoDescriptor.get(), &error));
+    if (!gizmoPipeline_) {
+        const std::string message = error ? error->localizedDescription()->utf8String()
+                                          : "Unknown gizmo pipeline compilation error";
+        return fail(ErrorCode::metal, "Unable to create translation gizmo pipeline", message);
     }
 
     auto pbrVertex = adopt(

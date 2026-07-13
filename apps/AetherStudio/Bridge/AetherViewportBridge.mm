@@ -31,6 +31,9 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
 - (BOOL)setMaterialForId:(NSInteger)materialId values:(NSArray<NSNumber*>*)values;
 - (BOOL)clearMaterialForId:(NSInteger)materialId;
 - (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights;
+- (BOOL)setSelectedMeshEntity:(NSInteger)entityId;
+- (NSInteger)pickGizmoAxisX:(NSUInteger)x y:(NSUInteger)y;
+- (NSArray<NSNumber*>*)translateSelectedAxis:(NSInteger)axis distance:(float)distance;
 @property(nonatomic, readonly, copy) NSString* rendererStatus;
 @end
 
@@ -288,6 +291,30 @@ static NSString* gAetherRendererStatus = @"Renderer has not been initialized";
     if (!result) NSLog(@"AETHER light replacement failed: %s", result.error().describe().c_str());
     return result.has_value();
 }
+
+- (BOOL)setSelectedMeshEntity:(NSInteger)entityId {
+    if (!_renderer || entityId < 0) return NO;
+    return _renderer->setSelectedMeshEntity(static_cast<std::uint32_t>(entityId)).has_value();
+}
+
+- (NSInteger)pickGizmoAxisX:(NSUInteger)x y:(NSUInteger)y {
+    if (!_renderer) return 0;
+    const auto result = _renderer->pickGizmoAxis(static_cast<std::uint32_t>(x),
+                                                 static_cast<std::uint32_t>(y));
+    return result ? static_cast<NSInteger>(*result) : 0;
+}
+
+- (NSArray<NSNumber*>*)translateSelectedAxis:(NSInteger)axis distance:(float)distance {
+    if (!_renderer || axis < 1 || axis > 3) return nil;
+    const auto result =
+        _renderer->translateSelectedMeshPixels(static_cast<std::uint32_t>(axis), distance);
+    if (!result) return nil;
+    const auto& transform = result->worldTransform;
+    const simd_float4 rotation = transform.rotation.vector;
+    return @[@(result->id), @(transform.translation.x), @(transform.translation.y),
+             @(transform.translation.z), @(rotation.x), @(rotation.y), @(rotation.z),
+             @(rotation.w), @(transform.scale.x), @(transform.scale.y), @(transform.scale.z)];
+}
 @end
 
 BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
@@ -324,6 +351,8 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     NSString* _scenePath;
     NSInteger _gaussianDebugMode;
     float _exposureStops;
+    NSInteger _selectedMeshEntity;
+    NSInteger _activeGizmoAxis;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -399,6 +428,11 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
     const double topOriginY = static_cast<double>(height) - 1.0 - backing.y;
     const NSUInteger y =
         static_cast<NSUInteger>(std::clamp(topOriginY, 0.0, static_cast<double>(height - 1)));
+    const NSInteger gizmoAxis = [_rendererDelegate pickGizmoAxisX:x y:y];
+    if (_selectedMeshEntity > 0 && gizmoAxis > 0) {
+        _activeGizmoAxis = gizmoAxis;
+        return;
+    }
     const NSString* sceneExtension = _scenePath.pathExtension.lowercaseString;
     const BOOL gaussian = [sceneExtension isEqualToString:@"ply"] ||
                           [sceneExtension isEqualToString:@"aether"];
@@ -406,6 +440,30 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
                                         : [_rendererDelegate pickMeshX:x y:y];
     if (self.onEntityPicked)
         self.onEntityPicked(entityId, gaussian);
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    if (_activeGizmoAxis == 0) {
+        [super mouseDragged:event];
+        return;
+    }
+    float distance = 0.0F;
+    if (_activeGizmoAxis == 1)
+        distance = static_cast<float>(event.deltaX);
+    else if (_activeGizmoAxis == 2)
+        distance = static_cast<float>(-event.deltaY);
+    else
+        distance = static_cast<float>(event.deltaX - event.deltaY) * 0.7F;
+    NSArray<NSNumber*>* values =
+        [_rendererDelegate translateSelectedAxis:_activeGizmoAxis distance:distance];
+    if (values.count == 11 && self.onMeshTransformEdited)
+        self.onMeshTransformEdited(values[0].integerValue,
+                                   [values subarrayWithRange:NSMakeRange(1, 10)]);
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    _activeGizmoAxis = 0;
+    [super mouseUp:event];
 }
 
 - (void)rightMouseDragged:(NSEvent*)event {
@@ -491,5 +549,14 @@ BOOL AetherWriteDiagnostics(NSURL* destination, NSError** error) {
 
 - (BOOL)replaceLights:(NSArray<NSArray<NSNumber*>*>*)lights {
     return [_rendererDelegate replaceLights:lights];
+}
+
+- (NSInteger)selectedMeshEntity {
+    return _selectedMeshEntity;
+}
+
+- (void)setSelectedMeshEntity:(NSInteger)entityId {
+    _selectedMeshEntity = MAX(0, entityId);
+    [_rendererDelegate setSelectedMeshEntity:_selectedMeshEntity];
 }
 @end

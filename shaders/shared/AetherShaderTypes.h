@@ -47,6 +47,14 @@ struct AetherTemporalUniforms {
     AetherFloat4 historyParameters;
 };
 
+struct AetherGizmoUniforms {
+    AetherFloat4x4 viewProjection;
+    // origin xyz, world-space axis length
+    AetherFloat4 originScale;
+    // viewport width, height, inverse width, inverse height
+    AetherFloat4 viewport;
+};
+
 struct AetherMeshVertex {
     AetherFloat3 position;
     AetherFloat3 normal;
@@ -183,6 +191,7 @@ static_assert(sizeof(AetherFullscreenVertex) == 16);
 static_assert(sizeof(AetherPresentationUniforms) == 16);
 static_assert(sizeof(AetherBloomUniforms) == 16);
 static_assert(sizeof(AetherTemporalUniforms) == 144);
+static_assert(sizeof(AetherGizmoUniforms) == 96);
 static_assert(sizeof(AetherMeshVertex) == 96);
 static_assert(sizeof(AetherJointMatrix) == 128);
 static_assert(sizeof(AetherSkinDraw) == 16);

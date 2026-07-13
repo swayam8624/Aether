@@ -10,7 +10,7 @@ struct AetherViewport: NSViewRepresentable {
     @Binding var selectedMaterialId: Int?
     @Binding var selectedMaterial: AetherMaterialOverride?
     @Binding var materialNames: [String]
-    let transformOverrides: [String: AetherTransformOverride]
+    @Binding var transformOverrides: [String: AetherTransformOverride]
     let materialOverrides: [String: AetherMaterialOverride]
     let lights: [AetherLightState]
     let gaussianDebugMode: Int
@@ -37,6 +37,12 @@ struct AetherViewport: NSViewRepresentable {
             selectedMeshTransform = !gaussian ? readTransform(view, entityId: Int(entityId)) : nil
         }
         view.onMeshEntitiesChanged = { names in meshEntityNames = names }
+        view.onMeshTransformEdited = { entityId, numbers in
+            let transform = AetherTransformOverride(values: numbers.map(\.floatValue))
+            selectedMeshId = Int(entityId)
+            selectedMeshTransform = transform
+            transformOverrides[String(entityId)] = transform
+        }
         view.onMaterialsChanged = { names in materialNames = names }
         view.scenePath = scenePath
         applyOverrides(transformOverrides, to: view, previous: [:])
@@ -59,6 +65,13 @@ struct AetherViewport: NSViewRepresentable {
             selectedMeshTransform = !gaussian ? readTransform(nsView, entityId: Int(entityId)) : nil
         }
         nsView.onMeshEntitiesChanged = { names in meshEntityNames = names }
+        nsView.onMeshTransformEdited = { entityId, numbers in
+            let transform = AetherTransformOverride(values: numbers.map(\.floatValue))
+            selectedMeshId = Int(entityId)
+            selectedMeshTransform = transform
+            transformOverrides[String(entityId)] = transform
+        }
+        nsView.selectedMeshEntity = selectedMeshId ?? 0
         nsView.onMaterialsChanged = { names in materialNames = names }
         if context.coordinator.scenePath != scenePath {
             nsView.scenePath = scenePath

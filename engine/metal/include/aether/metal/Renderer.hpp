@@ -106,6 +106,12 @@ class Renderer final {
     [[nodiscard]] Result<void> setMeshEntityTransform(std::uint32_t entityId,
                                                       const scene::Transform& transform);
     [[nodiscard]] Result<void> clearMeshEntityTransform(std::uint32_t entityId);
+    [[nodiscard]] Result<void> setSelectedMeshEntity(std::uint32_t entityId);
+    [[nodiscard]] Result<std::uint32_t> pickGizmoAxis(std::uint32_t x, std::uint32_t y);
+    [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMesh(std::uint32_t axis,
+                                                                  float worldDistance);
+    [[nodiscard]] Result<MeshEntitySnapshot> translateSelectedMeshPixels(std::uint32_t axis,
+                                                                        float pixelDistance);
     [[nodiscard]] std::vector<MaterialSnapshot> materialSnapshots() const;
     [[nodiscard]] Result<void> setMaterialOverride(const MaterialSnapshot& material);
     [[nodiscard]] Result<void> clearMaterialOverride(std::uint32_t materialId);
@@ -141,6 +147,7 @@ class Renderer final {
     MetalPtr<MTL::RenderPipelineState> viewportPipeline_;
     MetalPtr<MTL::RenderPipelineState> temporalPipeline_;
     MetalPtr<MTL::RenderPipelineState> bloomPipeline_;
+    MetalPtr<MTL::RenderPipelineState> gizmoPipeline_;
     MetalPtr<MTL::RenderPipelineState> sceneBackgroundPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrPipeline_;
     MetalPtr<MTL::RenderPipelineState> pbrBlendPipeline_;
@@ -241,6 +248,7 @@ class Renderer final {
     std::filesystem::path shaderLibraryPath_;
     scene::CameraController cameraController_;
     std::uint32_t gaussianDebugMode_{};
+    std::uint32_t selectedMeshEntity_{};
     Clock::TimePoint previousFrameTime_ = Clock::now();
 };
 

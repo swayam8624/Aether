@@ -237,6 +237,34 @@ int main() {
         pool->release();
         return 1;
     }
+    if (!(*renderer)->setSelectedMeshEntity(1)) {
+        std::cerr << "Renderer rejected a valid gizmo selection\n";
+        pool->release();
+        return 1;
+    }
+    (*renderer)->draw(testView.get());
+    for (std::uint32_t attempt = 0; attempt < 100 &&
+                                    (*renderer)->statistics().completedFrames < 3;
+         ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const auto gizmoAxis = (*renderer)->pickGizmoAxis(175, 90);
+    const auto translated = (*renderer)->translateSelectedMesh(1, 0.1F);
+    if ((*renderer)->statistics().completedFrames < 3 || !gizmoAxis || *gizmoAxis != 1 ||
+        !translated || !translated->overridden ||
+        std::abs(translated->worldTransform.translation.x - 0.1F) > 1.0e-4F ||
+        (*renderer)->translateSelectedMesh(0, 0.1F)) {
+        std::cerr << "Translation gizmo render/pick/drag contract failed: axis="
+                  << (gizmoAxis ? std::to_string(*gizmoAxis) : gizmoAxis.error().describe())
+                  << " x=" << (translated ? translated->worldTransform.translation.x : -999.0F)
+                  << " frames=" << (*renderer)->statistics().completedFrames << '\n';
+        pool->release();
+        return 1;
+    }
+    if (!(*renderer)->clearMeshEntityTransform(1)) {
+        std::cerr << "Renderer could not reset the gizmo fixture transform\n";
+        pool->release();
+        return 1;
+    }
     auto entitySnapshot = (*renderer)->meshEntitySnapshot(1);
     if (!entitySnapshot) {
         std::cerr << "Renderer did not expose an editable mesh entity snapshot\n";

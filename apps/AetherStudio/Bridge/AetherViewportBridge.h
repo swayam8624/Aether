@@ -11,6 +11,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, nullable, copy) void (^onEntityPicked)(NSInteger entityId, BOOL gaussian);
 @property(nonatomic, nullable, copy) void (^onMeshEntitiesChanged)(NSArray<NSString*>* names);
 @property(nonatomic, nullable, copy) void (^onMaterialsChanged)(NSArray<NSString*>* names);
+@property(nonatomic, nullable, copy) void (^onMeshTransformEdited)(NSInteger entityId,
+                                                                   NSArray<NSNumber*>* values);
+@property(nonatomic) NSInteger selectedMeshEntity;
 @property(nonatomic) NSInteger gaussianDebugMode;
 @property(nonatomic) float exposureStops;
 - (nullable NSArray<NSNumber*>*)meshTransformForEntity:(NSInteger)entityId;

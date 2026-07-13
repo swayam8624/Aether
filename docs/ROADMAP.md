@@ -77,9 +77,11 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   and project-persisted material overrides.
 - [x] Bounded directional/point/spot light mutation API and project-persisted SwiftUI light editor
   with add/remove and type-specific controls.
+- [x] Depth-tested Metal RGB translation gizmo with reserved axis IDs, zoom-aware drag scaling,
+  validated transform mutation, bridge callbacks, and project persistence.
 - [ ] Deforming-object motion vectors, Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
-- [ ] Viewport transform gizmos and generalized scene serialization.
+- [ ] Rotation/scale gizmo modes and generalized scene serialization.
 
 ## Phase 3 — Standard Gaussian renderer
 

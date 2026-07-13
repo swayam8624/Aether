@@ -294,7 +294,7 @@ struct ContentView: View {
                                    selectedMaterialId: $selectedMaterialId,
                                    selectedMaterial: $selectedMaterial,
                                    materialNames: $materialNames,
-                                   transformOverrides: document.state.entityTransformOverrides,
+                                   transformOverrides: $document.state.entityTransformOverrides,
                                    materialOverrides: document.state.materialOverrides,
                                    lights: document.state.lights,
                                    gaussianDebugMode: gaussianDebugMode.rawValue,
