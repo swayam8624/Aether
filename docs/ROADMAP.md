@@ -81,7 +81,9 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   validated transform mutation, bridge callbacks, and project persistence.
 - [x] RGBA16 rigid motion-vector/previous-depth target consumed by TAA, with translated-entity GPU
   readback validation.
-- [ ] Previous-pose skin/morph motion vectors, Gaussian temporal depth, shadow diagnostics, and
+- [x] Previous-pose joint palettes and morph weights evaluated in morph-before-skin order for
+  deforming motion vectors.
+- [ ] Gaussian temporal depth, shadow diagnostics, and
   isolated PBR/shadow/Gaussian golden fixtures.
 - [ ] Rotation/scale gizmo modes and generalized scene serialization.
 

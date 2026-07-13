@@ -12,9 +12,12 @@ or IBL replacement, first frame, and large camera-matrix discontinuities. PBR co
 the previous jittered camera and previous entity model transform, covering continuous camera and
 rigid editor/entity motion. Previous transforms advance only after frame encoding, and a bounded
 one-texel diagnostic readback verifies signed X motion and validity after a known translation.
-Previous-pose skin palettes and morph weights remain for the hybrid temporal-data work. Pixels
-without mesh reverse-Z depth, including the current Gaussian background path, do not accumulate
-history rather than risking camera-motion ghosting.
+Skinned and morphed draws bind separate prior joint palettes and prior morph weights. The PBR vertex
+path evaluates both current and previous positions in morph-before-skin order, while shadow passes
+continue consuming only the current bindings. Palette upload preflight accounts for both copies,
+prior scene-node worlds advance after encoding, and a real skinned frame runs under Metal API and
+shader validation. Pixels without mesh reverse-Z depth, including the current Gaussian background
+path, do not accumulate history rather than risking camera-motion ghosting.
 
 Bloom runs after temporal resolve and before presentation. A soft-knee thresholded nine-tap
 downsample produces a half-resolution buffer, followed by a second filtered quarter-resolution

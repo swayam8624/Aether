@@ -201,6 +201,7 @@ class Renderer final {
         std::size_t nodeIndex{};
         std::optional<std::size_t> skinIndex;
         std::vector<float> morphWeights;
+        std::vector<float> previousMorphWeights;
         std::optional<scene::Transform> transformOverride;
     };
     struct GpuTexture {
@@ -224,6 +225,7 @@ class Renderer final {
     std::vector<GpuMaterial> meshMaterials_;
     std::optional<mesh::MeshAsset> meshAnimationAsset_;
     std::vector<simd_float4x4> meshWorldTransforms_;
+    std::vector<simd_float4x4> previousMeshWorldTransforms_;
     std::optional<std::size_t> selectedAnimation_;
     float animationSeconds_{};
     bool animationLoop_{true};

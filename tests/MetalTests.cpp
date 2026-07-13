@@ -324,6 +324,22 @@ int main() {
         pool->release();
         return 1;
     }
+    if (auto loaded = (*renderer)->loadGltf(AETHER_TEST_SKINNED_GLTF); !loaded) {
+        std::cerr << "Renderer could not reload the skinned motion fixture\n";
+        pool->release();
+        return 1;
+    }
+    const auto completedBeforeSkin = (*renderer)->statistics().completedFrames;
+    (*renderer)->draw(testView.get());
+    for (std::uint32_t attempt = 0; attempt < 100 &&
+                                    (*renderer)->statistics().completedFrames <= completedBeforeSkin;
+         ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if ((*renderer)->statistics().completedFrames <= completedBeforeSkin) {
+        std::cerr << "Previous-pose skin palette frame did not complete\n";
+        pool->release();
+        return 1;
+    }
 
     NS::Error* libraryError = nullptr;
     auto library = aether::metal::adopt(device->newLibrary(

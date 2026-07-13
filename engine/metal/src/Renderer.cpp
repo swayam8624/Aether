@@ -401,6 +401,7 @@ void Renderer::draw(MTK::View* view) noexcept {
     localShadowUniforms.countBias = {static_cast<float>(localShadowLightCount), 0.001F,
                                      0.01F, 0.0F};
     std::vector<std::optional<BufferSlice>> frameSkinPalettes(meshInstances_.size());
+    std::vector<std::optional<BufferSlice>> previousFrameSkinPalettes(meshInstances_.size());
     for (std::size_t instanceIndex = 0; instanceIndex < meshInstances_.size(); ++instanceIndex) {
         const auto& instance = meshInstances_[instanceIndex];
         if (!instance.skinIndex || !meshAnimationAsset_ ||
@@ -430,6 +431,32 @@ void Renderer::draw(MTK::View* view) noexcept {
         }
         std::memcpy(slice->cpuAddress, palette.data(), palette.size() * sizeof(AetherJointMatrix));
         frameSkinPalettes[instanceIndex] = *slice;
+
+        std::vector<AetherJointMatrix> previousPalette;
+        previousPalette.reserve(skin.jointNodeIndices.size());
+        const auto inversePreviousMesh = simd_inverse(instance.previousWorldTransform);
+        for (std::size_t joint = 0; joint < skin.jointNodeIndices.size(); ++joint) {
+            const auto nodeIndex = skin.jointNodeIndices[joint];
+            if (nodeIndex >= previousMeshWorldTransforms_.size()) break;
+            const auto position = simd_mul(
+                simd_mul(inversePreviousMesh, previousMeshWorldTransforms_[nodeIndex]),
+                skin.inverseBindMatrices[joint]);
+            previousPalette.push_back(
+                AetherJointMatrix{position, simd_transpose(simd_inverse(position))});
+        }
+        if (previousPalette.size() != skin.jointNodeIndices.size()) {
+            Log::instance().write(LogLevel::error, "Previous skin joint transform is unavailable");
+            continue;
+        }
+        auto previousSlice =
+            frame.allocateUpload(previousPalette.size() * sizeof(AetherJointMatrix), 256);
+        if (!previousSlice) {
+            Log::instance().write(LogLevel::error, previousSlice.error().describe());
+            continue;
+        }
+        std::memcpy(previousSlice->cpuAddress, previousPalette.data(),
+                    previousPalette.size() * sizeof(AetherJointMatrix));
+        previousFrameSkinPalettes[instanceIndex] = *previousSlice;
     }
     auto bindDeformation = [&](MTL::RenderCommandEncoder* targetEncoder,
                                std::size_t instanceIndex) -> bool {
@@ -438,15 +465,20 @@ void Renderer::draw(MTK::View* view) noexcept {
         AetherSkinDraw skinDraw{};
         AetherJointMatrix identityJoint{matrix_identity_float4x4, matrix_identity_float4x4};
         if (instance.skinIndex) {
-            if (!frameSkinPalettes[instanceIndex]) return false;
+            if (!frameSkinPalettes[instanceIndex] || !previousFrameSkinPalettes[instanceIndex])
+                return false;
             const auto& slice = *frameSkinPalettes[instanceIndex];
+            const auto& previousSlice = *previousFrameSkinPalettes[instanceIndex];
             targetEncoder->setVertexBuffer(slice.buffer, slice.offset, 2);
+            targetEncoder->setVertexBuffer(previousSlice.buffer, previousSlice.offset, 7);
             skinDraw.jointCount = static_cast<std::uint32_t>(slice.size / sizeof(AetherJointMatrix));
             skinDraw.enabled = 1;
         } else {
             targetEncoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 2);
+            targetEncoder->setVertexBytes(&identityJoint, sizeof(identityJoint), 7);
         }
         targetEncoder->setVertexBytes(&skinDraw, sizeof(skinDraw), 3);
+        targetEncoder->setVertexBytes(&skinDraw, sizeof(skinDraw), 8);
         AetherMorphDraw morphDraw{};
         AetherMorphDelta zeroMorph{};
         float zeroMorphWeight = 0.0F;
@@ -455,10 +487,14 @@ void Renderer::draw(MTK::View* view) noexcept {
             targetEncoder->setVertexBuffer(primitive.morphDeltas.get(), 0, 4);
             targetEncoder->setVertexBytes(instance.morphWeights.data(),
                                           instance.morphWeights.size() * sizeof(float), 5);
+            if (instance.previousMorphWeights.size() != primitive.morphTargetCount) return false;
+            targetEncoder->setVertexBytes(instance.previousMorphWeights.data(),
+                                          instance.previousMorphWeights.size() * sizeof(float), 9);
             morphDraw = {primitive.morphTargetCount, primitive.vertexCount, 1U, 0U};
         } else {
             targetEncoder->setVertexBytes(&zeroMorph, sizeof(zeroMorph), 4);
             targetEncoder->setVertexBytes(&zeroMorphWeight, sizeof(zeroMorphWeight), 5);
+            targetEncoder->setVertexBytes(&zeroMorphWeight, sizeof(zeroMorphWeight), 9);
         }
         targetEncoder->setVertexBytes(&morphDraw, sizeof(morphDraw), 6);
         targetEncoder->setVertexBuffer(primitive.vertices.get(), 0, 0);
@@ -918,7 +954,11 @@ void Renderer::draw(MTK::View* view) noexcept {
         completedFrames_.fetch_add(1, std::memory_order_relaxed);
         dispatch_semaphore_signal(semaphore);
     });
-    for (auto& instance : meshInstances_) instance.previousWorldTransform = instance.worldTransform;
+    for (auto& instance : meshInstances_) {
+        instance.previousWorldTransform = instance.worldTransform;
+        instance.previousMorphWeights = instance.morphWeights;
+    }
+    previousMeshWorldTransforms_ = meshWorldTransforms_;
     commandBuffer->presentDrawable(drawable);
     commandBuffer->commit();
     ++frameNumber_;
@@ -939,10 +979,10 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
         if (!instance.skinIndex) continue;
         const auto jointBytes = loaded->skins.at(*instance.skinIndex).jointNodeIndices.size() *
                                 sizeof(AetherJointMatrix);
-        if (jointBytes > frameContexts_[0]->uploadCapacity() - skinUploadBytes)
+        if (jointBytes > (frameContexts_[0]->uploadCapacity() - skinUploadBytes) / 2U)
             return fail(ErrorCode::resourceExhausted,
                         "glTF skin palettes exceed the per-frame upload budget");
-        skinUploadBytes += jointBytes;
+        skinUploadBytes += jointBytes * 2U;
     }
 
     std::vector<DecodedImage> decodedImages;
@@ -1103,7 +1143,8 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
                                             {transformed.x, transformed.y, transformed.z},
                                             simd_determinant(sourceInstance.worldTransform) < 0.0F,
                                             sourceInstance.nodeIndex, sourceInstance.skinIndex,
-                                            sourceInstance.morphWeights, std::nullopt});
+                                            sourceInstance.morphWeights, sourceInstance.morphWeights,
+                                            std::nullopt});
     }
     meshInstances_ = std::move(instances);
     meshTextures_ = std::move(uploadedTextures);
@@ -1119,6 +1160,7 @@ Result<void> Renderer::loadGltf(const std::filesystem::path& path) {
     auto initialWorlds = mesh::resolveWorldTransforms(*meshAnimationAsset_, initialTransforms);
     if (!initialWorlds) return std::unexpected(initialWorlds.error());
     meshWorldTransforms_ = std::move(*initialWorlds);
+    previousMeshWorldTransforms_ = meshWorldTransforms_;
     selectedAnimation_ = meshAnimationAsset_->animations.empty()
                              ? std::nullopt
                              : std::optional<std::size_t>{0};
@@ -1299,6 +1341,7 @@ Result<void> Renderer::loadPly(const std::filesystem::path& path) {
     meshInstances_.clear();
     meshAnimationAsset_.reset();
     meshWorldTransforms_.clear();
+    previousMeshWorldTransforms_.clear();
     selectedAnimation_.reset();
     meshTextures_.clear();
     meshMaterials_.clear();
@@ -1331,6 +1374,7 @@ Result<void> Renderer::loadAether(const std::filesystem::path& path) {
     meshInstances_.clear();
     meshAnimationAsset_.reset();
     meshWorldTransforms_.clear();
+    previousMeshWorldTransforms_.clear();
     selectedAnimation_.reset();
     meshTextures_.clear();
     meshMaterials_.clear();

@@ -20,9 +20,13 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
                                        constant AetherSkinDraw& skin [[buffer(3)]],
                                        device const AetherMorphDelta* morphDeltas [[buffer(4)]],
                                        device const float* morphWeights [[buffer(5)]],
-                                       constant AetherMorphDraw& morph [[buffer(6)]]) {
+                                       constant AetherMorphDraw& morph [[buffer(6)]],
+                                       device const AetherJointMatrix* previousJoints [[buffer(7)]],
+                                       constant AetherSkinDraw& previousSkin [[buffer(8)]],
+                                       device const float* previousMorphWeights [[buffer(9)]]) {
     const AetherMeshVertex meshVertex = vertices[vertexId];
     float4 localPosition = float4(meshVertex.position, 1.0f);
+    float4 previousLocalPosition = localPosition;
     float3 localNormal = meshVertex.normal;
     float3 localTangent = meshVertex.tangent.xyz;
     if (morph.enabled != 0u) {
@@ -30,6 +34,7 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
             const AetherMorphDelta delta = morphDeltas[target * morph.vertexCount + vertexId];
             const float weight = morphWeights[target];
             localPosition.xyz += delta.position.xyz * weight;
+            previousLocalPosition.xyz += delta.position.xyz * previousMorphWeights[target];
             localNormal += delta.normal.xyz * weight;
             localTangent += delta.tangent.xyz * weight;
         }
@@ -50,6 +55,15 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
         localNormal = normalize((normalSkin * float4(localNormal, 0.0f)).xyz);
         localTangent = normalize((normalSkin * float4(localTangent, 0.0f)).xyz);
     }
+    if (previousSkin.enabled != 0u) {
+        float4x4 previousPositionSkin = float4x4(0.0f);
+        for (uint influence = 0u; influence < 4u; ++influence) {
+            const uint joint = min(meshVertex.joints[influence], previousSkin.jointCount - 1u);
+            previousPositionSkin +=
+                previousJoints[joint].position * meshVertex.weights[influence];
+        }
+        previousLocalPosition = previousPositionSkin * previousLocalPosition;
+    }
     const float4 worldPosition = frame.model * localPosition;
     PbrVertexOutput output;
     output.position = frame.viewProjection * worldPosition;
@@ -62,7 +76,8 @@ vertex PbrVertexOutput aetherPbrVertex(uint vertexId [[vertex_id]],
                                                                 frame.model[2].xyz))));
     output.uv = meshVertex.textureCoordinate;
     output.viewDepth = max(-(frame.view * worldPosition).z, 1.0e-6f);
-    output.previousClip = frame.previousViewProjection * (frame.previousModel * localPosition);
+    output.previousClip = frame.previousViewProjection *
+                          (frame.previousModel * previousLocalPosition);
     return output;
 }
 
