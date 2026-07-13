@@ -102,6 +102,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Indirect-dispatch stable parallel radix with cross-block CPU/GPU compositing validation and
   executable serial compatibility fallback.
 - [ ] M1/M2 named-scene performance exit gates.
+- [x] Benchmark schema-v2 peak counter aggregation, synchronized CPU-frame timing, and executable
+  GPU-p95/memory budget failure gates.
 - [x] Degree 0–3 GraphDECO-order spherical-harmonic appearance in CPU and Metal paths.
 - [x] Real GPU ID-target Gaussian picking bridged into SwiftUI source-ID selection.
 - [x] SwiftUI-selectable depth, source-ID, tile-occupancy, and accumulated-opacity GPU views.

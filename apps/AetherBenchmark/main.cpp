@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +32,8 @@ struct Options final {
     std::uint32_t warmupFrames{5};
     bool json{};
     bool dryRun{};
+    std::optional<double> maximumP95Milliseconds;
+    std::optional<std::uint64_t> maximumAllocatedBytes;
 };
 
 std::string escapeJson(std::string_view value) {
@@ -51,7 +54,7 @@ std::string escapeJson(std::string_view value) {
 int usage() {
     std::cout << "Usage: aether-benchmark <scene.aether> --camera-path path.json "
                  "[--width 1920] [--height 1080] [--frames N] [--warmup N] [--json] "
-                 "[--dry-run]\n";
+                 "[--max-p95-ms N] [--max-memory-bytes N] [--dry-run]\n";
     return 0;
 }
 
@@ -73,8 +76,27 @@ std::optional<std::uint32_t> parseUnsigned(std::string_view value) {
     return static_cast<std::uint32_t>(parsed);
 }
 
+std::optional<std::uint64_t> parseUnsigned64(std::string_view value) {
+    std::uint64_t parsed{};
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed == 0)
+        return std::nullopt;
+    return parsed;
+}
+
+std::optional<double> parsePositiveDouble(std::string_view value) {
+    double parsed{};
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() ||
+        !std::isfinite(parsed) || parsed <= 0.0)
+        return std::nullopt;
+    return parsed;
+}
+
 std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
     Options options;
+    for (int index = 1; index < argc; ++index)
+        if (std::string_view(argv[index]) == "--json") options.json = true;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--help" || argument == "-h") {
@@ -101,6 +123,18 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
             if (!value)
                 return std::nullopt;
             options.cameraPath = *value;
+        } else if (argument == "--max-p95-ms") {
+            auto value = readValue("--max-p95-ms");
+            if (!value || !(options.maximumP95Milliseconds = parsePositiveDouble(*value))) {
+                exitCode = fail("--max-p95-ms must be finite and positive", options.json);
+                return std::nullopt;
+            }
+        } else if (argument == "--max-memory-bytes") {
+            auto value = readValue("--max-memory-bytes");
+            if (!value || !(options.maximumAllocatedBytes = parseUnsigned64(*value))) {
+                exitCode = fail("--max-memory-bytes must be a positive integer", options.json);
+                return std::nullopt;
+            }
         } else if (argument == "--width" || argument == "--height" || argument == "--frames" ||
                    argument == "--warmup") {
             auto value = readValue(std::string(argument).c_str());
@@ -236,9 +270,11 @@ int main(int argc, char** argv) {
     queue->setLabel(NS::String::string("AETHER Benchmark Queue", NS::UTF8StringEncoding));
 
     std::vector<double> gpuMilliseconds;
+    std::vector<double> cpuFrameMilliseconds;
     gpuMilliseconds.reserve(options->frames);
+    cpuFrameMilliseconds.reserve(options->frames);
     std::uint64_t peakAllocatedBytes = device->currentAllocatedSize();
-    aether::metal::GaussianPipelineStatistics lastStatistics{};
+    aether::metal::GaussianPipelineStatistics peakStatistics{};
     const std::uint64_t totalFrames =
         static_cast<std::uint64_t>(options->warmupFrames) + options->frames;
     for (std::uint64_t frame = 0; frame < totalFrames; ++frame) {
@@ -276,6 +312,7 @@ int main(int argc, char** argv) {
         camera.cameraWorldPosition = {keyframe->transform.translation.x,
                                       keyframe->transform.translation.y,
                                       keyframe->transform.translation.z, 1.0F};
+        const auto cpuFrameStart = std::chrono::steady_clock::now();
         MTL::CommandBuffer* commandBuffer = queue->commandBuffer();
         auto encoded =
             (*pipeline)->encode(commandBuffer, camera, color.get(), depth.get(), ids.get());
@@ -293,17 +330,29 @@ int main(int argc, char** argv) {
             pool->release();
             return fail("Benchmark Metal command buffer failed", options->json, 4);
         }
-        if (frame >= options->warmupFrames)
+        if (frame >= options->warmupFrames) {
             gpuMilliseconds.push_back(
                 (commandBuffer->GPUEndTime() - commandBuffer->GPUStartTime()) * 1000.0);
+            cpuFrameMilliseconds.push_back(std::chrono::duration<double, std::milli>(
+                                               std::chrono::steady_clock::now() - cpuFrameStart)
+                                               .count());
+        }
         peakAllocatedBytes =
             std::max<std::uint64_t>(peakAllocatedBytes, device->currentAllocatedSize());
-        lastStatistics = (*pipeline)->statistics();
+        const auto statistics = (*pipeline)->statistics();
+        peakStatistics.visibleGaussians =
+            std::max(peakStatistics.visibleGaussians, statistics.visibleGaussians);
+        peakStatistics.tileEntries = std::max(peakStatistics.tileEntries, statistics.tileEntries);
+        peakStatistics.overflowedEntries =
+            std::max(peakStatistics.overflowedEntries, statistics.overflowedEntries);
+        peakStatistics.earlyTerminations =
+            std::max(peakStatistics.earlyTerminations, statistics.earlyTerminations);
     }
     std::ranges::sort(gpuMilliseconds);
-    if (lastStatistics.overflowedEntries != 0) {
+    std::ranges::sort(cpuFrameMilliseconds);
+    if (peakStatistics.overflowedEntries != 0) {
         const std::string message = "Tile-entry budget overflowed by " +
-                                    std::to_string(lastStatistics.overflowedEntries) +
+                                    std::to_string(peakStatistics.overflowedEntries) +
                                     " entries; benchmark output would be incomplete";
         pool->release();
         return fail(message, options->json, 5);
@@ -312,27 +361,44 @@ int main(int argc, char** argv) {
     const std::size_t p95Index = static_cast<std::size_t>(
         std::ceil(static_cast<double>(gpuMilliseconds.size()) * 0.95) - 1.0);
     const double p95 = gpuMilliseconds[std::min(p95Index, gpuMilliseconds.size() - 1)];
+    const double cpuMedian = cpuFrameMilliseconds[cpuFrameMilliseconds.size() / 2];
+    const double cpuP95 =
+        cpuFrameMilliseconds[std::min(p95Index, cpuFrameMilliseconds.size() - 1)];
+    const bool p95BudgetPassed = !options->maximumP95Milliseconds ||
+                                 p95 <= *options->maximumP95Milliseconds;
+    const bool memoryBudgetPassed = !options->maximumAllocatedBytes ||
+                                    peakAllocatedBytes <= *options->maximumAllocatedBytes;
+    const bool budgetsPassed = p95BudgetPassed && memoryBudgetPassed;
     const std::string deviceName = device->name() ? device->name()->utf8String() : "Unknown GPU";
     if (options->json) {
-        std::cout << "{\"ok\":true,\"schemaVersion\":1,\"device\":\"" << escapeJson(deviceName)
+        std::cout << "{\"ok\":" << (budgetsPassed ? "true" : "false")
+                  << ",\"schemaVersion\":2,\"device\":\"" << escapeJson(deviceName)
                   << "\",\"scene\":\"" << escapeJson(options->scene.string())
                   << "\",\"width\":" << options->width << ",\"height\":" << options->height
                   << ",\"frames\":" << options->frames
                   << ",\"warmupFrames\":" << options->warmupFrames << ",\"gpuMedianMs\":" << median
-                  << ",\"gpuP95Ms\":" << p95 << ",\"gaussians\":" << asset->gaussians.size()
-                  << ",\"visibleGaussians\":" << lastStatistics.visibleGaussians
-                  << ",\"tileEntries\":" << lastStatistics.tileEntries
-                  << ",\"overflowedEntries\":" << lastStatistics.overflowedEntries
-                  << ",\"earlyTerminations\":" << lastStatistics.earlyTerminations
-                  << ",\"peakMetalAllocatedBytes\":" << peakAllocatedBytes << "}\n";
+                  << ",\"gpuP95Ms\":" << p95 << ",\"cpuFrameMedianMs\":" << cpuMedian
+                  << ",\"cpuFrameP95Ms\":" << cpuP95
+                  << ",\"gaussians\":" << asset->gaussians.size()
+                  << ",\"peakVisibleGaussians\":" << peakStatistics.visibleGaussians
+                  << ",\"peakTileEntries\":" << peakStatistics.tileEntries
+                  << ",\"peakOverflowedEntries\":" << peakStatistics.overflowedEntries
+                  << ",\"peakEarlyTerminations\":" << peakStatistics.earlyTerminations
+                  << ",\"peakMetalAllocatedBytes\":" << peakAllocatedBytes
+                  << ",\"budgets\":{\"passed\":" << (budgetsPassed ? "true" : "false")
+                  << ",\"p95Passed\":" << (p95BudgetPassed ? "true" : "false")
+                  << ",\"memoryPassed\":" << (memoryBudgetPassed ? "true" : "false")
+                  << "}}\n";
     } else {
         std::cout << "AETHER benchmark on " << deviceName << '\n'
                   << options->width << 'x' << options->height << ", " << options->frames
                   << " measured frames\nGPU median: " << median << " ms\nGPU p95: " << p95
-                  << " ms\nVisible Gaussians: " << lastStatistics.visibleGaussians
-                  << "\nTile entries: " << lastStatistics.tileEntries
-                  << "\nPeak Metal allocation: " << peakAllocatedBytes << " bytes\n";
+                  << " ms\nCPU frame p95: " << cpuP95
+                  << " ms\nPeak visible Gaussians: " << peakStatistics.visibleGaussians
+                  << "\nPeak tile entries: " << peakStatistics.tileEntries
+                  << "\nPeak Metal allocation: " << peakAllocatedBytes << " bytes\n"
+                  << "Budgets: " << (budgetsPassed ? "passed" : "FAILED") << '\n';
     }
     pool->release();
-    return 0;
+    return budgetsPassed ? 0 : 6;
 }

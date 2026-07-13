@@ -56,9 +56,18 @@ if(TARGET aether-benchmark AND TARGET aether-pack)
         COMMAND $<TARGET_FILE:aether-benchmark>
             "${AETHER_BENCHMARK_TEST_SCENE}"
             --camera-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/camera-path.json"
-            --width 32 --height 32 --frames 2 --warmup 1 --json)
+            --width 32 --height 32 --frames 2 --warmup 1
+            --max-p95-ms 10000 --max-memory-bytes 1099511627776 --json)
     set_tests_properties(AetherBenchmarkSmoke PROPERTIES
         FIXTURES_REQUIRED AetherBenchmarkScene)
+    add_test(NAME AetherBenchmarkBudgetFailure
+        COMMAND $<TARGET_FILE:aether-benchmark>
+            "${AETHER_BENCHMARK_TEST_SCENE}"
+            --camera-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/camera-path.json"
+            --width 32 --height 32 --frames 1 --warmup 1
+            --max-p95-ms 0.000001 --json)
+    set_tests_properties(AetherBenchmarkBudgetFailure PROPERTIES
+        FIXTURES_REQUIRED AetherBenchmarkScene WILL_FAIL TRUE)
 endif()
 
 if(TARGET aether-reconstruct)
