@@ -34,7 +34,7 @@ track, overlap, baseline, view-angle, and issue evidence for both completed and 
 The adapter runs Brush in CLI mode using the pinned v0.3.0 interface:
 
 ```bash
-brush <COLMAP-dataset> --with-viewer=false --seed 42 \
+brush <COLMAP-dataset> --seed 42 \
   --total-steps 30000 --export-every 5000 \
   --export-path <job>/exports --export-name 'checkpoint_{iter}.ply'
 ```

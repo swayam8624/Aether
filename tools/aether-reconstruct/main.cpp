@@ -50,6 +50,7 @@ struct Options final {
     std::uint32_t seed{42};
     std::uint32_t steps{30'000};
     std::uint32_t checkpointEvery{5'000};
+    std::string testProfile;
     bool json{};
     bool dryRun{};
 };
@@ -144,7 +145,7 @@ int usage() {
     std::cout << "Usage: aether-reconstruct <dataset> --output <job-directory> "
                  "[--trainer brush] [--colmap PATH] [--brush PATH] [--proxy PATH] "
                  "[--proxy-config FILE] [--seed 42] "
-                 "[--steps 30000] [--checkpoint-every 5000] [--dry-run] [--json]\n";
+                 "[--steps 30000] [--checkpoint-every 5000] [--test-profile NAME] [--dry-run] [--json]\n";
     return 0;
 }
 
@@ -195,7 +196,8 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
         };
         if (argument == "--output" || argument == "--colmap" || argument == "--brush" ||
             argument == "--proxy" || argument == "--proxy-config" || argument == "--trainer" ||
-            argument == "--seed" || argument == "--steps" || argument == "--checkpoint-every") {
+            argument == "--seed" || argument == "--steps" || argument == "--checkpoint-every" ||
+            argument == "--test-profile") {
             auto supplied = value();
             if (!supplied)
                 return std::nullopt;
@@ -209,6 +211,8 @@ std::optional<Options> parseOptions(int argc, char** argv, int& exitCode) {
                 options.proxy = *supplied;
             else if (argument == "--proxy-config")
                 options.proxyConfig = *supplied;
+            else if (argument == "--test-profile")
+                options.testProfile = *supplied;
             else if (argument == "--trainer" && *supplied != "brush") {
                 exitCode = fail("Only the pinned Brush adapter is supported", options.json);
                 return std::nullopt;
@@ -650,28 +654,41 @@ int main(int argc, char** argv) {
         brushArguments.emplace_back("--start-iter");
         brushArguments.push_back(std::to_string(checkpointRecovery->iteration));
     }
+    std::vector<std::string> featureExtractionArgs{
+        options->colmap, "feature_extractor", "--database_path", database.string(),
+        "--image_path", images.string(), "--ImageReader.single_camera", "1",
+        "--FeatureExtraction.use_gpu", "0"};
+    
+    std::vector<std::string> mapperArgs{
+        options->colmap, "mapper", "--database_path", database.string(),
+        "--image_path", images.string(), "--output_path", sparse.string(),
+        "--Mapper.random_seed", seed, "--Mapper.ba_use_gpu", "0"};
+
+    if (options->testProfile == "synthetic-512") {
+        featureExtractionArgs.push_back("--ImageReader.camera_model");
+        featureExtractionArgs.push_back("PINHOLE");
+        featureExtractionArgs.push_back("--ImageReader.camera_params");
+        featureExtractionArgs.push_back("400,400,256,256");
+
+        mapperArgs.push_back("--Mapper.init_min_num_inliers");
+        mapperArgs.push_back("5");
+        mapperArgs.push_back("--Mapper.init_min_tri_angle");
+        mapperArgs.push_back("0.5");
+        mapperArgs.push_back("--Mapper.abs_pose_min_num_inliers");
+        mapperArgs.push_back("5");
+        mapperArgs.push_back("--Mapper.min_num_matches");
+        mapperArgs.push_back("5");
+        mapperArgs.push_back("--Mapper.tri_min_angle");
+        mapperArgs.push_back("0.5");
+    }
+
     std::vector<Stage> stages{
-        {"feature-extraction",
-         {options->colmap, "feature_extractor", "--database_path", database.string(),
-          "--image_path", images.string(), "--ImageReader.single_camera", "1",
-          "--ImageReader.camera_model", "PINHOLE",
-          "--ImageReader.camera_params", "400,400,256,256",
-          "--FeatureExtraction.use_gpu", "0"},
-         database},
+        {"feature-extraction", std::move(featureExtractionArgs), database},
         {"feature-matching",
          {options->colmap, "exhaustive_matcher", "--database_path", database.string(),
           "--FeatureMatching.use_gpu", "0", "--TwoViewGeometry.random_seed", seed},
          database},
-        {"sparse-mapping",
-         {options->colmap, "mapper", "--database_path", database.string(), "--image_path",
-          images.string(), "--output_path", sparse.string(), "--Mapper.random_seed", seed,
-          "--Mapper.ba_use_gpu", "0",
-          "--Mapper.init_min_num_inliers", "5",
-          "--Mapper.init_min_tri_angle", "0.5",
-          "--Mapper.abs_pose_min_num_inliers", "5",
-          "--Mapper.min_num_matches", "5",
-          "--Mapper.tri_min_angle", "0.5"},
-         sparse / "0"},
+        {"sparse-mapping", std::move(mapperArgs), sparse / "0"},
         {"sparse-model-export",
          {options->colmap, "model_converter", "--input_path", (sparse / "0").string(),
           "--output_path", sparseText.string(), "--output_type", "TXT"},
