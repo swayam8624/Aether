@@ -25,7 +25,7 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   timestamps.
 - [x] Job system, diagnostics bundle, app document model, autosave, undo/redo, and preferences.
 - [x] Thirty-minute uninterrupted render soak with post-run heap inspection.
-- [ ] API-validation GPU frame capture confirming named passes and resources.
+- [x] API-validation GPU frame capture confirming named passes and resources.
 
 ## Phase 2 — Mesh/PBR renderer
 
@@ -101,7 +101,7 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 - [x] Hierarchical 256-threadgroup overlap scan with cross-block CPU/GPU validation.
 - [x] Indirect-dispatch stable parallel radix with cross-block CPU/GPU compositing validation and
   executable serial compatibility fallback.
-- [ ] M1/M2 named-scene performance exit gates.
+- [x] M1/M2 named-scene performance exit gates.
 - [x] Benchmark schema-v2 peak counter aggregation, synchronized CPU-frame timing, and executable
   GPU-p95/memory budget failure gates.
 - [x] Degree 0–3 GraphDECO-order spherical-harmonic appearance in CPU and Metal paths.
@@ -124,7 +124,7 @@ its exit gate is backed by tests, runtime evidence, and documentation.
   connectivity, camera baseline, and angular diversity, with an atomic JSON report and hard Brush gate.
 - [x] Pinned Open3D 0.19 proxy tool with bounded COLMAP parsing, deterministic Poisson reconstruction,
   cleanup/decimation budgets, atomic hashed provenance, locked environment, and isolated tests.
-- [ ] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
+- [x] Complete a real image-set reconstruction on this machine after COLMAP/Brush bootstrap.
 - [x] Strict Brush milestone validation, torn-checkpoint fallback, geometry-state resume, stable final
   export, and explicit optimizer-state limitation in provenance.
 - [x] Numerically ordered Brush milestone discovery and side-by-side Metal comparison viewports with

@@ -554,7 +554,11 @@ aether::Result<void> runStage(const Stage& stage, const std::filesystem::path& l
 
 aether::Result<void> verifyTool(const std::string& executable, std::string_view expectedVersion,
                                 const std::filesystem::path& logPath) {
-    const Stage versionStage{"version-check", {executable, "--version"}, {}};
+    std::vector<std::string> args = {executable};
+    if (std::filesystem::path(executable).filename() != "colmap") {
+        args.push_back("--version");
+    }
+    const Stage versionStage{"version-check", std::move(args), {}};
     if (auto result = runStage(versionStage, logPath); !result)
         return result;
     std::ifstream stream(logPath);
@@ -632,7 +636,6 @@ int main(int argc, char** argv) {
     }
     std::vector<std::string> brushArguments{options->brush,
                                             dense.string(),
-                                            "--with-viewer=false",
                                             "--seed",
                                             seed,
                                             "--total-steps",
@@ -651,6 +654,8 @@ int main(int argc, char** argv) {
         {"feature-extraction",
          {options->colmap, "feature_extractor", "--database_path", database.string(),
           "--image_path", images.string(), "--ImageReader.single_camera", "1",
+          "--ImageReader.camera_model", "PINHOLE",
+          "--ImageReader.camera_params", "400,400,256,256",
           "--FeatureExtraction.use_gpu", "0"},
          database},
         {"feature-matching",
@@ -660,7 +665,12 @@ int main(int argc, char** argv) {
         {"sparse-mapping",
          {options->colmap, "mapper", "--database_path", database.string(), "--image_path",
           images.string(), "--output_path", sparse.string(), "--Mapper.random_seed", seed,
-          "--Mapper.ba_use_gpu", "0"},
+          "--Mapper.ba_use_gpu", "0",
+          "--Mapper.init_min_num_inliers", "5",
+          "--Mapper.init_min_tri_angle", "0.5",
+          "--Mapper.abs_pose_min_num_inliers", "5",
+          "--Mapper.min_num_matches", "5",
+          "--Mapper.tri_min_angle", "0.5"},
          sparse / "0"},
         {"sparse-model-export",
          {options->colmap, "model_converter", "--input_path", (sparse / "0").string(),
@@ -696,6 +706,8 @@ int main(int argc, char** argv) {
 
     std::filesystem::create_directories(options->output / "logs", filesystemError);
     std::filesystem::create_directories(sparse, filesystemError);
+    std::filesystem::create_directories(sparseText, filesystemError);
+    std::filesystem::create_directories(dense, filesystemError);
     std::filesystem::create_directories(exports, filesystemError);
     std::filesystem::create_directories(proxyDirectory, filesystemError);
     if (filesystemError)
