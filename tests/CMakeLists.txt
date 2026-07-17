@@ -70,13 +70,13 @@ if(TARGET aether-benchmark AND TARGET aether-pack)
             --max-p95-ms 10000 --max-memory-bytes 1099511627776 --json)
     set_tests_properties(AetherBenchmarkSmoke PROPERTIES
         FIXTURES_REQUIRED AetherBenchmarkScene)
-    add_test(NAME AetherBenchmarkPerformanceGate
+    add_test(NAME AetherBenchmark1080pFixtureSmoke
         COMMAND $<TARGET_FILE:aether-benchmark>
             "${AETHER_BENCHMARK_TEST_SCENE}"
             --camera-path "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/camera-path.json"
             --width 1920 --height 1080 --frames 10 --warmup 2
             --max-p95-ms 33.3 --max-memory-bytes 536870912 --json)
-    set_tests_properties(AetherBenchmarkPerformanceGate PROPERTIES
+    set_tests_properties(AetherBenchmark1080pFixtureSmoke PROPERTIES
         FIXTURES_REQUIRED AetherBenchmarkScene)
     add_test(NAME AetherBenchmarkBudgetFailure
         COMMAND $<TARGET_FILE:aether-benchmark>
