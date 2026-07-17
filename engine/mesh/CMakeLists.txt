@@ -1,6 +1,7 @@
 add_library(AetherMesh STATIC
     src/Animation.cpp
     src/GltfLoader.cpp
+    src/PlyExporter.cpp
 )
 add_library(Aether::Mesh ALIAS AetherMesh)
 
