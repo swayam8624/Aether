@@ -6,6 +6,7 @@ deps=${AETHER_DEPS_ROOT:-${root}/.aether-deps}
 sources=${deps}/src
 bin=${deps}/bin
 mkdir -p ${sources} ${bin}
+export PATH="${bin}:${PATH}"
 
 brush_commit=3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486
 brush_source=${sources}/brush
@@ -33,12 +34,14 @@ ln -sfn ${deps}/proxy-venv/bin/aether-proxy ${bin}/aether-proxy
 
 colmap_commit=0b31f98133b470eae62811b557dc2bcff1e4f9a5
 if command -v colmap >/dev/null 2>&1; then
-  colmap_version=$(colmap --version 2>&1 || true)
+  colmap_version=$(colmap 2>&1 | grep -E "COLMAP [0-9]+\.[0-9]+" | head -n 1 || true)
   if [[ ${colmap_version} != *3.13.0* ]]; then
     print -u2 "AETHER requires COLMAP 3.13.0; found: ${colmap_version}"
     exit 3
   fi
-  ln -sfn $(command -v colmap) ${bin}/colmap
+  if [[ $(command -v colmap) != ${bin}/colmap ]]; then
+    ln -sfn $(command -v colmap) ${bin}/colmap
+  fi
 else
   colmap_source=${sources}/colmap
   if [[ ! -d ${colmap_source}/.git ]]; then
@@ -53,6 +56,6 @@ else
 fi
 
 ${bin}/brush --version
-${bin}/colmap --version
+${bin}/colmap 2>&1 | head -n 2
 ${bin}/aether-proxy --version
 print "AETHER reconstruction tools are ready in ${bin}"
