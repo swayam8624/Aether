@@ -10,11 +10,11 @@ public:
     AVFoundationFrameSource();
     ~AVFoundationFrameSource() override;
 
-    void start() override;
-    void stop() override;
+    Result<FrameSourceInfo> start() override;
+    Result<void> stop() override;
 
-    void setFrameCallback(FrameCallback callback) override;
-    void setIMUCallback(IMUCallback callback) override;
+    void setPacketCallback(PacketCallback callback) override;
+    void setErrorCallback(ErrorCallback callback) override;
 
 private:
     class Impl;

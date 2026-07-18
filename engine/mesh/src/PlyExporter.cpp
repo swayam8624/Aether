@@ -1,74 +1,164 @@
 #include <aether/mesh/PlyExporter.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <limits>
+#include <tuple>
+#include <vector>
+
+#include <simd/simd.h>
 
 namespace aether::mesh {
+namespace {
 
-bool exportToPly(const MeshAsset& asset, const std::string& path) {
-    if (asset.primitives.empty()) return false;
+struct ExportVertex final {
+    simd_float3 position{};
+    simd_float3 normal{};
+    std::array<std::uint8_t, 3> color{};
+};
 
-    std::vector<const MeshVertex*> allVerts;
-    std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> allTris;
-    uint32_t baseVertex = 0;
+std::uint8_t encodeColor(float value) {
+    if (!std::isfinite(value))
+        return 0;
+    return static_cast<std::uint8_t>(
+        std::lround(std::clamp(value, 0.0F, 1.0F) * 255.0F));
+}
 
-    for (const auto& prim : asset.primitives) {
-        for (const auto& v : prim.vertices) {
-            allVerts.push_back(&v);
+bool finite(simd_float3 value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+} // namespace
+
+Result<void> exportToPly(const MeshAsset& asset, const std::filesystem::path& path) {
+    if (asset.primitives.empty())
+        return fail(ErrorCode::invalidArgument, "Cannot export a mesh with no primitives");
+    if (path.empty())
+        return fail(ErrorCode::invalidArgument, "PLY output path is empty");
+
+    std::vector<MeshInstance> instances = asset.instances;
+    if (instances.empty()) {
+        instances.reserve(asset.primitives.size());
+        for (std::size_t primitive = 0; primitive < asset.primitives.size(); ++primitive) {
+            MeshInstance instance;
+            instance.primitiveIndex = primitive;
+            instances.push_back(instance);
         }
-        for (size_t i = 0; i + 2 < prim.indices.size(); i += 3) {
-            allTris.emplace_back(
-                baseVertex + prim.indices[i],
-                baseVertex + prim.indices[i + 1],
-                baseVertex + prim.indices[i + 2]);
+    }
+
+    std::vector<ExportVertex> vertices;
+    std::vector<std::array<std::uint32_t, 3>> triangles;
+    for (const auto& instance : instances) {
+        if (instance.primitiveIndex >= asset.primitives.size())
+            return fail(ErrorCode::corruptData, "Mesh instance references an invalid primitive");
+        const auto& primitive = asset.primitives[instance.primitiveIndex];
+        if (!primitive.vertexColors.empty() &&
+            primitive.vertexColors.size() != primitive.vertices.size())
+            return fail(ErrorCode::corruptData,
+                        "Mesh vertex-color count does not match vertex count");
+        if (primitive.indices.size() % 3 != 0)
+            return fail(ErrorCode::corruptData, "Mesh index count is not divisible by three");
+        if (primitive.vertices.size() >
+            std::numeric_limits<std::uint32_t>::max() - vertices.size())
+            return fail(ErrorCode::resourceExhausted, "PLY vertex count exceeds uint32");
+        const auto baseVertex = static_cast<std::uint32_t>(vertices.size());
+        const auto determinant = simd_determinant(instance.worldTransform);
+        if (!std::isfinite(determinant) || std::abs(determinant) < 1.0e-12F)
+            return fail(ErrorCode::corruptData, "Mesh instance transform is singular");
+        const auto normalTransform = simd_transpose(simd_inverse(instance.worldTransform));
+        for (std::size_t index = 0; index < primitive.vertices.size(); ++index) {
+            const auto& source = primitive.vertices[index];
+            const auto transformedPosition =
+                simd_mul(instance.worldTransform, simd_make_float4(source.position, 1.0F)).xyz;
+            auto transformedNormal =
+                simd_mul(normalTransform, simd_make_float4(source.normal, 0.0F)).xyz;
+            if (simd_length_squared(transformedNormal) <= 1.0e-20F)
+                transformedNormal = simd_make_float3(0.0F, 0.0F, 1.0F);
+            else
+                transformedNormal = simd_normalize(transformedNormal);
+            if (!finite(transformedPosition) || !finite(transformedNormal))
+                return fail(ErrorCode::corruptData, "Mesh contains non-finite geometry");
+            const auto color = primitive.vertexColors.empty()
+                                   ? simd_make_float3(1.0F, 1.0F, 1.0F)
+                                   : primitive.vertexColors[index];
+            vertices.push_back(ExportVertex{
+                transformedPosition,
+                transformedNormal,
+                {encodeColor(color.x), encodeColor(color.y), encodeColor(color.z)},
+            });
         }
-        baseVertex += static_cast<uint32_t>(prim.vertices.size());
+        for (std::size_t index = 0; index < primitive.indices.size(); index += 3) {
+            const auto a = primitive.indices[index];
+            const auto b = primitive.indices[index + 1];
+            const auto c = primitive.indices[index + 2];
+            if (a >= primitive.vertices.size() || b >= primitive.vertices.size() ||
+                c >= primitive.vertices.size())
+                return fail(ErrorCode::corruptData, "Mesh contains an out-of-range index");
+            if (a == b || b == c || a == c)
+                return fail(ErrorCode::corruptData, "Mesh contains a degenerate index triangle");
+            triangles.push_back(
+                determinant < 0.0F
+                    ? std::array<std::uint32_t, 3>{baseVertex + a, baseVertex + c,
+                                                   baseVertex + b}
+                    : std::array<std::uint32_t, 3>{baseVertex + a, baseVertex + b,
+                                                   baseVertex + c});
+        }
     }
+    if (vertices.empty() || triangles.empty())
+        return fail(ErrorCode::invalidArgument, "Cannot export an empty PLY surface");
 
-    std::ofstream out(path, std::ios::binary);
-    if (!out) return false;
-
-    out << "ply\n";
-    out << "format binary_little_endian 1.0\n";
-    out << "element vertex " << allVerts.size() << "\n";
-    out << "property float x\n";
-    out << "property float y\n";
-    out << "property float z\n";
-    out << "property float nx\n";
-    out << "property float ny\n";
-    out << "property float nz\n";
-    out << "property uchar red\n";
-    out << "property uchar green\n";
-    out << "property uchar blue\n";
-    out << "element face " << allTris.size() << "\n";
-    out << "property list uchar uint vertex_indices\n";
-    out << "end_header\n";
-
-    for (const auto* v : allVerts) {
-        float x = v->position.x, y = v->position.y, z = v->position.z;
-        float nx = v->normal.x, ny = v->normal.y, nz = v->normal.z;
-        // weights.x/y/z stores R/G/B colour in [0,1]
-        auto r = static_cast<uint8_t>(v->weights.x * 255.0f);
-        auto g = static_cast<uint8_t>(v->weights.y * 255.0f);
-        auto b = static_cast<uint8_t>(v->weights.z * 255.0f);
-        out.write(reinterpret_cast<const char*>(&x), 4);
-        out.write(reinterpret_cast<const char*>(&y), 4);
-        out.write(reinterpret_cast<const char*>(&z), 4);
-        out.write(reinterpret_cast<const char*>(&nx), 4);
-        out.write(reinterpret_cast<const char*>(&ny), 4);
-        out.write(reinterpret_cast<const char*>(&nz), 4);
-        out.write(reinterpret_cast<const char*>(&r), 1);
-        out.write(reinterpret_cast<const char*>(&g), 1);
-        out.write(reinterpret_cast<const char*>(&b), 1);
+    auto temporary = path;
+    temporary += ".tmp";
+    std::error_code filesystemError;
+    std::filesystem::remove(temporary, filesystemError);
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    if (!output)
+        return fail(ErrorCode::io, "Unable to create temporary PLY", temporary.string());
+    output << "ply\nformat binary_little_endian 1.0\n"
+              "comment generated by AETHER deterministic exporter\n"
+           << "element vertex " << vertices.size()
+           << "\nproperty float x\nproperty float y\nproperty float z\n"
+              "property float nx\nproperty float ny\nproperty float nz\n"
+              "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+           << "element face " << triangles.size()
+           << "\nproperty list uchar uint vertex_indices\nend_header\n";
+    for (const auto& vertex : vertices) {
+        const std::array<float, 6> attributes{
+            vertex.position.x, vertex.position.y, vertex.position.z,
+            vertex.normal.x, vertex.normal.y, vertex.normal.z};
+        output.write(reinterpret_cast<const char*>(attributes.data()),
+                     static_cast<std::streamsize>(sizeof(attributes)));
+        output.write(reinterpret_cast<const char*>(vertex.color.data()),
+                     static_cast<std::streamsize>(vertex.color.size()));
     }
-
-    for (const auto& [i0, i1, i2] : allTris) {
-        constexpr uint8_t cnt = 3;
-        out.write(reinterpret_cast<const char*>(&cnt), 1);
-        out.write(reinterpret_cast<const char*>(&i0), 4);
-        out.write(reinterpret_cast<const char*>(&i1), 4);
-        out.write(reinterpret_cast<const char*>(&i2), 4);
+    for (const auto& triangle : triangles) {
+        constexpr std::uint8_t count = 3;
+        output.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        output.write(reinterpret_cast<const char*>(triangle.data()),
+                     static_cast<std::streamsize>(triangle.size() *
+                                                  sizeof(triangle.front())));
     }
-
-    return out.good();
+    output.flush();
+    if (!output.good()) {
+        output.close();
+        std::filesystem::remove(temporary, filesystemError);
+        return fail(ErrorCode::io, "Unable to write complete PLY", path.string());
+    }
+    output.close();
+    std::filesystem::rename(temporary, path, filesystemError);
+    if (filesystemError) {
+        std::filesystem::remove(path, filesystemError);
+        filesystemError.clear();
+        std::filesystem::rename(temporary, path, filesystemError);
+    }
+    if (filesystemError) {
+        std::filesystem::remove(temporary, filesystemError);
+        return fail(ErrorCode::io, "Unable to publish PLY atomically", path.string());
+    }
+    return {};
 }
 
 } // namespace aether::mesh

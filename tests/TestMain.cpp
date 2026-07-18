@@ -11,10 +11,14 @@
 #include <aether/hybrid/ProxyPlyLoader.hpp>
 #include <aether/mesh/Animation.hpp>
 #include <aether/mesh/GltfLoader.hpp>
+#include <aether/mesh/PlyExporter.hpp>
 #include <aether/mesh/TransparentSort.hpp>
 #include <aether/package/Package.hpp>
 #include <aether/package/Sha256.hpp>
 #include <aether/reconstruction/SparseModelValidator.hpp>
+#include <aether/reconstruction/DenseTsdfVolume.hpp>
+#include <aether/reconstruction/GeometryEvaluation.hpp>
+#include <aether/reconstruction/RecordedProviders.hpp>
 #include <aether/rendergraph/RenderGraph.hpp>
 #include <aether/scene/Camera.hpp>
 #include <aether/scene/CameraController.hpp>
@@ -27,6 +31,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -126,6 +131,106 @@ void testSparseCoverageValidation() {
     expect(!aether::reconstruction::validateSparseTextModel(root, 3, thresholds).has_value(),
            "Incomplete COLMAP observation triples are rejected as corrupt data");
     std::filesystem::remove_all(root);
+}
+
+void testOracleTsdfReconstruction() {
+    aether::reconstruction::DenseTsdfConfig config;
+    config.dimensions = {21, 21, 17};
+    config.originMetres = {-0.4, -0.4, 0.68};
+    config.voxelSizeMetres = 0.04;
+    config.truncationDistanceMetres = 0.08;
+    config.minimumDepthMetres = 0.1;
+    config.maximumDepthMetres = 2.0;
+    auto volume = aether::reconstruction::DenseTsdfVolume::create(config);
+    expect(volume.has_value(), "Valid bounded dense TSDF volume is created");
+    if (!volume)
+        return;
+    expect(!volume->extractMesh().has_value(),
+           "An unobserved TSDF volume cannot produce geometry");
+
+    constexpr std::uint32_t width = 64;
+    constexpr std::uint32_t height = 64;
+    std::vector<std::byte> color(static_cast<std::size_t>(width) * height * 3,
+                                 std::byte{128});
+    std::vector<std::byte> depth(static_cast<std::size_t>(width) * height * sizeof(float));
+    constexpr float planeDepth = 1.0F;
+    for (std::size_t index = 0; index < static_cast<std::size_t>(width) * height; ++index)
+        std::memcpy(depth.data() + index * sizeof(float), &planeDepth, sizeof(float));
+
+    aether::capture::CapturePacket packet;
+    packet.frameId = 1;
+    packet.sourceId = "oracle-plane";
+    packet.sourceKind = aether::capture::CaptureSourceKind::recordedRgbd;
+    packet.calibration.id = packet.sourceId;
+    packet.calibration.width = width;
+    packet.calibration.height = height;
+    packet.calibration.fx = 60.0;
+    packet.calibration.fy = 60.0;
+    packet.calibration.cx = 31.5;
+    packet.calibration.cy = 31.5;
+    packet.colorPlanes.push_back(aether::capture::ImagePlane{
+        aether::capture::makeOwnedBuffer(std::move(color)),
+        aether::capture::PixelFormat::rgb8,
+        width,
+        height,
+        width * 3,
+    });
+    packet.depthMetres = aether::capture::ImagePlane{
+        aether::capture::makeOwnedBuffer(std::move(depth)),
+        aether::capture::PixelFormat::depthFloat32Metres,
+        width,
+        height,
+        width * static_cast<std::uint32_t>(sizeof(float)),
+    };
+    packet.cameraToWorld = aether::capture::RigidPose{};
+
+    aether::reconstruction::RecordedPoseProvider poseProvider;
+    aether::reconstruction::RecordedRgbdDepthProvider depthProvider;
+    auto pose = poseProvider.estimate(packet);
+    auto observation = pose ? depthProvider.estimate(packet, *pose)
+                            : aether::Result<aether::reconstruction::DepthObservation>(
+                                  std::unexpected(pose.error()));
+    expect(pose.has_value() && observation.has_value(),
+           "Known recorded pose and metric depth providers accept oracle data");
+    if (!pose || !observation)
+        return;
+    expect(volume->integrate(packet, *pose, *observation).has_value(),
+           "Known-pose metric depth updates the TSDF");
+    auto mesh = volume->extractMesh();
+    expect(mesh.has_value() && !mesh->primitives.empty() &&
+               !mesh->primitives[0].indices.empty(),
+           "Observed TSDF extracts a connected zero-crossing surface");
+    if (!mesh)
+        return;
+
+    std::vector<std::array<double, 3>> reference;
+    for (int y = -10; y <= 10; ++y)
+        for (int x = -10; x <= 10; ++x)
+            reference.push_back({static_cast<double>(x) * 0.04,
+                                 static_cast<double>(y) * 0.04, 1.0});
+    auto metrics = aether::reconstruction::evaluateGeometry(*mesh, reference, 0.05);
+    expect(metrics.has_value() && metrics->accuracyMeanMetres <= 0.02,
+           "Oracle plane reconstruction stays within half a voxel accuracy");
+    expect(metrics.has_value() && metrics->invalidIndices == 0 &&
+               metrics->degenerateTriangles == 0,
+           "Extracted oracle mesh contains valid non-degenerate triangles");
+
+    const auto firstPath =
+        std::filesystem::temp_directory_path() / "aether-oracle-first.ply";
+    const auto secondPath =
+        std::filesystem::temp_directory_path() / "aether-oracle-second.ply";
+    expect(aether::mesh::exportToPly(*mesh, firstPath).has_value() &&
+               aether::mesh::exportToPly(*mesh, secondPath).has_value(),
+           "Hardened PLY exporter atomically writes oracle geometry");
+    std::ifstream first(firstPath, std::ios::binary);
+    std::ifstream second(secondPath, std::ios::binary);
+    const std::string firstBytes((std::istreambuf_iterator<char>(first)),
+                                 std::istreambuf_iterator<char>());
+    const std::string secondBytes((std::istreambuf_iterator<char>(second)),
+                                  std::istreambuf_iterator<char>());
+    expect(firstBytes == secondBytes, "Identical oracle meshes produce deterministic PLY bytes");
+    std::filesystem::remove(firstPath);
+    std::filesystem::remove(secondPath);
 }
 
 void testProxyMeshContract() {
@@ -945,6 +1050,7 @@ int main() {
     testResourceLocator();
     testDiagnostics();
     testSparseCoverageValidation();
+    testOracleTsdfReconstruction();
     testProxyMeshContract();
     testProfiler();
     testJobSystem();

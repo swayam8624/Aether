@@ -184,76 +184,6 @@ private final class ReconstructionModel: ObservableObject {
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    @Published var liveMeshURL: URL?
-    @Published var liveSessionState: String = "Idle"
-    private var liveSession: AetherLiveSessionBridge?
-    private var extractionTimer: Timer?
-
-    func startLiveSession() {
-        guard let datasetURL else { return }
-        let manifestPath = datasetURL.appendingPathComponent("manifests/sony_24mm_4k.json").path
-        var error: NSError?
-        liveSession = AetherLiveSessionBridge(calibrationPath: manifestPath, error: &error)
-        if let error {
-            state = .failed("Live session failed to start: \(error.localizedDescription)")
-            return
-        }
-        liveSession?.start()
-        state = .running
-        liveSessionState = "Capturing"
-        transcript = "Live session started – camera and tracking pipeline active"
-
-        // Poll state and extract mesh every 2 seconds
-        extractionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                self.pollLiveSession()
-            }
-        }
-    }
-
-    func stopLiveSession() {
-        extractionTimer?.invalidate()
-        extractionTimer = nil
-        liveSession?.stop()
-        liveSession = nil
-        state = .idle
-        liveSessionState = "Idle"
-        transcript = "Live session stopped."
-    }
-
-    @MainActor
-    private func pollLiveSession() {
-        guard let session = liveSession else { return }
-
-        switch session.state {
-        case .capturing: liveSessionState = "Capturing"
-        case .tracking:  liveSessionState = "Tracking"
-        case .fusing:    liveSessionState = "Fusing – extracting mesh…"
-            extractLiveMesh()
-        case .extractingMesh: liveSessionState = "Extracting Mesh"
-        case .error:
-            liveSessionState = "Error: \(session.lastError ?? "unknown")"
-            stopLiveSession()
-        default: break
-        }
-    }
-
-    private func extractLiveMesh() {
-        guard let outputURL else { return }
-        let plyPath = outputURL.appendingPathComponent("live_mesh.ply").path
-        liveSession?.extractMesh(toPath: plyPath) { [weak self] success, errMsg in
-            guard let self else { return }
-            Task { @MainActor in
-                if success {
-                    self.liveMeshURL = URL(fileURLWithPath: plyPath)
-                    self.liveSessionState = "Mesh updated – \(plyPath)"
-                } else {
-                    self.liveSessionState = "Mesh extraction failed: \(errMsg ?? "?")"
-                }
-            }
-        }
-    }
 }
 
 struct ReconstructionWorkspace: View {
@@ -286,14 +216,7 @@ struct ReconstructionWorkspace: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(model.state != .ready || model.outputURL == nil ||
                                   model.colmapURL == nil || model.brushURL == nil || model.proxyURL == nil)
-                    Button("▶ Start Live Session", action: model.startLiveSession)
-                        .buttonStyle(.bordered)
-                        .disabled(model.datasetURL == nil || model.outputURL == nil || model.state == .running)
-                    Button("■ Stop Live Session", action: model.stopLiveSession)
-                        .buttonStyle(.bordered)
-                        .foregroundStyle(.red)
-                        .disabled(model.liveSessionState == "Idle")
-                    if model.state == .running && model.liveSessionState == "Idle" {
+                    if model.state == .running {
                         ProgressView(value: Double(model.completedStages), total: 8)
                             .frame(width: 120)
                         Text("\(model.completedStages)/8 stages").font(.caption.monospacedDigit())
@@ -301,34 +224,6 @@ struct ReconstructionWorkspace: View {
                     }
                     Spacer()
                     stateLabel
-                }
-
-                if model.liveSessionState != "Idle" {
-                    GroupBox("Live Reconstruction Pipeline") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Image(systemName: "antenna.radiowaves.left.and.right")
-                                    .foregroundStyle(.green)
-                                Text(model.liveSessionState)
-                                    .font(.caption.monospaced())
-                            }
-                            if let meshURL = model.liveMeshURL {
-                                Divider()
-                                HStack {
-                                    Image(systemName: "cube.fill").foregroundStyle(.blue)
-                                    Text("Live mesh: ")
-                                        .font(.caption)
-                                    Text(meshURL.lastPathComponent)
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text("→ Load this PLY into the main viewport to visualise the reconstruction")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(6)
-                    }
                 }
 
                 if let report = model.report { reportView(report) }

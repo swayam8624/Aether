@@ -1,4 +1,5 @@
 #include <aether/capture/CaptureValidator.hpp>
+#include <aether/capture/RecordedSequenceSource.hpp>
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -64,6 +66,83 @@ int main() {
     okay &= require(std::ranges::any_of(broken.issues, [](const auto& issue) {
         return issue.code == "image-decode-failed";
     }), "decode failure should have a structured issue code");
+
+    const auto sequence = root / "sequence";
+    std::filesystem::create_directories(sequence);
+    {
+        constexpr std::array<std::uint8_t, 12> color{
+            255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255};
+        std::ofstream colorFile(sequence / "color.raw", std::ios::binary);
+        colorFile.write(reinterpret_cast<const char*>(color.data()),
+                        static_cast<std::streamsize>(color.size()));
+        constexpr std::array<float, 4> depth{1.0F, 1.0F, 1.0F, 1.0F};
+        std::ofstream depthFile(sequence / "depth.f32", std::ios::binary);
+        depthFile.write(reinterpret_cast<const char*>(depth.data()),
+                        static_cast<std::streamsize>(sizeof(depth)));
+        std::ofstream manifest(sequence / "manifest.json");
+        manifest << R"({
+  "schemaVersion": 1,
+  "sourceId": "recorded-fixture",
+  "calibration": {"width": 2, "height": 2, "fx": 2.0, "fy": 2.0, "cx": 0.5, "cy": 0.5},
+  "frames": [{
+    "frameId": 1,
+    "timestampNs": 1000,
+    "color": "color.raw",
+    "depth": "depth.f32",
+    "orientation": [1.0, 0.0, 0.0, 0.0],
+    "translation": [0.0, 0.0, 0.0]
+  }]
+})";
+    }
+    auto recorded = aether::capture::RecordedSequenceSource::open(sequence);
+    okay &= require(recorded.has_value() && (*recorded)->frameCount() == 1,
+                     "Versioned recorded RGB-D sequence opens deterministically");
+    if (recorded) {
+        std::size_t delivered = 0;
+        (*recorded)->setPacketCallback([&](aether::capture::CapturePacket packet) {
+            ++delivered;
+            okay &= require(packet.frameId == 1 && packet.hasMetricDepth() &&
+                                packet.cameraToWorld.has_value(),
+                            "Recorded source delivers synchronized pose and metric depth");
+        });
+        okay &= require((*recorded)->start().has_value(), "Recorded source starts explicitly");
+        auto stepped = (*recorded)->step();
+        okay &= require(stepped.has_value() && *stepped && delivered == 1,
+                         "Recorded source emits exactly one packet per step");
+        stepped = (*recorded)->step();
+        okay &= require(stepped.has_value() && !*stepped,
+                         "Recorded source reports deterministic end of sequence");
+        okay &= require((*recorded)->stop().has_value(), "Recorded source stops cleanly");
+    }
+
+    auto injected = aether::capture::RecordedSequenceSource::open(
+        sequence, aether::capture::RecordedPlaybackConfig{0});
+    if (injected) {
+        bool reported = false;
+        (*injected)->setErrorCallback([&](const aether::Error&) { reported = true; });
+        (void)(*injected)->start();
+        okay &= require(!(*injected)->step().has_value() && reported,
+                         "Recorded source fault injection propagates a structured failure");
+    }
+
+    {
+        std::ofstream manifest(sequence / "manifest.json", std::ios::trunc);
+        manifest << R"({
+  "schemaVersion": 1,
+  "sourceId": "hostile",
+  "calibration": {"width": 2, "height": 2, "fx": 2.0, "fy": 2.0, "cx": 0.5, "cy": 0.5},
+  "frames": [{
+    "frameId": 1,
+    "timestampNs": 1,
+    "color": "../outside.raw",
+    "depth": "depth.f32",
+    "orientation": [1.0, 0.0, 0.0, 0.0],
+    "translation": [0.0, 0.0, 0.0]
+  }]
+})";
+    }
+    okay &= require(!aether::capture::RecordedSequenceSource::open(sequence).has_value(),
+                     "Recorded capture rejects manifest path traversal");
     std::filesystem::remove_all(root);
     return okay ? 0 : 1;
 }

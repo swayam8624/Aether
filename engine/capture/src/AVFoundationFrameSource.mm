@@ -1,173 +1,234 @@
 #import <AVFoundation/AVFoundation.h>
+#import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
-#include <aether/capture/AVFoundationFrameSource.hpp>
-#include <mutex>
-#include <thread>
-#include <chrono>
 
-// Objective-C delegate — stores the callback as a plain C++ object (not an ObjC property)
+#include <aether/capture/AVFoundationFrameSource.hpp>
+
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <utility>
+
+namespace {
+
+std::uint64_t nanoseconds(CMTime time) {
+    if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0)
+        return 0;
+    const long double seconds =
+        static_cast<long double>(time.value) / static_cast<long double>(time.timescale);
+    return static_cast<std::uint64_t>(seconds * 1'000'000'000.0L);
+}
+
+std::uint64_t hostNanoseconds() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
+} // namespace
+
 @interface AetherCaptureDelegate : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
-- (void)setFrameCallback:(aether::capture::FrameSource::FrameCallback)cb;
+- (void)setPacketCallback:(aether::capture::FrameSource::PacketCallback)callback
+                 sourceId:(std::string)sourceId;
 @end
 
 @implementation AetherCaptureDelegate {
-    aether::capture::FrameSource::FrameCallback _frameCallback;
+    aether::capture::FrameSource::PacketCallback _packetCallback;
+    std::string _sourceId;
     std::mutex _mutex;
+    std::atomic<std::uint64_t> _nextFrameId;
 }
 
-- (void)setFrameCallback:(aether::capture::FrameSource::FrameCallback)cb {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _frameCallback = std::move(cb);
+- (instancetype)init {
+    self = [super init];
+    if (self)
+        _nextFrameId.store(1);
+    return self;
 }
 
-- (void)captureOutput:(AVCaptureOutput *)output
+- (void)setPacketCallback:(aether::capture::FrameSource::PacketCallback)callback
+                 sourceId:(std::string)sourceId {
+    std::lock_guard lock(_mutex);
+    _packetCallback = std::move(callback);
+    _sourceId = std::move(sourceId);
+}
+
+- (void)captureOutput:(AVCaptureOutput*)output
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
-       fromConnection:(AVCaptureConnection *)connection {
-    (void)output; (void)connection;
+       fromConnection:(AVCaptureConnection*)connection {
+    (void)output;
+    CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+    if (!pixelBuffer)
+        return;
 
-    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    if (!imageBuffer) return;
+    if (CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
+        return;
+    CFRetain(pixelBuffer);
+    std::shared_ptr<const void> owner(pixelBuffer, [](const void* pointer) {
+        auto buffer = const_cast<CVPixelBufferRef>(
+            static_cast<const __CVBuffer*>(pointer));
+        CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+        CFRelease(buffer);
+    });
 
-    CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
-
-    auto width  = static_cast<uint32_t>(CVPixelBufferGetWidth(imageBuffer));
-    auto height = static_cast<uint32_t>(CVPixelBufferGetHeight(imageBuffer));
-    auto stride = static_cast<uint32_t>(CVPixelBufferGetBytesPerRow(imageBuffer));
-    auto *base  = static_cast<uint8_t *>(CVPixelBufferGetBaseAddress(imageBuffer));
-
-    if (base) {
-        aether::capture::CameraFrame frame;
-        frame.timestampNs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-        frame.width = width;
-        frame.height = height;
-        frame.stride = stride;
-        frame.rgbData.assign(base, base + static_cast<size_t>(stride) * height);
-
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_frameCallback) _frameCallback(frame);
+    const auto width = static_cast<std::uint32_t>(CVPixelBufferGetWidth(pixelBuffer));
+    const auto height = static_cast<std::uint32_t>(CVPixelBufferGetHeight(pixelBuffer));
+    const auto stride = static_cast<std::uint32_t>(CVPixelBufferGetBytesPerRow(pixelBuffer));
+    auto* base = static_cast<const std::byte*>(CVPixelBufferGetBaseAddress(pixelBuffer));
+    if (!base) {
+        owner.reset();
+        return;
     }
 
-    CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+    aether::capture::FrameSource::PacketCallback callback;
+    std::string sourceId;
+    {
+        std::lock_guard lock(_mutex);
+        callback = _packetCallback;
+        sourceId = _sourceId;
+    }
+    if (!callback)
+        return;
+
+    aether::capture::CapturePacket packet;
+    packet.frameId = _nextFrameId.fetch_add(1);
+    packet.sourceId = std::move(sourceId);
+    packet.sourceKind = aether::capture::CaptureSourceKind::camera;
+    packet.presentationTimestampNs =
+        nanoseconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer));
+    packet.hostTimestampNs = hostNanoseconds();
+    packet.mirrored = connection.videoMirrored;
+    packet.calibration.width = width;
+    packet.calibration.height = height;
+    packet.colorPlanes.push_back(aether::capture::ImagePlane{
+        aether::capture::BufferView{
+            std::move(owner), base, static_cast<std::size_t>(stride) * height},
+        aether::capture::PixelFormat::bgra8,
+        width,
+        height,
+        stride,
+    });
+    callback(std::move(packet));
 }
+
 @end
 
 namespace aether::capture {
 
-class AVFoundationFrameSource::Impl {
+class AVFoundationFrameSource::Impl final {
 public:
-    Impl() {
-        delegate_ = [[AetherCaptureDelegate alloc] init];
-        session_ = [[AVCaptureSession alloc] init];
+    Impl()
+        : delegate_([[AetherCaptureDelegate alloc] init]),
+          session_([[AVCaptureSession alloc] init]),
+          output_([[AVCaptureVideoDataOutput alloc] init]),
+          queue_(dispatch_queue_create("com.swayamsingal.aether.capture", DISPATCH_QUEUE_SERIAL)) {}
 
-        AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
-        if (device) {
-            NSError *error = nil;
-            AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
-            if (input && [session_ canAddInput:input]) {
-                [session_ addInput:input];
-            }
-        }
-
-        AVCaptureVideoDataOutput *output = [[AVCaptureVideoDataOutput alloc] init];
-        output.videoSettings = @{
-            static_cast<NSString *>(kCVPixelBufferPixelFormatTypeKey): @(kCVPixelFormatType_32BGRA)
-        };
-        dispatch_queue_t queue = dispatch_queue_create("aether.capture.queue", DISPATCH_QUEUE_SERIAL);
-        [output setSampleBufferDelegate:delegate_ queue:queue];
-
-        if ([session_ canAddOutput:output]) {
-            [session_ addOutput:output];
-        }
+    ~Impl() {
+        (void)stop();
     }
 
-    ~Impl() { stop(); }
+    Result<FrameSourceInfo> start() {
+        if (running_.load())
+            return info_;
 
-    void start() {
-        if (running_.exchange(true)) return;
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        const auto authorization =
+            [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+        if (authorization == AVAuthorizationStatusNotDetermined)
+            return fail(ErrorCode::unsupported,
+                        "Camera permission has not been requested",
+                        "Request AVMediaTypeVideo access before starting capture");
+        if (authorization == AVAuthorizationStatusDenied)
+            return fail(ErrorCode::unsupported, "Camera permission is denied");
+        if (authorization == AVAuthorizationStatusRestricted)
+            return fail(ErrorCode::unsupported, "Camera access is restricted");
+
+        auto* device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+        if (!device)
+            return fail(ErrorCode::notFound, "No AVFoundation video device is available");
+
+        NSError* inputError = nil;
+        auto* input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&inputError];
+        if (!input) {
+            const char* description =
+                inputError.localizedDescription ? inputError.localizedDescription.UTF8String
+                                                : "";
+            return fail(ErrorCode::io, "Unable to create camera input",
+                        description);
+        }
+        if (![session_ canAddInput:input])
+            return fail(ErrorCode::unsupported, "Selected camera input cannot be added");
+        [session_ addInput:input];
+
+        output_.videoSettings = @{
+            static_cast<NSString*>(kCVPixelBufferPixelFormatTypeKey):
+                @(kCVPixelFormatType_32BGRA)
+        };
+        output_.alwaysDiscardsLateVideoFrames = YES;
+        [output_ setSampleBufferDelegate:delegate_ queue:queue_];
+        if (![session_ canAddOutput:output_]) {
+            [session_ removeInput:input];
+            return fail(ErrorCode::unsupported, "Camera video output cannot be added");
+        }
+        [session_ addOutput:output_];
+
+        info_.sourceId =
+            device.uniqueID ? device.uniqueID.UTF8String : "avfoundation-default";
+        info_.sourceKind = CaptureSourceKind::camera;
+        info_.displayName =
+            device.localizedName ? device.localizedName.UTF8String : "Camera";
+        [delegate_ setPacketCallback:packetCallback_ sourceId:info_.sourceId];
+        running_.store(true);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             [this->session_ startRunning];
         });
-
-        // Synthetic fallback thread (fires when no hardware camera input is present)
-        fallbackThread_ = std::thread([this]() {
-            uint64_t frameIdx = 0;
-            while (running_) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(33));
-                if ([session_ inputs].count == 0) {
-                    CameraFrame frame;
-                    frame.timestampNs = static_cast<uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::steady_clock::now().time_since_epoch()).count());
-                    frame.width = 640;
-                    frame.height = 480;
-                    frame.stride = 640 * 4;
-                    frame.rgbData.resize(static_cast<size_t>(frame.stride) * frame.height);
-
-                    uint8_t *pixels = frame.rgbData.data();
-                    for (uint32_t y = 0; y < frame.height; ++y) {
-                        for (uint32_t x = 0; x < frame.width; ++x) {
-                            uint32_t off = (y * frame.width + x) * 4;
-                            pixels[off + 0] = static_cast<uint8_t>((x + frameIdx) % 256);
-                            pixels[off + 1] = static_cast<uint8_t>((y + frameIdx) % 256);
-                            pixels[off + 2] = static_cast<uint8_t>(frameIdx % 256);
-                            pixels[off + 3] = 255;
-                        }
-                    }
-                    frameIdx++;
-
-                    {
-                        std::lock_guard<std::mutex> lock(callbackMutex_);
-                        if (frameCallback_) frameCallback_(frame);
-                        if (imuCallback_) {
-                            IMUData imu;
-                            imu.timestampNs = frame.timestampNs;
-                            float angle = static_cast<float>(frameIdx) * 0.05f;
-                            imu.accelX = 0.0f; imu.accelY = -9.81f; imu.accelZ = 0.0f;
-                            imu.gyroX = 0.0f;
-                            imu.gyroY = std::sin(angle);
-                            imu.gyroZ = std::cos(angle);
-                            imuCallback_(imu);
-                        }
-                    }
-                }
-            }
-        });
+        return info_;
     }
 
-    void stop() {
-        if (!running_.exchange(false)) return;
+    Result<void> stop() {
+        if (!running_.exchange(false))
+            return {};
         [session_ stopRunning];
-        if (fallbackThread_.joinable()) fallbackThread_.join();
+        [output_ setSampleBufferDelegate:nil queue:nullptr];
+        for (AVCaptureInput* input in session_.inputs)
+            [session_ removeInput:input];
+        if ([session_.outputs containsObject:output_])
+            [session_ removeOutput:output_];
+        return {};
     }
 
-    void setFrameCallback(FrameSource::FrameCallback callback) {
-        std::lock_guard<std::mutex> lock(callbackMutex_);
-        frameCallback_ = callback;
-        [delegate_ setFrameCallback:callback];
+    void setPacketCallback(PacketCallback callback) {
+        std::lock_guard lock(callbackMutex_);
+        packetCallback_ = std::move(callback);
+        [delegate_ setPacketCallback:packetCallback_ sourceId:info_.sourceId];
     }
 
-    void setIMUCallback(FrameSource::IMUCallback callback) {
-        std::lock_guard<std::mutex> lock(callbackMutex_);
-        imuCallback_ = callback;
+    void setErrorCallback(ErrorCallback callback) {
+        std::lock_guard lock(callbackMutex_);
+        errorCallback_ = std::move(callback);
     }
 
 private:
-    AVCaptureSession *session_;
-    AetherCaptureDelegate *delegate_;
+    AetherCaptureDelegate* delegate_;
+    AVCaptureSession* session_;
+    AVCaptureVideoDataOutput* output_;
+    dispatch_queue_t queue_;
     std::atomic<bool> running_{false};
-    std::thread fallbackThread_;
     std::mutex callbackMutex_;
-    FrameSource::FrameCallback frameCallback_;
-    FrameSource::IMUCallback imuCallback_;
+    PacketCallback packetCallback_;
+    ErrorCallback errorCallback_;
+    FrameSourceInfo info_;
 };
 
 AVFoundationFrameSource::AVFoundationFrameSource() : impl_(std::make_unique<Impl>()) {}
 AVFoundationFrameSource::~AVFoundationFrameSource() = default;
-void AVFoundationFrameSource::start() { impl_->start(); }
-void AVFoundationFrameSource::stop() { impl_->stop(); }
-void AVFoundationFrameSource::setFrameCallback(FrameCallback cb) { impl_->setFrameCallback(cb); }
-void AVFoundationFrameSource::setIMUCallback(IMUCallback cb) { impl_->setIMUCallback(cb); }
+Result<FrameSourceInfo> AVFoundationFrameSource::start() { return impl_->start(); }
+Result<void> AVFoundationFrameSource::stop() { return impl_->stop(); }
+void AVFoundationFrameSource::setPacketCallback(PacketCallback callback) {
+    impl_->setPacketCallback(std::move(callback));
+}
+void AVFoundationFrameSource::setErrorCallback(ErrorCallback callback) {
+    impl_->setErrorCallback(std::move(callback));
+}
 
 } // namespace aether::capture

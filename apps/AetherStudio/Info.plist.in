@@ -13,6 +13,8 @@
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    <key>NSCameraUsageDescription</key>
+    <string>AETHER uses the camera for explicitly initiated local capture sessions.</string>
     <key>UTExportedTypeDeclarations</key>
     <array><dict>
         <key>UTTypeIdentifier</key><string>com.swayamsingal.aether.project</string>
