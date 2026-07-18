@@ -5,9 +5,12 @@
 
 #include <array>
 #include <charconv>
+#include <concepts>
 #include <filesystem>
 #include <iostream>
+#include <locale>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -39,10 +42,17 @@ void printHelp() {
 
 template <typename Number>
 bool parseNumber(std::string_view text, Number& value) {
-    const auto* begin = text.data();
-    const auto* end = text.data() + text.size();
-    const auto result = std::from_chars(begin, end, value);
-    return result.ec == std::errc{} && result.ptr == end;
+    if constexpr (std::integral<Number>) {
+        const auto* begin = text.data();
+        const auto* end = text.data() + text.size();
+        const auto result = std::from_chars(begin, end, value);
+        return result.ec == std::errc{} && result.ptr == end;
+    } else {
+        std::istringstream stream{std::string(text)};
+        stream.imbue(std::locale::classic());
+        stream >> std::noskipws >> value;
+        return stream && stream.eof();
+    }
 }
 
 std::optional<Options> parseOptions(int argc, char** argv) {
