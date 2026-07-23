@@ -1,8 +1,8 @@
 add_library(AetherReconstruction STATIC
     src/SparseModelValidator.cpp
-    src/LiveReconstructionSession.cpp
-    src/FeatureTracker.cpp
-    src/VoxelFusion.cpp
+    src/DenseTsdfVolume.cpp
+    src/GeometryEvaluation.cpp
+    src/RecordedProviders.cpp
 )
 add_library(Aether::Reconstruction ALIAS AetherReconstruction)
 target_include_directories(AetherReconstruction PUBLIC include)

@@ -75,6 +75,9 @@ struct MeshPrimitive final {
     std::string name;
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
+    /// Optional linear RGB colors owned by geometry-producing tools.
+    /// Empty means the material base color applies; otherwise it must match vertices.
+    std::vector<simd_float3> vertexColors;
     std::size_t materialIndex{};
     simd_float3 localBoundsCenter{};
     bool hasSkinAttributes{};

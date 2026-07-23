@@ -1,5 +1,7 @@
 add_library(AetherCapture STATIC 
     src/CaptureValidator.cpp
+    src/CapturePacket.cpp
+    src/RecordedSequenceSource.cpp
     calibration/CalibrationLoader.cpp
     src/AVFoundationFrameSource.mm
 )

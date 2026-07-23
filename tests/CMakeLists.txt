@@ -137,3 +137,10 @@ if(TARGET aether-reconstruct)
     set_tests_properties(AetherReconstructionResumeIdentity PROPERTIES
         DEPENDS AetherBrushCheckpointRecovery)
 endif()
+
+if(TARGET aether-fuse)
+    add_test(NAME AetherOracleFusionCli
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert-oracle-fusion.zsh"
+            $<TARGET_FILE:aether-fuse>
+            "${CMAKE_CURRENT_BINARY_DIR}/oracle-fusion")
+endif()

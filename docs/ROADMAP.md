@@ -3,6 +3,38 @@
 This roadmap is an implementation ledger, not a marketing checklist. A phase is complete only when
 its exit gate is backed by tests, runtime evidence, and documentation.
 
+## Reconstruction recovery gates
+
+These `R` gates are the critical path for the existing Phase 4 and Phase 5 work. They do not
+renumber or replace the product phases.
+
+- [x] [E1] **R0 truth reset:** remove invented-motion tracking, luminance volume deformation,
+  prebuilt geometry, silent synthetic fallback, and release-facing live controls.
+- [x] [E2] **R0 data contract:** immutable capture packets, source identity, presentation/host
+  timestamps, calibrated planes, optional metric depth/confidence/pose, explicit source kinds,
+  structured source start/stop errors, schema-v1 recorded RGB-D playback, deterministic stepping,
+  and injected failure propagation.
+- [x] [E2] **R1 CPU oracle foundation:** known-pose metric-depth providers, calibrated weighted TSDF,
+  bounded dense reference volume, confidence rejection, unobserved-volume rejection, shared
+  cube-edge isosurface vertices, deterministic geometry metrics, and atomic validated PLY output.
+- [ ] [E0] **R1 exit evidence:** classic Marching Cubes case-table parity, sphere fixture, reference
+  RGB-D capture, median/p95 surface error, normal error, F-score, and committed raw report.
+- [ ] [E0] **R2 production capture:** permission UX, device/format controls, calibrated orientation,
+  bounded queues and diagnostics, zero-copy preview, and 30-minute soak.
+- [ ] [E0] **R3 visual odometry:** calibrated initialization, PnP/local mapping, confidence, tracking
+  loss, relocalization, submaps, and recorded trajectory metrics.
+- [ ] [E0] **R4 depth providers:** recorded LiDAR, Apple capture companion, licensed RGB-depth model
+  bakeoff, uncertainty, temporal filtering, and scale alignment.
+- [ ] [E0] **R5 real-time fusion:** sparse Metal volume, dirty-block meshing, snapshot isolation,
+  memory pressure, persistence, and CPU/GPU agreement.
+- [ ] [E0] **R6 Studio workflow:** immutable stage snapshots, explicit modes, recovery controls, and
+  truthful per-stage diagnostics.
+- [ ] [E0] **R7 hybrid completion:** reconstruction provenance/confidence, proxy shadow transfer,
+  collision, navigation, particles, reflection probes, and multiple dynamic attachments.
+
+Material relighting, cinematic expansion, and LOD expansion remain frozen until the reconstruction
+and hybrid geometry critical path reaches E3.
+
 ## Phase 0 — Repository and build foundation
 
 - [x] [E1] Preserve the original dirty working tree on an archive branch.
@@ -150,7 +182,8 @@ its exit gate is backed by tests, runtime evidence, and documentation.
 
 ## Phase 6 — Material-aware relighting
 
-- [ ] [E0] Material Gaussian schema, staged optimizer, constrained residuals, held-out evaluation, and
+- [ ] [E0] Frozen pending reconstruction/hybrid E3: material Gaussian schema, staged optimizer,
+  constrained residuals, held-out evaluation, and
   five explicit ablation modes.
 
 ## Phase 7 — LOD, compression, and streaming

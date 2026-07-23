@@ -3,6 +3,13 @@
 AETHER is a Metal-native research engine for reconstructing, rendering, relighting, and
 interacting with captured Gaussian worlds on Apple silicon.
 
+Reconstruction is currently in an oracle-first recovery: the former live camera panel was callback
+plumbing, not a valid scanner, and has been removed from the shipping path. The maintained
+reconstruction core now starts with versioned recorded metric RGB-D, known poses, calibrated TSDF
+integration, deterministic isosurface extraction, atomic PLY output, and geometry metrics. Live
+capture returns only after real-scene E3 evidence. See
+[ADR 0005](docs/adr/0005-reconstruction-truth-and-oracle-first.md).
+
 The repository is being rebuilt from the original `MetalPractice` learning project as a set of
 verified, shippable milestones. The current foundation contains:
 
@@ -76,6 +83,8 @@ build/debug/apps/AetherBenchmark/aether-benchmark scene.aether \
 build/debug/tools/aether-capture/aether-capture validate dataset/images --json
 build/debug/tools/aether-reconstruct/aether-reconstruct dataset \
   --output reconstruction-job --trainer brush --seed 42 --dry-run --json
+build/debug/tools/aether-fuse/aether-fuse recorded-capture \
+  --output proxy.ply --voxel 0.01 --truncation 0.04 --json
 ```
 
 The benchmark performs warmup frames, waits for each real Metal command buffer, and reports GPU

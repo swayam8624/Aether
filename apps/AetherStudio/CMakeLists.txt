@@ -10,11 +10,10 @@ set(AETHER_STUDIO_SOURCES
     Sources/TrainingComparisonViewport.swift
     Bridge/AetherCaptureBridge.mm
     Bridge/AetherViewportBridge.mm
-    Bridge/AetherLiveSessionBridge.mm
 )
 
 add_executable(AetherStudio MACOSX_BUNDLE ${AETHER_STUDIO_SOURCES})
-target_link_libraries(AetherStudio PRIVATE Aether::Metal Aether::Capture Aether::Reconstruction
+target_link_libraries(AetherStudio PRIVATE Aether::Metal Aether::Capture
     "-framework AppKit" "-framework Metal" "-framework MetalKit" "-framework SwiftUI")
 target_include_directories(AetherStudio PRIVATE Bridge)
 
