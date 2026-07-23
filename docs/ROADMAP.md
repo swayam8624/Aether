@@ -19,12 +19,16 @@ renumber or replace the product phases.
   cube-edge isosurface vertices, deterministic geometry metrics, and atomic validated PLY output.
 - [ ] [E0] **R1 exit evidence:** classic Marching Cubes case-table parity, sphere fixture, reference
   RGB-D capture, median/p95 surface error, normal error, F-score, and committed raw report.
-- [ ] [E0] **R2 production capture:** permission UX, device/format controls, calibrated orientation,
-  bounded queues and diagnostics, zero-copy preview, and 30-minute soak.
+- [ ] [E2] **R2 production capture:** the iPad LiDAR companion now has permission UX, a zero-copy
+  RealityKit preview, normal-tracking/depth admission, a three-frame bounded writer queue, native
+  YUV/depth strides, atomic recording, hashes, counters, and file export. Device/format controls,
+  interrupted-session recovery, richer diagnostics, and the 30-minute soak remain open.
 - [ ] [E0] **R3 visual odometry:** calibrated initialization, PnP/local mapping, confidence, tracking
   loss, relocalization, submaps, and recorded trajectory metrics.
-- [ ] [E0] **R4 depth providers:** recorded LiDAR, Apple capture companion, licensed RGB-depth model
-  bakeoff, uncertainty, temporal filtering, and scale alignment.
+- [ ] [E2] **R4 depth providers:** MavebCapture records Apple scene depth/confidence/intrinsics/poses;
+  schema-v2 desktop replay verifies hashes, converts coordinates and confidence, and fixture-tests
+  TSDF-compatible packets. Real-device E3 evidence, the licensed RGB-depth bakeoff, uncertainty,
+  temporal filtering, and RGB scale alignment remain open.
 - [ ] [E0] **R5 real-time fusion:** sparse Metal volume, dirty-block meshing, snapshot isolation,
   memory pressure, persistence, and CPU/GPU agreement.
 - [ ] [E0] **R6 Studio workflow:** immutable stage snapshots, explicit modes, recovery controls, and
