@@ -20,6 +20,7 @@ get_target_property(AETHER_SIMDJSON_INCLUDE_DIRECTORIES
 target_include_directories(AetherCapture SYSTEM PRIVATE ${AETHER_SIMDJSON_INCLUDE_DIRECTORIES})
 
 target_link_libraries(AetherCapture PUBLIC Aether::Core
+    PRIVATE Aether::Package
     PRIVATE "-framework CoreFoundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo" simdjson::simdjson)
 target_compile_features(AetherCapture PUBLIC cxx_std_23)
 aether_configure_target(AetherCapture)

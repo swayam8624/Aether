@@ -28,7 +28,8 @@ void printHelp() {
     std::cout
         << "Usage: aether-fuse <capture-directory> --output <proxy.ply> [options]\n"
            "\n"
-           "Deterministically fuses schema-v1 recorded metric RGB-D with recorded poses.\n"
+           "Deterministically fuses schema-v1 RGB-D or schema-v2 MavebCapture LiDAR\n"
+           "with recorded metric poses.\n"
            "\n"
            "Options:\n"
            "  --origin X Y Z       volume origin in metres\n"

@@ -19,6 +19,8 @@ verified, shippable milestones. The current foundation contains:
 - A Metal renderer with RAII ownership, bounded frames in flight, capability reporting, drawable
   safety, and offline `.metallib` compilation.
 - A SwiftUI macOS application whose Objective-C++ bridge keeps Metal objects out of Swift.
+- A Swift 6 [MavebCapture iPad companion](apps/MavebCapture/README.md) that records checked,
+  calibrated RGB + LiDAR packages for deterministic desktop fusion.
 - A versioned, hashed, bounded, per-chunk compressed [`.aether` container](docs/formats/AETHER_PACKAGE.md)
   with `aether-pack` and `aether-inspect` command-line tools.
 - A bounded [standard 3DGS PLY importer](docs/formats/GAUSSIAN_PLY.md) and deterministic
@@ -57,6 +59,15 @@ cmake --preset debug
 cmake --build --preset debug
 ctest --preset debug
 open build/debug/apps/AetherStudio/AetherStudio.app
+```
+
+The iPad recorder is built separately with the Xcode generator:
+
+```bash
+cmake -S apps/MavebCapture -B build/ipad-capture -G Xcode \
+  -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+cmake --build build/ipad-capture --config Debug -- \
+  -sdk iphoneos CODE_SIGNING_ALLOWED=NO
 ```
 
 CPU-only CI and sanitizer configurations do not require the app target:
