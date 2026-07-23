@@ -125,6 +125,118 @@ int main() {
                          "Recorded source fault injection propagates a structured failure");
     }
 
+    const auto lidarSequence = root / "lidar-sequence";
+    std::filesystem::create_directories(lidarSequence / "color");
+    std::filesystem::create_directories(lidarSequence / "depth");
+    std::filesystem::create_directories(lidarSequence / "confidence");
+    {
+        constexpr std::array<std::uint8_t, 4> luma{16, 64, 128, 235};
+        constexpr std::array<std::uint8_t, 2> chroma{128, 128};
+        constexpr std::array<float, 4> depth{1.0F, 1.0F, 1.0F, 1.0F};
+        constexpr std::array<std::uint8_t, 4> confidence{0, 1, 2, 2};
+        std::ofstream(lidarSequence / "color/000001.y8", std::ios::binary)
+            .write(reinterpret_cast<const char*>(luma.data()), luma.size());
+        std::ofstream(lidarSequence / "color/000001.cbcr8x2", std::ios::binary)
+            .write(reinterpret_cast<const char*>(chroma.data()), chroma.size());
+        std::ofstream(lidarSequence / "depth/000001.f32", std::ios::binary)
+            .write(reinterpret_cast<const char*>(depth.data()), sizeof(depth));
+        std::ofstream(lidarSequence / "confidence/000001.u8", std::ios::binary)
+            .write(reinterpret_cast<const char*>(confidence.data()), confidence.size());
+        std::ofstream manifest(lidarSequence / "manifest.json");
+        manifest << R"({
+  "schemaVersion": 2,
+  "sourceID": "ipad-lidar-fixture",
+  "coordinateSystem": {
+    "camera": "ARKit right-handed: +X right, +Y up, -Z forward",
+    "pose": "column-major camera-to-world 4x4 matrix",
+    "depthUnit": "metres",
+    "intrinsics": "3x3 column-major pixels"
+  },
+  "frames": [{
+    "frameID": 1,
+    "arTimestampSeconds": 0.0000015,
+    "hostTimestampNanoseconds": 2000,
+    "nativeImageOrientation": "landscapeRight",
+    "mirrored": false,
+    "cameraTrackingState": "normal",
+    "cameraToWorld": [1,0,0,0, 0,1,0,0, 0,0,1,0, 1,2,3,1],
+    "calibration": {
+      "imageWidth": 2, "imageHeight": 2, "depthWidth": 2, "depthHeight": 2,
+      "imageIntrinsics": [2,0,0, 0,2,0, 0.5,0.5,1],
+      "depthIntrinsics": [2,0,0, 0,2,0, 0.5,0.5,1]
+    },
+    "luma": {
+      "path": "color/000001.y8",
+      "sha256": "c9630c3201527b5af73017cb113368f7cbc7d0d5310b78c3dfb4db3462afee30",
+      "width": 2, "height": 2, "rowStrideBytes": 2,
+      "pixelFormat": "y8", "byteCount": 4
+    },
+    "chroma": {
+      "path": "color/000001.cbcr8x2",
+      "sha256": "af472cf2977dbfccc45851e12525627fc9ecc03f274f108a865b18a672f38ba6",
+      "width": 1, "height": 1, "rowStrideBytes": 2,
+      "pixelFormat": "cbcr8x2", "byteCount": 2
+    },
+    "depth": {
+      "path": "depth/000001.f32",
+      "sha256": "f6bb1294da2f78cd935b01c7656280df5eaa0439e9d97bc03775825a41a508e4",
+      "width": 2, "height": 2, "rowStrideBytes": 8,
+      "pixelFormat": "depth-f32-metres", "byteCount": 16
+    },
+    "confidence": {
+      "path": "confidence/000001.u8",
+      "sha256": "69aa81d76a2198545225f9bec4a345cfac7141bf4ca24de6a71ea7854a943305",
+      "width": 2, "height": 2, "rowStrideBytes": 2,
+      "pixelFormat": "arkit-confidence-u8", "byteCount": 4
+    },
+    "exposure": {"durationSeconds": 0.008, "exposureOffsetEV": 0}
+  }]
+})";
+    }
+    auto lidar = aether::capture::RecordedSequenceSource::open(lidarSequence);
+    okay &= require(lidar.has_value() && (*lidar)->frameCount() == 1,
+                     "MavebCapture schema v2 opens as a recorded LiDAR source");
+    if (lidar) {
+        (*lidar)->setPacketCallback([&](aether::capture::CapturePacket packet) {
+            okay &= require(packet.sourceKind == aether::capture::CaptureSourceKind::lidar &&
+                                packet.colorPlanes.size() == 2 && packet.hasMetricDepth(),
+                            "LiDAR source preserves YUV color and metric depth planes");
+            okay &= require(packet.calibration.width == 2 &&
+                                packet.calibration.fx == 2.0 &&
+                                packet.cameraToWorld.has_value() &&
+                                packet.cameraToWorld->translation ==
+                                    std::array<double, 3>{1.0, 2.0, 3.0},
+                            "LiDAR source preserves calibrated depth and world translation");
+            okay &= require(packet.cameraToWorld->orientation[1] == 1.0,
+                            "ARKit camera axes convert to the engine camera convention");
+            okay &= require(packet.depthConfidence.has_value(),
+                            "LiDAR source preserves its confidence plane");
+            const auto* confidenceBytes = packet.depthConfidence
+                                              ? packet.depthConfidence->buffer.data : nullptr;
+            okay &= require(confidenceBytes != nullptr &&
+                                std::to_integer<std::uint8_t>(confidenceBytes[0]) == 0 &&
+                                std::to_integer<std::uint8_t>(confidenceBytes[1]) == 128 &&
+                                std::to_integer<std::uint8_t>(confidenceBytes[2]) == 255,
+                            "ARKit confidence levels normalize to fusion weights");
+        });
+        okay &= require((*lidar)->start().has_value() &&
+                            (*lidar)->step().value_or(false) &&
+                            (*lidar)->stop().has_value(),
+                        "LiDAR capture replays after checksum verification");
+    }
+    {
+        constexpr std::array<std::uint8_t, 4> damagedLuma{17, 64, 128, 235};
+        std::ofstream(lidarSequence / "color/000001.y8", std::ios::binary | std::ios::trunc)
+            .write(reinterpret_cast<const char*>(damagedLuma.data()), damagedLuma.size());
+        auto damaged = aether::capture::RecordedSequenceSource::open(lidarSequence);
+        okay &= require(damaged.has_value(), "LiDAR manifest remains structurally readable");
+        if (damaged) {
+            (void)(*damaged)->start();
+            okay &= require(!(*damaged)->step().has_value(),
+                            "LiDAR replay rejects a plane whose checksum changed");
+        }
+    }
+
     {
         std::ofstream manifest(sequence / "manifest.json", std::ios::trunc);
         manifest << R"({

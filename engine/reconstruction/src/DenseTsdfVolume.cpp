@@ -85,26 +85,61 @@ std::array<float, 3> readColor(const capture::CapturePacket& packet,
     if (packet.colorPlanes.empty() || !packet.colorPlanes.front().valid())
         return {};
     const auto& plane = packet.colorPlanes.front();
-    if (x >= plane.width || y >= plane.height)
+    if (packet.calibration.width == 0 || packet.calibration.height == 0)
         return {};
-    const auto* row = plane.buffer.data + static_cast<std::size_t>(y) * plane.rowStrideBytes;
+    const auto colorX = std::min<std::uint32_t>(
+        plane.width - 1,
+        static_cast<std::uint32_t>(
+            static_cast<std::uint64_t>(x) * plane.width / packet.calibration.width));
+    const auto colorY = std::min<std::uint32_t>(
+        plane.height - 1,
+        static_cast<std::uint32_t>(
+            static_cast<std::uint64_t>(y) * plane.height / packet.calibration.height));
+    const auto* row = plane.buffer.data +
+                      static_cast<std::size_t>(colorY) * plane.rowStrideBytes;
     switch (plane.format) {
     case capture::PixelFormat::gray8: {
         const auto value =
-            static_cast<float>(std::to_integer<std::uint8_t>(row[x])) / 255.0F;
+            static_cast<float>(std::to_integer<std::uint8_t>(row[colorX])) / 255.0F;
         return {value, value, value};
     }
     case capture::PixelFormat::rgb8: {
-        const auto* pixel = row + static_cast<std::size_t>(x) * 3;
+        const auto* pixel = row + static_cast<std::size_t>(colorX) * 3;
         return {static_cast<float>(std::to_integer<std::uint8_t>(pixel[0])) / 255.0F,
                 static_cast<float>(std::to_integer<std::uint8_t>(pixel[1])) / 255.0F,
                 static_cast<float>(std::to_integer<std::uint8_t>(pixel[2])) / 255.0F};
     }
     case capture::PixelFormat::bgra8: {
-        const auto* pixel = row + static_cast<std::size_t>(x) * 4;
+        const auto* pixel = row + static_cast<std::size_t>(colorX) * 4;
         return {static_cast<float>(std::to_integer<std::uint8_t>(pixel[2])) / 255.0F,
                 static_cast<float>(std::to_integer<std::uint8_t>(pixel[1])) / 255.0F,
                 static_cast<float>(std::to_integer<std::uint8_t>(pixel[0])) / 255.0F};
+    }
+    case capture::PixelFormat::yuv420BiPlanarVideoRange: {
+        if (packet.colorPlanes.size() != 2 || !packet.colorPlanes[1].valid())
+            return {};
+        const auto& chroma = packet.colorPlanes[1];
+        const auto chromaX = std::min<std::uint32_t>(chroma.width - 1, colorX / 2);
+        const auto chromaY = std::min<std::uint32_t>(chroma.height - 1, colorY / 2);
+        const auto* chromaRow = chroma.buffer.data +
+                                static_cast<std::size_t>(chromaY) *
+                                    chroma.rowStrideBytes;
+        const auto* chromaPixel = chromaRow + static_cast<std::size_t>(chromaX) * 2;
+        const float luminance = std::clamp(
+            (static_cast<float>(std::to_integer<std::uint8_t>(row[colorX])) - 16.0F) /
+                219.0F,
+            0.0F, 1.0F);
+        const float cb =
+            (static_cast<float>(std::to_integer<std::uint8_t>(chromaPixel[0])) - 128.0F) /
+            224.0F;
+        const float cr =
+            (static_cast<float>(std::to_integer<std::uint8_t>(chromaPixel[1])) - 128.0F) /
+            224.0F;
+        return {
+            std::clamp(luminance + 1.5748F * cr, 0.0F, 1.0F),
+            std::clamp(luminance - 0.1873F * cb - 0.4681F * cr, 0.0F, 1.0F),
+            std::clamp(luminance + 1.8556F * cb, 0.0F, 1.0F),
+        };
     }
     default:
         return {};
